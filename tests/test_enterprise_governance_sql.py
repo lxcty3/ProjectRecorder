@@ -67,7 +67,7 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         compact = " ".join(self.sql.lower().split())
         self.assertIn("before insert or update of enterprise_id, template_version_id", compact)
 
-    def test_only_read_function_is_exposed(self):
+    def test_provisioning_stays_internal_and_read_is_exposed(self):
         provision = "provision_default_role_templates(uuid)"
         read = "get_enterprise_role_templates()"
         self.assertIn(f"revoke all on function public.{provision} from public;", self.sql)
@@ -98,6 +98,128 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         requirements = Path("requirements.txt").read_text(encoding="utf-8")
         self.assertIn("pglast", requirements.lower())
 
+    def test_template_rpc_guards(self):
+        for text in (
+            "clone_role_template",
+            "update_role_template",
+            "set_member_role_assignment",
+            "expire_role_assignments",
+            "cannot edit your own role",
+            "cannot grant permissions you do not hold",
+            "high-risk template changes require a major shareholder motion",
+            "secondary assignments must expire",
+        ):
+            self.assertIn(text, self.sql)
+        self.assertIn("cannot assign a role to yourself", self.sql)
+
+    def test_template_mutation_rpcs_are_present(self):
+        for signature in (
+            "public.clone_role_template(uuid,text,text)",
+            "public.update_role_template(uuid,text,jsonb)",
+            "public.set_member_role_assignment(uuid,uuid,timestamptz)",
+            "public.expire_role_assignments()",
+        ):
+            self.assertIn(signature, self.sql)
+
+    def test_update_role_template_retires_old_version_and_inserts_new(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("update public.enterprise_role_template_versions", compact)
+        self.assertIn("set status='retired'", compact)
+        self.assertIn("v_new_version:=v_current_version.version+1", compact)
+        self.assertIn("resource", compact)
+        self.assertIn("scope", compact)
+        self.assertIn("conditions", compact)
+
+    def test_clone_copies_current_template_permissions_to_version_one(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("create or replace function public.clone_role_template", compact)
+        self.assertIn("v_source_version_id", compact)
+        self.assertIn("v_template_id,1,'active'", compact)
+        self.assertIn("from public.enterprise_role_template_permissions p", compact)
+
+    def test_assignment_rpc_records_required_fields_and_rejects_high_risk(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("insert into public.enterprise_role_assignments", compact)
+        for field in ("office_key", "starts_at", "ends_at", "appointed_by", "is_primary"):
+            self.assertIn(field, compact)
+        self.assertIn("ends_at is null", compact)
+        self.assertIn("p.high_risk", compact)
+        self.assertIn("template contains high-risk permissions", compact)
+
+    def test_expiry_rpc_only_expires_due_active_assignments(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("update public.enterprise_role_assignments", compact)
+        self.assertIn("set status='expired'", compact)
+        self.assertIn("where enterprise_id=v_eid", compact)
+        self.assertIn("status='active'", compact)
+        self.assertIn("ends_at is not null", compact)
+        self.assertIn("ends_at <= now()", compact)
+
+    def test_active_assignments_contribute_time_bound_permissions(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("create or replace function public._identity_role_permissions", compact)
+        self.assertIn("from public.enterprise_role_assignments a", compact)
+        self.assertIn("a.starts_at <= now()", compact)
+        self.assertIn("a.ends_at is null or a.ends_at > now()", compact)
+        self.assertIn("tv.status='active'", compact)
+
+    def test_mutation_rpcs_require_template_management_permission(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertGreaterEqual(
+            compact.count("? 'identity.manage_templates'"),
+            3,
+        )
+
+    def test_assignment_reuses_only_secondary_rows(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("and a.is_primary=false", compact)
+
+    def test_assignment_locks_template_before_resolving_current_version(self):
+        compact = " ".join(self.sql.lower().split())
+        assignment = compact.split(
+            "-- ------------------------------------------------------------ secondary assignments",
+            1,
+        )[1].split("-- ------------------------------------------------------------ template rpc grants", 1)[0]
+        self.assertIn(
+            "from public.enterprise_role_templates t where t.id=p_template and t.enterprise_id=v_eid and t.archived_at is null for update",
+            assignment,
+        )
+    def test_new_rpcs_are_authenticated_only(self):
+        for signature in (
+            "clone_role_template(uuid,text,text)",
+            "update_role_template(uuid,text,jsonb)",
+            "set_member_role_assignment(uuid,uuid,timestamptz)",
+            "expire_role_assignments()",
+        ):
+            self.assertIn(
+                f"revoke all on function public.{signature} from public;", self.sql
+            )
+            self.assertIn(
+                f"revoke all on function public.{signature} from anon;", self.sql
+            )
+            self.assertIn(
+                f"revoke all on function public.{signature} from authenticated;",
+                self.sql,
+            )
+            self.assertIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
+
+    def test_new_rpcs_are_security_definer_with_fixed_search_path(self):
+        lowered = self.sql.lower()
+        for name in (
+            "clone_role_template",
+            "update_role_template",
+            "set_member_role_assignment",
+            "expire_role_assignments",
+        ):
+            marker = f"create or replace function public.{name}("
+            start = lowered.find(marker)
+            self.assertGreaterEqual(start, 0)
+            definition = lowered[start:].split("$fn$;", 1)[0]
+            self.assertIn("security definer", definition)
+            self.assertIn("set search_path=public,auth,pg_temp", definition)
 
 if __name__ == "__main__":
     unittest.main()
