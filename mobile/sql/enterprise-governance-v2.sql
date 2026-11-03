@@ -45,6 +45,12 @@ on conflict (key) do update set
   permissions=excluded.permissions,
   rank=excluded.rank;
 
+-- The legacy enterprise_members.role_key path must enforce the same
+-- identity-admin singleton invariant as role assignments.
+create unique index if not exists enterprise_single_identity_admin_member_idx
+  on public.enterprise_members(enterprise_id)
+  where role_key='identity_admin' and status='active';
+
 -- ------------------------------------------------------------ role templates
 create table if not exists public.enterprise_role_templates (
   id uuid primary key default gen_random_uuid(),

@@ -47,6 +47,15 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         )
         self.assertIn("'chairperson','director','supervisor','ceo','finance','identity_admin'", self.sql)
 
+    def test_legacy_identity_admin_members_are_singletons(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "create unique index if not exists enterprise_single_identity_admin_member_idx",
+            compact,
+        )
+        self.assertIn("on public.enterprise_members(enterprise_id)", compact)
+        self.assertIn("where role_key='identity_admin' and status='active'", compact)
+
     def test_assignments_require_primary_or_an_end(self):
         self.assertIn("enterprise_assignment_primary_or_ends_check", self.sql)
         compact = " ".join(self.sql.lower().split())
