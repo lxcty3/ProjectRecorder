@@ -331,6 +331,34 @@
   </div>
 </section>
 
+<!-- ====================== 企业身份 ====================== -->
+<section id="page-identity" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>企业身份</h1>
+      <div class="sub" id="identity-sub">股东按股份投票任免</div>
+    </div>
+    <button class="icon-btn" id="btn-identity-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div class="card identity-me-card" id="identity-me-card"></div>
+    <div class="section-head"><span>我的权限</span>
+      <span class="meta">身份决定可见功能</span></div>
+    <div class="chips" id="identity-permissions"></div>
+
+    <div class="section-head"><span>成员与身份</span>
+      <span class="meta" id="identity-member-count"></span></div>
+    <div id="identity-members"></div>
+
+    <div class="section-head"><span>股东表决</span>
+      <span class="meta" id="identity-motion-count"></span></div>
+    <div id="identity-motions"></div>
+    <div class="community-note">
+      任免按持股比例投票；弃权计入出席率，但不计入赞成率。
+    </div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -464,11 +492,13 @@
     <button data-page="dash" class="on"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
     <button data-page="assist"><b>助手</b></button>
+    <button data-page="identity"><b>治理</b></button>
     <button data-page="community"><b>星球</b></button>
     <button data-page="me" id="nav-me-boss"><b>我的</b></button>
   </span>
   <span id="nav-staff" class="nav-group hidden">
     <button data-page="tasks"><b>任务</b></button>
+    <button data-page="identity"><b>治理</b></button>
     <button data-page="community"><b>星球</b></button>
     <button data-page="me" id="nav-me-staff"><b>我的</b></button>
   </span>

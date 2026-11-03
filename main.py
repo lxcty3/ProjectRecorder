@@ -36,6 +36,7 @@ from community_ui import CommunityLoginDialog
 from collaboration import CollaborationPage, EmployeeCloudPage
 from detail import ImportDialog, ProjectDialog, SubmitWindow
 from knowledge_planet import KnowledgePlanetPage
+from identity_ui import IdentityPage, role_label
 from metrics import budget_usage, load_ratio, num, sum_hours
 from server import DEFAULT_PORT, SubmitServer
 from timer_ui import SessionListDialog, TimerBar
@@ -322,6 +323,7 @@ class MainWindow(QMainWindow):
         # 电脑版与手机版共用同一套 Supabase 账号。登录状态只保存令牌，
         # 不保存密码；没有登录时仍可继续使用本地项目数据。
         self.account_session = self._load_account_session()
+        self.identity_state = {}
 
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(resource_path("assets", "app_icon.ico")))
@@ -483,6 +485,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.knowledge_page, "知识星球")
         self.collaboration_page = CollaborationPage(self)
         self.tabs.addTab(self.collaboration_page, "协作中心")
+        self.identity_page = IdentityPage(self)
+        self.identity_tab = self.tabs.addTab(self.identity_page, "企业身份")
         self.employee_cloud_page = EmployeeCloudPage(self)
         self.employee_cloud_tab = self.tabs.addTab(self.employee_cloud_page, "我的任务")
         self.tabs.setTabVisible(self.employee_cloud_tab, False)
@@ -527,15 +531,55 @@ class MainWindow(QMainWindow):
             return CommunitySession.from_dict(raw)
         return None
 
+    def _identity_me(self):
+        return (self.identity_state or {}).get("me") or {}
+
+    def _has_identity_permission(self, *permissions):
+        """Use fine-grained enterprise capabilities when they are loaded."""
+        session = self.account_session
+        if session is None:
+            return True
+        me = self._identity_me()
+        granted = me.get("permissions")
+        if isinstance(granted, list) and granted:
+            return any(permission in granted for permission in permissions)
+        # Before the identity RPC finishes, preserve the old login-level behavior.
+        return session.role == "boss"
+
+    def _management_view(self):
+        return self._has_identity_permission(
+            "company.manage", "projects.view_all", "projects.manage",
+            "people.view_all", "people.manage", "reports.view",
+            "tasks.assign", "finance.view", "audit.read",
+        )
+
+    def apply_identity_state(self, state):
+        self.identity_state = state if isinstance(state, dict) else {}
+        me = self._identity_me()
+        if me and self.account_session is not None:
+            self.account_session.profile["enterprise_role"] = me.get("role_key")
+            self.account_session.profile["enterprise_role_name"] = me.get("role_name")
+            self.account_session.profile["enterprise_permissions"] = me.get("permissions") or []
+        self._refresh_account_ui()
+
+    def _account_role_label(self):
+        me = self._identity_me()
+        if me.get("role_key"):
+            return role_label(me.get("role_key"))
+        if self.account_session is None:
+            return "未登录"
+        return "老板" if self.account_session.role == "boss" else "员工"
+
     def _refresh_account_ui(self):
         session = self.account_session
         logged = session is not None
         if hasattr(self, "account_button"):
             if logged:
-                role = "老板" if session.role == "boss" else "员工"
+                role = self._account_role_label()
                 self.account_button.setText(f"{session.name} · {role}")
                 self.account_button.setToolTip(
                     f"账号 {session.profile.get('code') or session.name}\n"
+                    f"企业身份：{role}\n"
                     "电脑版与手机版共用此账号"
                 )
             else:
@@ -544,20 +588,27 @@ class MainWindow(QMainWindow):
                     "使用手机版同一个老板账号或员工号登录"
                 )
         if hasattr(self, "tabs"):
-            employee = bool(session and session.role == "employee")
-            boss = bool(session and session.role == "boss")
+            management = bool(session and self._management_view())
+            employee_tasks = bool(session and not management)
             for widget in (self.dashboard, self.collaboration_page,
                            self.assistant_page, self.employee_page,
                            self.staffing_page):
-                self.tabs.setTabVisible(self.tabs.indexOf(widget), boss or not logged)
+                self.tabs.setTabVisible(self.tabs.indexOf(widget), management or not logged)
+            if hasattr(self, "identity_page"):
+                self.tabs.setTabVisible(self.identity_tab, logged)
+                if self.identity_page.session is not session:
+                    self.identity_page.apply_account_session(session)
             if hasattr(self, "employee_cloud_page"):
-                self.tabs.setTabVisible(self.employee_cloud_tab, employee)
+                self.tabs.setTabVisible(self.employee_cloud_tab, employee_tasks)
                 self.employee_cloud_page.apply_account_session(
-                    session if employee else None
+                    session if employee_tasks else None
                 )
             if logged:
                 self.tabs.setCurrentWidget(
-                    self.employee_cloud_page if employee else self.dashboard
+                    self.dashboard if management else (
+                        self.identity_page if hasattr(self, "identity_page")
+                        else self.employee_cloud_page
+                    )
                 )
 
         if hasattr(self, "act_account_login"):
@@ -583,7 +634,7 @@ class MainWindow(QMainWindow):
         )
         if chosen is show_action:
             session = self.account_session
-            role = "老板" if session.role == "boss" else "员工"
+            role = self._account_role_label()
             QMessageBox.information(
                 self, "当前账号",
                 f"姓名：{session.name}\n"
@@ -600,10 +651,15 @@ class MainWindow(QMainWindow):
         dialog = CommunityLoginDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.session:
             self.set_account_session(dialog.session)
+            self.apply_identity_state({})
             role = "老板" if dialog.session.role == "boss" else "员工"
             self.flash(f"已连接手机版账号：{dialog.session.name}（{role}）", 4200)
 
     def set_account_session(self, session):
+        old_user = self.account_session.user_id if self.account_session else ""
+        new_user = session.user_id if session else ""
+        if old_user != new_user:
+            self.identity_state = {}
         self.account_session = session
         self.window_settings_set(
             "community_session", session.to_dict() if session else {}
@@ -613,6 +669,8 @@ class MainWindow(QMainWindow):
             self.knowledge_page.community_page.apply_account_session(session)
         if hasattr(self, "collaboration_page"):
             self.collaboration_page.apply_account_session(session)
+        if hasattr(self, "identity_page"):
+            self.identity_page.apply_account_session(session)
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.apply_account_session(
                 session if session and session.role == "employee" else None
@@ -685,6 +743,8 @@ class MainWindow(QMainWindow):
             self.collaboration_page.on_activated()
         elif self.tabs.widget(index) is self.employee_cloud_page:
             self.employee_cloud_page.refresh()
+        elif hasattr(self, "identity_page") and self.tabs.widget(index) is self.identity_page:
+            self.identity_page.on_activated()
 
     def export_data(self):
         import export
@@ -960,6 +1020,8 @@ class MainWindow(QMainWindow):
             self.knowledge_page.community_page.shutdown()
         if hasattr(self, "collaboration_page"):
             self.collaboration_page.shutdown()
+        if hasattr(self, "identity_page"):
+            self.identity_page.shutdown()
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.shutdown()
         if self.server.running:

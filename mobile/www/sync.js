@@ -753,7 +753,9 @@ function translateAccountError(message) {
 /* 把登录结果落到本地。
    profiles 表里存着角色和所属老板，必须读出来才知道该显示什么界面。 */
 async function adoptSession(user) {
-  if (!user) { DB.profile = null; _save(); return null; }
+  const previousId = DB.profile && DB.profile.id ? String(DB.profile.id) : "";
+  if (!user) { DB.profile = null; DB.identity = null; _save(); return null; }
+  if (previousId && previousId !== String(user.id)) DB.identity = null;
   let extra = null;
   try {
     const { data } = await cloudClient.from("profiles")
@@ -772,6 +774,7 @@ async function adoptSession(user) {
 async function cloudLogout() {
   try { if (cloudClient) await cloudClient.auth.signOut(); } catch (error) { /* 忽略 */ }
   DB.profile = null;
+  DB.identity = null;
   resetSyncState();
   _save();
 }
@@ -1092,10 +1095,10 @@ async function pullAll() {
     let query = cloudClient.from("tasks").select("*")
       .order("plan_date", { ascending: false })
       .limit(200);
-    if (profile.role === "employee") {
+    if (!identityHasManagementView()) {
       query = query.eq("employee_id", profile.id);
     } else {
-      query = query.eq("boss_id", profile.id);
+      query = query.eq("boss_id", identityOwnerId());
     }
     if (cursor.tasks) query = query.gte("updated_at", cursorSafe(cursor.tasks));
     const { data, error } = await query;
@@ -1179,8 +1182,11 @@ async function pullAll() {
     let query = cloudClient.from("worklogs").select("*")
       .order("created_at", { ascending: false })
       .limit(500);
-    if (profile.role === "boss") {
-      query = query.eq("boss_id", profile.id);
+    if (identityCanAny([
+      "worklogs.approve", "people.view_all", "reports.view",
+      "finance.view", "company.manage",
+    ])) {
+      query = query.eq("boss_id", identityOwnerId());
     } else {
       query = query.eq("employee_id", profile.id);
     }
@@ -1225,8 +1231,8 @@ async function pullAll() {
     let query = cloudClient.from("task_events").select("*")
       .order("created_at", { ascending: false })
       .limit(200);
-    if (profile.role === "boss") {
-      query = query.eq("boss_id", profile.id);
+    if (identityHasManagementView()) {
+      query = query.eq("boss_id", identityOwnerId());
     } else {
       query = query.eq("employee_id", profile.id);
     }

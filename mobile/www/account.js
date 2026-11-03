@@ -86,7 +86,9 @@ function renderLogin() {
     $("login-form").classList.add("hidden");
     $("login-resume").classList.remove("hidden");
     $("login-resume-name").textContent =
-      `${profile.name}（${profile.role === "boss" ? "老板" : "员工"}）`;
+      `${profile.name}（${DB.identity && DB.identity.me
+        ? identityRoleLabel(DB.identity.me.role_key)
+        : (profile.role === "boss" ? "老板" : "员工")}）`;
   } else {
     $("login-form").classList.remove("hidden");
     $("login-resume").classList.add("hidden");
@@ -381,6 +383,7 @@ function finishLogin() {
   }
   /* 立刻同步一次：员工需要马上看到今天的任务 */
   syncNow("login");
+  if (typeof refreshIdentity === "function") refreshIdentity(true);
   showPage(DB.profile && DB.profile.role === "employee" ? "tasks" : "dash");
   refreshSyncBadge();
 }
@@ -417,7 +420,14 @@ function logout() {
    让员工看到一堆自己用不上的按钮只会让人困惑。 */
 function applyRoleUI() {
   const profile = DB.profile;
-  const isStaff = !!(profile && profile.role === "employee");
+  const management = typeof identityCanAny === "function"
+    ? identityCanAny([
+        "company.manage", "projects.view_all", "projects.manage",
+        "people.view_all", "people.manage", "reports.view",
+        "tasks.assign", "finance.view", "audit.read",
+      ])
+    : !!(profile && profile.role === "boss");
+  const isStaff = !!(profile && !management);
 
   /* 底部导航：员工两个，老板四个。
      两边最后一项都是「我的」——退出登录、云服务设置在那里。 */

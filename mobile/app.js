@@ -73,6 +73,7 @@ function boot() {
     if (typeof restoreSession === "function") {
       restoreSession().then(() => {
         if (typeof renderMe === "function") renderMe();
+        if (typeof refreshIdentity === "function") refreshIdentity(false);
       }).catch(() => { /* 没网时失败是正常的，不影响 */ });
     }
 
@@ -154,7 +155,7 @@ function setBanner(element, text, kind) {
 /* 底部导航要占位置，所以这些页面的 body 要留出底部空间。
    登录页和派任务页没有导航，不用留。 */
 function makeNavScrollable() {
-  ["page-dash", "page-team", "page-assist",
+  ["page-dash", "page-team", "page-assist", "page-identity",
    "page-tasks", "page-community", "page-me"].forEach(id => {
     $(id).classList.add("has-nav");
   });
@@ -163,7 +164,7 @@ function makeNavScrollable() {
 /*: 所有页面。加新页面必须登记在这里——
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
 const PAGES = ["login", "dash", "project", "tasks", "team", "assist",
-               "community", "assign", "staff", "me"];
+               "identity", "community", "assign", "staff", "me"];
 
 function showPage(name) {
   const target = PAGES.indexOf(name) === -1 ? "dash" : name;
@@ -192,6 +193,10 @@ function showPage(name) {
   if (target === "tasks") renderTasks();
   if (target === "assign") renderAssign();
   if (target === "staff") renderStaff();
+  if (target === "identity") {
+    renderIdentity();
+    if (typeof refreshIdentity === "function") refreshIdentity(false);
+  }
   if (target === "community") renderCommunity();
   if (target === "me") renderMe();
   if (target === "login") renderLogin();
@@ -485,6 +490,7 @@ function bindGlobalEvents() {
 
   /* 社区的两个固定按钮在这里统一接线。 */
   $("btn-community-refresh").onclick = () => loadCommunityPosts(true);
+  $("btn-identity-refresh").onclick = () => refreshIdentity(true);
   $("btn-community-send").onclick = () => submitCommunityPost();
 
   /* **按下任何按钮都轻震一下。**

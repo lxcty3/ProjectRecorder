@@ -27,7 +27,8 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "account.js", "community.js", "app.js"];
+               "sync.js", "notify.js", "account.js", "identity.js",
+               "community.js", "app.js"];
 
 let failed = 0;
 function fail(label, detail) {

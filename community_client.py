@@ -112,6 +112,29 @@ def _translate_error(message):
         return ("社区数据表还没有创建。\n\n"
                 "请让管理员在 Supabase 的 SQL Editor 运行：\n"
                 "mobile/sql/community.sql")
+    if (("could not find the function" in lower or "does not exist" in lower)
+            and ("enterprise" in lower or "identity" in lower)):
+        return ("企业身份服务还没有安装。\n\n"
+                "请让管理员在 Supabase 的 SQL Editor 运行：\n"
+                "mobile/sql/enterprise-identity.sql")
+    if "only shareholders may vote" in lower:
+        return "只有持股股东可以投票。"
+    if "only shareholders may propose" in lower:
+        return "只有持股股东可以发起任免提案。"
+    if "only the enterprise owner may change shares" in lower:
+        return "只有企业所有者可以调整股份。"
+    if "voting is still in progress" in lower:
+        return "投票还在进行，需等投票期结束或全部股东完成投票。"
+    if "cannot change shares while a role vote is open" in lower:
+        return "有任免投票正在进行，结束前不能调整股份。"
+    if "voting period has ended" in lower or "motion is closed" in lower:
+        return "这次投票已经结束。"
+    if "target already holds this role" in lower:
+        return "该成员已经担任这个身份。"
+    if "target already has the base employee role" in lower:
+        return "该成员目前就是普通员工，无需发起免职。"
+    if "open role motion" in lower:
+        return "该成员已有一项进行中的任免提案。"
     if "could not find the function" in lower or "does not exist" in lower:
         if "login_email" in lower:
             return ("账号登录服务还没有安装。\n\n"
@@ -279,4 +302,58 @@ class CommunityClient:
             "POST", "/rest/v1/rpc/delete_my_community_message",
             token=session.access_token,
             body={"p_post_id": str(post_id)},
+        )
+
+    # ------------------------------------------------------ enterprise identity
+    def identity_state(self, session):
+        """Return the current enterprise, member roles, shares and motions."""
+        return _request(
+            "POST", "/rest/v1/rpc/get_enterprise_identity_state",
+            token=session.access_token,
+            body={},
+        )
+
+    def propose_role_change(self, session, target_profile_id, kind,
+                            role_key="employee", department="", title="",
+                            reason="", days=3):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_enterprise_role",
+            token=session.access_token,
+            body={
+                "p_target": str(target_profile_id),
+                "p_kind": str(kind or ""),
+                "p_role_key": str(role_key or "employee"),
+                "p_department": str(department or ""),
+                "p_title": str(title or ""),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 3),
+            },
+        )
+
+    def cast_role_vote(self, session, motion_id, choice):
+        return _request(
+            "POST", "/rest/v1/rpc/cast_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_choice": str(choice or "")},
+        )
+
+    def close_role_vote(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/close_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
+        )
+
+    def cancel_role_vote(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/cancel_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
+        )
+
+    def set_shareholder(self, session, profile_id, shares):
+        return _request(
+            "POST", "/rest/v1/rpc/set_enterprise_shareholder",
+            token=session.access_token,
+            body={"p_profile": str(profile_id), "p_shares": float(shares or 0)},
         )

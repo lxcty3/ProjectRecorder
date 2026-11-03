@@ -150,6 +150,10 @@ function emptyDatabase() {
        没网时不能把人挡在登录页外面。 */
     profile: null,
 
+    /* 最近一次从云端取到的企业身份快照。
+       离线时仍能显示上次确认过的身份和权限。 */
+    identity: null,
+
     /* 上次同步的结果，界面上显示"已同步 / 待上传 N 条" */
     lastSync: { at: "", ok: true, pending: 0, message: "" },
 
