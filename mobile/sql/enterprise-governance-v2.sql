@@ -33,6 +33,18 @@ begin
 end;
 $do$;
 
+-- ------------------------------------------------------------ identity administration
+-- This system catalog role makes the dedicated template-management
+-- capability reachable without granting any high-risk write permission.
+insert into public.enterprise_role_catalog(key,name,description,permissions,rank)
+values
+('identity_admin','Identity Administrator','Manages enterprise role templates within granted limits','["identity.manage_templates","identity.view","people.view_all"]',60)
+on conflict (key) do update set
+  name=excluded.name,
+  description=excluded.description,
+  permissions=excluded.permissions,
+  rank=excluded.rank;
+
 -- ------------------------------------------------------------ role templates
 create table if not exists public.enterprise_role_templates (
   id uuid primary key default gen_random_uuid(),
@@ -91,6 +103,54 @@ create table if not exists public.enterprise_role_assignments (
   created_at timestamptz not null default now(),
   check (ends_at is null or ends_at > starts_at)
 );
+
+do $do$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid='public.enterprise_role_assignments'::regclass
+       and conname='enterprise_assignment_primary_or_ends_check'
+  ) then
+    alter table public.enterprise_role_assignments
+      add constraint enterprise_assignment_primary_or_ends_check
+      check (
+        is_primary or ends_at is not null
+      );
+  end if;
+end;
+$do$;
+
+create or replace function public._enterprise_role_assignment_same_tenant()
+returns trigger
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_enterprise_id uuid;
+begin
+  select t.enterprise_id into v_enterprise_id
+    from public.enterprise_role_template_versions v
+    join public.enterprise_role_templates t on t.id=v.template_id
+   where v.id=new.template_version_id;
+
+  if v_enterprise_id is null then
+    raise exception 'role template version not found';
+  end if;
+  if v_enterprise_id<>new.enterprise_id then
+    raise exception 'role assignment template must belong to the same enterprise';
+  end if;
+  return new;
+end;
+$fn$;
+
+drop trigger if exists enterprise_role_assignment_same_tenant
+  on public.enterprise_role_assignments;
+create trigger enterprise_role_assignment_same_tenant
+before insert or update of enterprise_id, template_version_id
+on public.enterprise_role_assignments
+for each row execute function public._enterprise_role_assignment_same_tenant();
 
 create unique index if not exists enterprise_primary_role_idx
   on public.enterprise_role_assignments(enterprise_id, profile_id)
@@ -339,7 +399,10 @@ $fn$;
 
 revoke all on function public.provision_default_role_templates(uuid) from public;
 revoke all on function public.provision_default_role_templates(uuid) from anon;
-grant execute on function public.provision_default_role_templates(uuid) to authenticated;
+revoke all on function public.provision_default_role_templates(uuid) from authenticated;
+revoke all on function public._enterprise_role_assignment_same_tenant() from public;
+revoke all on function public._enterprise_role_assignment_same_tenant() from anon;
+revoke all on function public._enterprise_role_assignment_same_tenant() from authenticated;
 
 revoke all on function public.get_enterprise_role_templates() from public;
 revoke all on function public.get_enterprise_role_templates() from anon;

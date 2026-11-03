@@ -38,19 +38,41 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         ):
             self.assertIn(name, self.sql)
 
-    def test_provisioning_and_read_functions_are_authenticated_only(self):
-        for function in (
-            "provision_default_role_templates(uuid)",
-            "get_enterprise_role_templates()",
-        ):
-            self.assertIn(
-                f"revoke all on function public.{function} from public;", self.sql
-            )
-            self.assertIn(
-                f"grant execute on function public.{function} to authenticated;",
-                self.sql,
-            )
-        self.assertGreaterEqual(self.sql.lower().count("security definer"), 2)
+    def test_identity_admin_catalog_entry_is_provisionable(self):
+        self.assertIn("insert into public.enterprise_role_catalog", self.sql)
+        self.assertIn("('identity_admin','Identity Administrator'", self.sql)
+        self.assertIn(
+            '["identity.manage_templates","identity.view","people.view_all"]',
+            self.sql,
+        )
+        self.assertIn("'chairperson','director','supervisor','ceo','finance','identity_admin'", self.sql)
+
+    def test_assignments_require_primary_or_an_end(self):
+        self.assertIn("enterprise_assignment_primary_or_ends_check", self.sql)
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("check ( is_primary or ends_at is not null )", compact)
+
+    def test_assignments_reject_cross_enterprise_template_versions(self):
+        self.assertIn("enterprise_role_assignment_same_tenant", self.sql)
+        self.assertIn("template must belong to the same enterprise", self.sql)
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("before insert or update of enterprise_id, template_version_id", compact)
+
+    def test_only_read_function_is_exposed(self):
+        provision = "provision_default_role_templates(uuid)"
+        read = "get_enterprise_role_templates()"
+        self.assertIn(f"revoke all on function public.{provision} from public;", self.sql)
+        self.assertIn(
+            f"revoke all on function public.{provision} from authenticated;", self.sql
+        )
+        self.assertNotIn(
+            f"grant execute on function public.{provision} to authenticated;", self.sql
+        )
+        self.assertIn(f"revoke all on function public.{read} from public;", self.sql)
+        self.assertIn(
+            f"grant execute on function public.{read} to authenticated;", self.sql
+        )
+        self.assertGreaterEqual(self.sql.lower().count("security definer"), 3)
 
     def test_assignment_constraints_and_rls(self):
         for table in (
@@ -62,6 +84,10 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             self.assertIn(f"alter table public.{table} enable row level security;", self.sql)
         self.assertIn("enterprise_primary_role_idx", self.sql)
         self.assertIn("status='active' and is_primary", self.sql)
+
+    def test_sql_test_dependency_is_declared(self):
+        requirements = Path("requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("pglast", requirements.lower())
 
 
 if __name__ == "__main__":
