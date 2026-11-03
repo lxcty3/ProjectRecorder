@@ -46,6 +46,8 @@ def _active(grant, now):
 
 def merge_permissions(grants: Iterable[PermissionGrant], now=None):
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
     merged = {}
     for grant in grants:
         if grant.key and _active(grant, current):
@@ -70,14 +72,19 @@ def required_threshold_bps(kind):
 
 
 def evaluate_vote(total_shares, yes_shares, no_shares, abstain_shares,
-                  quorum_bps, approval_bps):
+                  quorum_bps, approval_bps, approval_basis="decisive"):
     total = max(float(total_shares), 0.0)
     yes = max(float(yes_shares), 0.0)
     no = max(float(no_shares), 0.0)
     cast = yes + no + max(float(abstain_shares), 0.0)
     turnout = int(cast / total * BPS) if total else 0
-    decisive = yes + no
-    approval = int(yes / decisive * BPS) if decisive else 0
+    if approval_basis == "decisive":
+        basis = yes + no
+    elif approval_basis == "total":
+        basis = total
+    else:
+        raise ValueError(f"unknown approval basis: {approval_basis}")
+    approval = int(yes / basis * BPS) if basis else 0
     if total <= 0:
         return VoteResult(False, 0, 0, "no_voting_shares")
     if turnout < quorum_bps:

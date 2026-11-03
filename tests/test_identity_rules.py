@@ -13,6 +13,16 @@ class IdentityRulesTest(unittest.TestCase):
         self.assertFalse(has_permission(grants, "projects.manage", now))
         self.assertEqual(merge_permissions(grants, now), {})
 
+    def test_naive_now_is_treated_as_utc(self):
+        now = datetime(2026, 11, 3)
+        grants = [
+            PermissionGrant(
+                "projects.manage",
+                expires_at=datetime(2026, 11, 4, tzinfo=timezone.utc),
+            )
+        ]
+        self.assertTrue(has_permission(grants, "projects.manage", now))
+
     def test_high_risk_forces_major(self):
         self.assertEqual(motion_class(["projects.manage"]), "ordinary")
         self.assertEqual(motion_class(["finance.manage"]), "major")
@@ -25,9 +35,13 @@ class IdentityRulesTest(unittest.TestCase):
         self.assertEqual((result.turnout_bps, result.approval_bps), (5000, 6000))
 
     def test_major_vote_needs_two_thirds_of_all_shares(self):
-        result = evaluate_vote(100, 60, 40, 0, 0, 6667)
+        result = evaluate_vote(100, 60, 0, 40, 0, 6667, "total")
         self.assertFalse(result.passed)
         self.assertEqual(result.approval_bps, 6000)
+
+        result = evaluate_vote(100, 67, 0, 33, 0, 6667, "total")
+        self.assertTrue(result.passed)
+        self.assertEqual(result.approval_bps, 6700)
 
     def test_admin_cannot_edit_self_or_overgrant(self):
         actor = [
