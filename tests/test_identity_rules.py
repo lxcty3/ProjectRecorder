@@ -30,10 +30,26 @@ class IdentityRulesTest(unittest.TestCase):
         self.assertEqual(result.approval_bps, 6000)
 
     def test_admin_cannot_edit_self_or_overgrant(self):
-        actor = [PermissionGrant("people.manage")]
+        actor = [
+            PermissionGrant("identity.manage_templates"),
+            PermissionGrant("people.manage"),
+        ]
         self.assertFalse(can_manage_template("u1", "u1", actor, ["people.manage"]))
         self.assertFalse(can_manage_template("u1", "u2", actor, ["finance.manage"]))
         self.assertTrue(can_manage_template("u1", "u2", actor, ["people.manage"]))
+        self.assertFalse(can_manage_template(
+            "u1", "u2", [PermissionGrant("people.manage")], ["people.manage"]
+        ))
+
+    def test_template_management_requires_high_risk_opt_in(self):
+        actor = [
+            PermissionGrant("identity.manage_templates"),
+            PermissionGrant("finance.manage"),
+        ]
+        self.assertFalse(can_manage_template("u1", "u2", actor, ["finance.manage"]))
+        self.assertTrue(can_manage_template(
+            "u1", "u2", actor, ["finance.manage"], allow_high_risk=True
+        ))
 
     def test_modes_and_points(self):
         self.assertFalse(can_use_advanced_mode([PermissionGrant("community.post")]))

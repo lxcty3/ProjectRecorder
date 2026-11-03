@@ -91,6 +91,8 @@ def can_manage_template(actor_id, target_id, grants, requested, allow_high_risk=
     if str(actor_id) == str(target_id):
         return False
     granted = merge_permissions(grants)
+    if not granted.get("identity.manage_templates"):
+        return False
     for key in requested:
         if key not in granted:
             return False
