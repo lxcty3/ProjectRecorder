@@ -69,7 +69,7 @@ class IdentityRulesTest(unittest.TestCase):
         self.assertEqual((result.turnout_bps, result.approval_bps), (5000, 6000))
 
     def test_major_vote_needs_two_thirds_of_all_shares(self):
-        result = evaluate_vote(100, 60, 40, 0, 0, 6667)
+        result = evaluate_vote(100, 60, 40, 0, 0, 6667, "total")
         self.assertFalse(result.passed)
         self.assertEqual(result.approval_bps, 6000)
 
@@ -159,14 +159,15 @@ def required_threshold_bps(kind):
     raise ValueError(f"unknown motion class: {kind}")
 
 def evaluate_vote(total_shares, yes_shares, no_shares, abstain_shares,
-                  quorum_bps, approval_bps):
+                  quorum_bps, approval_bps, approval_basis="decisive"):
     total = max(float(total_shares), 0.0)
     yes = max(float(yes_shares), 0.0)
     no = max(float(no_shares), 0.0)
     cast = yes + no + max(float(abstain_shares), 0.0)
     turnout = int(cast / total * BPS) if total else 0
     decisive = yes + no
-    approval = int(yes / decisive * BPS) if decisive else 0
+    denominator = total if approval_basis == "total" else decisive
+    approval = int(yes / denominator * BPS) if denominator else 0
     if total <= 0:
         return VoteResult(False, 0, 0, "no_voting_shares")
     if turnout < quorum_bps:
