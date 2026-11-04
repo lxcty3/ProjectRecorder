@@ -2761,7 +2761,7 @@ begin
     ]::text[]
   );
 
-  insert into public.project_economics(
+  insert into public.project_economics as pe(
     project_id,enterprise_id,contract_amount,invoiced_amount,collected_amount,
     outsourced_committed,outsourced_paid,labor_cost,
     estimated_completion_cost,other_cost,updated_by,updated_at
@@ -2780,28 +2780,28 @@ begin
   on conflict (project_id) do update set
     contract_amount=case when v_data ? 'contract_amount'
       then public._operations_number(v_data,'contract_amount')
-      else public.project_economics.contract_amount end,
+      else pe.contract_amount end,
     invoiced_amount=case when v_data ? 'invoiced_amount'
       then public._operations_number(v_data,'invoiced_amount')
-      else public.project_economics.invoiced_amount end,
+      else pe.invoiced_amount end,
     collected_amount=case when v_data ? 'collected_amount'
       then public._operations_number(v_data,'collected_amount')
-      else public.project_economics.collected_amount end,
+      else pe.collected_amount end,
     outsourced_committed=case when v_data ? 'outsourced_committed'
       then public._operations_number(v_data,'outsourced_committed')
-      else public.project_economics.outsourced_committed end,
+      else pe.outsourced_committed end,
     outsourced_paid=case when v_data ? 'outsourced_paid'
       then public._operations_number(v_data,'outsourced_paid')
-      else public.project_economics.outsourced_paid end,
+      else pe.outsourced_paid end,
     labor_cost=case when v_data ? 'labor_cost'
       then public._operations_number(v_data,'labor_cost')
-      else public.project_economics.labor_cost end,
+      else pe.labor_cost end,
     estimated_completion_cost=case when v_data ? 'estimated_completion_cost'
       then public._operations_number(v_data,'estimated_completion_cost')
-      else public.project_economics.estimated_completion_cost end,
+      else pe.estimated_completion_cost end,
     other_cost=case when v_data ? 'other_cost'
       then public._operations_number(v_data,'other_cost')
-      else public.project_economics.other_cost end,
+      else pe.other_cost end,
     updated_by=v_uid,updated_at=now()
   returning * into v_row;
 
@@ -2869,7 +2869,7 @@ begin
   v_available:=public._operations_number(v_data,'available_hours');
   v_valid_until:=nullif(v_data->>'valid_until','')::date;
 
-  insert into public.profile_skills(
+  insert into public.profile_skills as ps(
     enterprise_id,profile_id,skill,level,certified,certification,
     available_hours,valid_until,updated_by,updated_at
   ) values(
@@ -2880,17 +2880,17 @@ begin
   )
   on conflict (enterprise_id,profile_id,skill) do update set
     level=case when v_data ? 'level' then v_level
-      else public.profile_skills.level end,
+      else ps.level end,
     certified=case when v_data ? 'certified'
       then coalesce((v_data->>'certified')::boolean,false)
-      else public.profile_skills.certified end,
+      else ps.certified end,
     certification=case when v_data ? 'certification'
       then coalesce(v_data->>'certification','')
-      else public.profile_skills.certification end,
+      else ps.certification end,
     available_hours=case when v_data ? 'available_hours' then v_available
-      else public.profile_skills.available_hours end,
+      else ps.available_hours end,
     valid_until=case when v_data ? 'valid_until' then v_valid_until
-      else public.profile_skills.valid_until end,
+      else ps.valid_until end,
     updated_by=v_uid,updated_at=now()
   returning * into v_row;
 
@@ -3019,7 +3019,7 @@ begin
     raise exception 'invalid work_kind';
   end if;
 
-  insert into public.worklog_dimensions(
+  insert into public.worklog_dimensions as wd(
     worklog_id,billable,overtime,work_kind,rework,waiting,travel,
     updated_by,updated_at
   ) values(
@@ -3035,21 +3035,21 @@ begin
   on conflict (worklog_id) do update set
     billable=case when v_data ? 'billable'
       then coalesce((v_data->>'billable')::boolean,true)
-      else public.worklog_dimensions.billable end,
+      else wd.billable end,
     overtime=case when v_data ? 'overtime'
       then coalesce((v_data->>'overtime')::boolean,false)
-      else public.worklog_dimensions.overtime end,
+      else wd.overtime end,
     work_kind=case when v_data ? 'work_kind'
-      then v_kind else public.worklog_dimensions.work_kind end,
+      then v_kind else wd.work_kind end,
     rework=case when v_data ? 'rework'
       then coalesce((v_data->>'rework')::boolean,false)
-      else public.worklog_dimensions.rework end,
+      else wd.rework end,
     waiting=case when v_data ? 'waiting'
       then coalesce((v_data->>'waiting')::boolean,false)
-      else public.worklog_dimensions.waiting end,
+      else wd.waiting end,
     travel=case when v_data ? 'travel'
       then coalesce((v_data->>'travel')::boolean,false)
-      else public.worklog_dimensions.travel end,
+      else wd.travel end,
     updated_by=v_uid,updated_at=now()
   returning * into v_row;
 
@@ -3130,7 +3130,7 @@ begin
     raise exception 'reviewed performance evidence is immutable';
   end if;
 
-  insert into public.performance_evidence(
+  insert into public.performance_evidence as pe(
     enterprise_id,profile_id,period,on_time_rate,first_pass_rate,
     rework_rate,collaboration_score,complexity_score,business_contribution,
     evidence,status,score,created_at,updated_at
@@ -3146,7 +3146,7 @@ begin
     complexity_score=excluded.complexity_score,
     business_contribution=excluded.business_contribution,
     evidence=excluded.evidence,
-    status=case when public.performance_evidence.status='submitted'
+    status=case when pe.status='submitted'
       then 'submitted' else 'draft' end,
     score=0,updated_at=now()
   returning * into v_row;

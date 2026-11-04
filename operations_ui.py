@@ -267,8 +267,16 @@ class OperationsPage(QWidget):
     def on_activated(self):
         self.refresh()
 
+    def _can_view_operations(self):
+        return self._can(
+            "company.manage", "projects.view_all", "projects.manage",
+            "people.view_all", "people.manage", "worklogs.approve",
+            "tasks.assign", "tasks.grade", "finance.view", "finance.manage",
+            "reports.view", "audit.read", "rewards.manage", "leave.approve",
+        )
+
     def refresh(self):
-        if self.session is None:
+        if self.session is None or not self._can_view_operations():
             self.snapshot = {
                 "projects": [],
                 "capacity_gaps": [],

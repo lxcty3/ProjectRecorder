@@ -95,6 +95,22 @@ class OperationsUiTest(unittest.TestCase):
         self.assertFalse(read_only.edit_economics_button.isEnabled())
         self.assertFalse(read_only.review_button.isEnabled())
 
+    def test_hidden_page_does_not_call_management_rpc_without_permission(self):
+        page = OperationsPage(None)
+        page.session = CommunitySession(
+            "token",
+            expires_at=9999999999,
+            profile={"id": "u2", "role": "employee",
+                     "enterprise_permissions": []},
+        )
+        called = {"started": False}
+        page._start_worker = lambda work, done=None, failed=None: called.update(
+            started=True
+        )
+        page.refresh()
+        self.assertFalse(called["started"])
+        self.assertEqual(page.project_table.rowCount(), 0)
+
     def test_economics_execution_calls_real_rpc(self):
         page = self._page(["finance.manage"])
         page.session = CommunitySession("token", expires_at=9999999999)
