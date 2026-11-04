@@ -1,0 +1,6 @@
+# Test dependencies for ProjectRecorder.
+# The PostgreSQL integration module remains opt-in via
+# PROJECT_RECORDER_TEST_DATABASE_URL and is skipped in normal unittest runs.
+-r requirements.txt
+pglast>=8.7
+psycopg2-binary>=2.9
