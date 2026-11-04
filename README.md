@@ -133,6 +133,33 @@ mobile/sql/decision-approvals-v1.sql
 
 `install-unified.sql` 末尾包含一个受前置条件保护的 Phase 2A 区块：基础统一安装时如果阶段一或任务延期表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 为准。
 
+### 经营分析、工时经营标签、能力与绩效证据
+
+Phase 2B 在经营决策中心之后增加管理经营分析，并把执行记录与经营结果对齐：
+
+- **入口权限**：桌面端「经营分析」和手机端「经营摘要」只在高级模式且具备管理身份时显示；服务端 `get_operations_dashboard` 会再次校验。
+- **项目经营口径**：合同额、已开票、已回款、应付/已付外包、人力成本、预计完工成本、预计毛利、毛利率和回款缺口均由服务端聚合。
+- **工时经营标签**：工时支持可计费、加班、项目/售前/内部、返工、等待和出差。新增字段都有兼容默认值，并可通过 `upsert_worklog_dimensions` 写入和审计。
+- **能力缺口**：技能记录包含等级、证书、可用时间和有效期；未来 2-4 周需求与可用时间形成可下钻的能力缺口。
+- **绩效证据**：准时率、一次通过率、返工、协作、复杂度和经营贡献组成证据记录。员工可以查看自己的依据并提交说明，有权限的管理者才能复核。
+- **绩效边界**：绩效分数只依据交付和质量证据计算，不直接决定工资或晋升；简单模式不会展示跨人员经营或绩效对比，知识星球也不承载这些敏感数据。
+- **数据库边界**：经营、技能、需求、绩效和工时标签表启用 RLS，直接表权限收回；写入均通过 SECURITY DEFINER RPC 并写入企业审计。
+
+阶段 2B 部署顺序：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+mobile/sql/operations-economics-v1.sql
+```
+
+`decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
+
+`install-unified.sql` 末尾包含受前置条件保护的 Phase 2A 和 Phase 2B 区块：基础统一安装时如果阶段一、任务延期或决策中心表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 和 `mobile/sql/operations-economics-v1.sql` 为准。
+
 ### 统一云端部署
 
 已有手机数据库升级时，先备份，再把以下脚本按现有部署顺序运行：
@@ -393,6 +420,7 @@ python -m pip install -r requirements-test.txt
 $env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/project_recorder_test'
 python -m unittest tests.test_enterprise_governance_integration -v
 python -m unittest tests.test_decision_integration -v
+python -m unittest tests.test_operations_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
@@ -404,9 +432,11 @@ mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
+mobile/sql/operations-economics-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。
+经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、管理越权拒绝、工时标签、能力缺口、员工证据说明、经理复核和审计。
 
 注意：
 
