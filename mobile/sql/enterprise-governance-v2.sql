@@ -1,7 +1,7 @@
 -- ============================================================
 -- Project Recorder - Enterprise governance v2
 --
--- Run this file after enterprise-identity.sql.
+-- Run this file after enterprise-identity.sql and community.sql.
 -- This migration adds versioned role templates and multi-role
 -- assignments. Template writes remain unavailable through direct
 -- REST access; clients use SECURITY DEFINER RPCs.
@@ -1344,6 +1344,117 @@ revoke all on table public.enterprise_board_votes from public;
 revoke all on table public.enterprise_board_votes from anon;
 revoke all on table public.enterprise_board_votes from authenticated;
 
+-- ------------------------------------------------------------ point pools and ledger
+-- A passed point_pool board motion supplies quarter, total_amount,
+-- single_award_limit, and optional carry_from. Pools never refill.
+create table if not exists public.enterprise_point_pools (
+  id uuid primary key default gen_random_uuid(),
+  enterprise_id uuid not null references public.enterprises(id) on delete cascade,
+  quarter text not null,
+  total_amount integer not null check(total_amount>0),
+  remaining_amount integer not null check(remaining_amount>=0),
+  single_award_limit integer not null check(single_award_limit>0),
+  status text not null default 'active' check(status in ('active','closed')),
+  board_motion_id uuid references public.enterprise_board_motions(id) on delete set null,
+  approved_at timestamptz not null default now(),
+  carries_to uuid references public.enterprise_point_pools(id) on delete set null,
+  unique (enterprise_id,quarter),
+  check(remaining_amount<=total_amount),
+  check(single_award_limit<=total_amount)
+);
+
+create unique index if not exists enterprise_point_pool_motion_idx
+  on public.enterprise_point_pools(board_motion_id)
+  where board_motion_id is not null;
+
+-- The ledger is append-only through RPCs; no client table grants exist.
+create table if not exists public.enterprise_point_ledger (
+  id uuid primary key default gen_random_uuid(),
+  enterprise_id uuid not null references public.enterprises(id) on delete cascade,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  amount integer not null check(amount<>0),
+  entry_type text not null check(entry_type in ('award','unlock','correction')),
+  pool_id uuid references public.enterprise_point_pools(id) on delete set null,
+  evidence_type text not null default '',
+  evidence_id uuid,
+  reason text not null default '',
+  actor_profile_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  check(
+    (entry_type='award' and amount>0)
+    or (entry_type='unlock' and amount<0)
+    or entry_type='correction'
+  )
+);
+
+create index if not exists enterprise_point_ledger_profile_idx
+  on public.enterprise_point_ledger(enterprise_id,profile_id,created_at desc);
+
+create unique index if not exists enterprise_point_award_evidence_idx
+  on public.enterprise_point_ledger(
+    enterprise_id,profile_id,evidence_type,evidence_id
+  )
+  where entry_type='award' and evidence_id is not null;
+
+create table if not exists public.enterprise_knowledge_unlocks (
+  enterprise_id uuid not null references public.enterprises(id) on delete cascade,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  post_id uuid not null references public.community_posts(id) on delete cascade,
+  cost integer not null check(cost>=0),
+  ledger_id uuid not null unique references public.enterprise_point_ledger(id),
+  unlocked_at timestamptz not null default now(),
+  primary key (profile_id,post_id)
+);
+
+alter table public.community_posts
+  add column if not exists unlock_cost integer not null default 0 check(unlock_cost>=0),
+  add column if not exists is_required boolean not null default false;
+
+alter table public.enterprise_point_pools enable row level security;
+alter table public.enterprise_point_ledger enable row level security;
+alter table public.enterprise_knowledge_unlocks enable row level security;
+
+revoke all on table public.enterprise_point_pools from public;
+revoke all on table public.enterprise_point_pools from anon;
+revoke all on table public.enterprise_point_pools from authenticated;
+revoke all on table public.enterprise_point_ledger from public;
+revoke all on table public.enterprise_point_ledger from anon;
+revoke all on table public.enterprise_point_ledger from authenticated;
+revoke all on table public.enterprise_knowledge_unlocks from public;
+revoke all on table public.enterprise_knowledge_unlocks from anon;
+revoke all on table public.enterprise_knowledge_unlocks from authenticated;
+
+create or replace function public._identity_can_read_community_post(
+  p_post uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select p_uid is not null and exists(
+    select 1
+      from public.community_posts p
+     where p.id=p_post
+       and (
+         p.is_required
+         or p.unlock_cost=0
+         or p.author_id=p_uid
+         or exists(
+           select 1
+             from public.enterprise_knowledge_unlocks u
+            where u.profile_id=p_uid
+              and u.post_id=p.id
+         )
+       )
+  );
+$fn$;
+
+drop policy if exists "community posts readable by members"
+  on public.community_posts;
+create policy "community posts readable by members"
+  on public.community_posts for select to authenticated
+  using (public._identity_can_read_community_post(id,auth.uid()));
+
 -- ------------------------------------------------------------ board helpers
 create or replace function public._identity_is_board_director(
   p_eid uuid,
@@ -1418,6 +1529,8 @@ declare
   v_payload jsonb:=coalesce(p_payload,'{}'::jsonb);
   v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false);
   v_motion uuid;
+  v_total integer;
+  v_limit integer;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -1439,6 +1552,27 @@ begin
   end if;
   if jsonb_typeof(v_payload) is distinct from 'object' then
     raise exception 'board motion payload must be an object';
+  end if;
+  if v_kind='point_pool' then
+    if trim(coalesce(v_payload->>'quarter','')) !~ '^[0-9]{4}-Q[1-4]$' then
+      raise exception 'point pool quarter is invalid';
+    end if;
+    begin
+      v_total:=(v_payload->>'total_amount')::integer;
+    exception when others then
+      raise exception 'point pool total must be positive';
+    end;
+    if v_total is null or v_total<=0 then
+      raise exception 'point pool total must be positive';
+    end if;
+    begin
+      v_limit:=(v_payload->>'single_award_limit')::integer;
+    exception when others then
+      raise exception 'point pool single award limit is invalid';
+    end;
+    if v_limit is null or v_limit<=0 or v_limit>v_total then
+      raise exception 'point pool single award limit is invalid';
+    end if;
   end if;
 
   insert into public.enterprise_board_motions(
@@ -1580,6 +1714,10 @@ begin
      set status=v_status,decided_at=now()
    where id=p_motion;
 
+  if v_status='passed' and v_m.kind='point_pool' then
+    perform public._identity_apply_point_pool_motion(p_motion);
+  end if;
+
   insert into public.enterprise_identity_audit(
     enterprise_id,actor_profile_id,action,target_profile_id,details
   ) values(
@@ -1597,6 +1735,121 @@ begin
     'ok',true,'status',v_status,'director_count',v_director_count,
     'cast_count',v_cast_count,'yes_count',v_yes_count,'reason',v_reason
   );
+end;
+$fn$;
+
+create or replace function public._identity_apply_point_pool_motion(
+  p_motion uuid
+) returns uuid
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_board_motions%rowtype;
+  v_quarter text;
+  v_total integer;
+  v_limit integer;
+  v_carry uuid;
+  v_carry_pool public.enterprise_point_pools%rowtype;
+  v_pool uuid;
+  v_existing uuid;
+begin
+  select * into v_m
+    from public.enterprise_board_motions
+   where id=p_motion
+   for update;
+  if not found then raise exception 'board motion not found'; end if;
+  if v_m.kind<>'point_pool' then
+    raise exception 'board motion is not a point pool';
+  end if;
+  if v_m.status<>'passed' then
+    raise exception 'point pool motion is not approved';
+  end if;
+
+  select id into v_existing
+    from public.enterprise_point_pools
+   where board_motion_id=p_motion;
+  if v_existing is not null then return v_existing; end if;
+
+  v_quarter:=trim(coalesce(v_m.payload->>'quarter',''));
+  if v_quarter !~ '^[0-9]{4}-Q[1-4]$' then
+    raise exception 'point pool quarter is invalid';
+  end if;
+  begin
+    v_total:=(v_m.payload->>'total_amount')::integer;
+  exception when others then
+    raise exception 'point pool total is invalid';
+  end;
+  begin
+    v_limit:=(v_m.payload->>'single_award_limit')::integer;
+  exception when others then
+    raise exception 'point pool single award limit is invalid';
+  end;
+  if v_total is null or v_total<=0 then
+    raise exception 'point pool total must be positive';
+  end if;
+  if v_limit is null or v_limit<=0 or v_limit>v_total then
+    raise exception 'point pool single award limit is invalid';
+  end if;
+  if exists(
+    select 1
+      from public.enterprise_point_pools
+     where enterprise_id=v_m.enterprise_id
+       and quarter=v_quarter
+  ) then
+    raise exception 'point pool already approved for quarter';
+  end if;
+
+  if nullif(trim(coalesce(v_m.payload->>'carry_from','')),'') is not null then
+    begin
+      v_carry:=(v_m.payload->>'carry_from')::uuid;
+    exception when others then
+      raise exception 'carry_from pool is invalid';
+    end;
+    select * into v_carry_pool
+      from public.enterprise_point_pools
+     where id=v_carry
+       and enterprise_id=v_m.enterprise_id
+     for update;
+    if not found then raise exception 'carry_from pool not found'; end if;
+    if v_carry_pool.quarter>=v_quarter then
+      raise exception 'carry_from pool must be from an earlier quarter';
+    end if;
+  end if;
+
+  insert into public.enterprise_point_pools(
+    enterprise_id,quarter,total_amount,remaining_amount,single_award_limit,
+    status,board_motion_id,approved_at
+  ) values(
+    v_m.enterprise_id,v_quarter,v_total,v_total,v_limit,
+    'active',p_motion,now()
+  ) returning id into v_pool;
+
+  update public.enterprise_point_pools
+     set status='closed'
+   where enterprise_id=v_m.enterprise_id
+     and id<>v_pool
+     and status='active';
+
+  if v_carry is not null then
+    update public.enterprise_point_pools
+       set remaining_amount=0,carries_to=v_pool
+     where id=v_carry;
+  end if;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_m.enterprise_id,v_uid,'point_pool.approved',null,
+    jsonb_build_object(
+      'point_pool_id',v_pool,'board_motion_id',p_motion,
+      'quarter',v_quarter,'total_amount',v_total,
+      'single_award_limit',v_limit,'carry_from',v_carry
+    )
+  );
+
+  return v_pool;
 end;
 $fn$;
 
@@ -2047,6 +2300,368 @@ begin
   );
 end;
 $fn$;
+
+-- ------------------------------------------------------------ chairperson points
+create or replace function public._identity_is_chairperson(
+  p_eid uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select exists(
+    select 1
+      from public.enterprise_members m
+     where m.enterprise_id=p_eid
+       and m.profile_id=p_uid
+       and m.status='active'
+       and (
+         m.role_key='chairperson'
+         or exists(
+           select 1
+             from public.enterprise_role_assignments a
+            where a.enterprise_id=m.enterprise_id
+              and a.profile_id=m.profile_id
+              and a.status='active'
+              and a.starts_at<=now()
+              and (a.ends_at is null or a.ends_at>now())
+              and a.office_key='chairperson'
+         )
+       )
+  );
+$fn$;
+
+create or replace function public.award_points(
+  p_profile uuid,
+  p_amount integer,
+  p_evidence_type text,
+  p_evidence_id uuid,
+  p_reason text
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_quarter text;
+  v_pool public.enterprise_point_pools%rowtype;
+  v_evidence_type text:=lower(trim(coalesce(p_evidence_type,'')));
+  v_reason text:=trim(coalesce(p_reason,''));
+  v_ledger uuid;
+  v_remaining integer;
+  v_balance integer;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if not public._identity_is_chairperson(v_eid,v_uid) then
+    raise exception 'only the active chairperson may award points';
+  end if;
+  if p_profile is null then raise exception 'point recipient is required'; end if;
+  if p_profile=v_uid then
+    raise exception 'chairperson cannot award points to self';
+  end if;
+  if not public._identity_is_member(v_eid,p_profile) then
+    raise exception 'point recipient is not an active enterprise member';
+  end if;
+
+  perform 1 from public.profiles where id=p_profile for update;
+
+  if p_amount is null or p_amount<=0 then
+    raise exception 'point amount must be positive';
+  end if;
+  if v_evidence_type='' or p_evidence_id is null then
+    raise exception 'evidence is required for point awards';
+  end if;
+  if v_reason='' then
+    raise exception 'reason is required for point awards';
+  end if;
+  if exists(
+    select 1
+      from public.enterprise_point_ledger l
+     where l.enterprise_id=v_eid
+       and l.profile_id=p_profile
+       and l.entry_type='award'
+       and l.evidence_type=v_evidence_type
+       and l.evidence_id=p_evidence_id
+  ) then
+    raise exception 'point evidence was already awarded';
+  end if;
+
+  v_quarter:=to_char(now() at time zone 'UTC','YYYY')
+    ||'-Q'||to_char(now() at time zone 'UTC','Q');
+  select p.* into v_pool
+    from public.enterprise_point_pools p
+   where p.enterprise_id=v_eid
+     and p.quarter=v_quarter
+     and p.status='active'
+   order by p.approved_at desc
+   limit 1
+   for update;
+  if not found then
+    raise exception 'no active point pool for current quarter';
+  end if;
+  if not exists(
+    select 1
+      from public.enterprise_board_motions bm
+     where bm.id=v_pool.board_motion_id
+       and bm.enterprise_id=v_pool.enterprise_id
+       and bm.kind='point_pool'
+       and bm.status='passed'
+  ) then
+    raise exception 'point pool is not board approved';
+  end if;
+  if p_amount>v_pool.single_award_limit then
+    raise exception 'single award limit exceeded';
+  end if;
+  if p_amount>v_pool.remaining_amount then
+    raise exception 'point pool exceeded';
+  end if;
+
+  update public.enterprise_point_pools
+     set remaining_amount=remaining_amount-p_amount
+   where id=v_pool.id
+   returning remaining_amount into v_remaining;
+
+  insert into public.enterprise_point_ledger(
+    enterprise_id,profile_id,amount,entry_type,pool_id,evidence_type,
+    evidence_id,reason,actor_profile_id
+  ) values(
+    v_eid,p_profile,p_amount,'award',v_pool.id,v_evidence_type,
+    p_evidence_id,v_reason,v_uid
+  ) returning id into v_ledger;
+
+  select coalesce(sum(l.amount),0)::integer into v_balance
+    from public.enterprise_point_ledger l
+   where l.enterprise_id=v_eid
+     and l.profile_id=p_profile;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'point.awarded',p_profile,
+    jsonb_build_object(
+      'ledger_id',v_ledger,'pool_id',v_pool.id,'amount',p_amount,
+      'evidence_type',v_evidence_type,'evidence_id',p_evidence_id,
+      'reason',v_reason,'pool_remaining',v_remaining
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'ledger_id',v_ledger,'amount',p_amount,
+    'balance',v_balance,'pool_remaining',v_remaining,
+    'points_are_permanent',true
+  );
+end;
+$fn$;
+
+create or replace function public.get_point_state()
+returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_quarter text;
+  v_pool public.enterprise_point_pools%rowtype;
+  v_balance integer;
+  v_ledger jsonb;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  v_quarter:=to_char(now() at time zone 'UTC','YYYY')
+    ||'-Q'||to_char(now() at time zone 'UTC','Q');
+  select p.* into v_pool
+    from public.enterprise_point_pools p
+   where p.enterprise_id=v_eid
+     and p.quarter=v_quarter
+     and p.status='active'
+   order by p.approved_at desc
+   limit 1;
+
+  select coalesce(sum(l.amount),0)::integer into v_balance
+    from public.enterprise_point_ledger l
+   where l.enterprise_id=v_eid
+     and l.profile_id=v_uid;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id',l.id,
+        'amount',l.amount,
+        'entry_type',l.entry_type,
+        'evidence_type',l.evidence_type,
+        'evidence_id',l.evidence_id,
+        'reason',l.reason,
+        'actor_profile_id',l.actor_profile_id,
+        'actor_name',a.name,
+        'created_at',l.created_at
+      ) order by l.created_at desc
+    ),'[]'::jsonb
+  ) into v_ledger
+  from (
+    select l.*
+      from public.enterprise_point_ledger l
+     where l.enterprise_id=v_eid
+       and l.profile_id=v_uid
+     order by l.created_at desc
+     limit 100
+  ) l
+  left join public.profiles a on a.id=l.actor_profile_id;
+
+  return jsonb_build_object(
+    'ok',true,
+    'balance',v_balance,
+    'pool',case
+      when v_pool.id is null then 'null'::jsonb
+      else jsonb_build_object(
+        'id',v_pool.id,
+        'quarter',v_pool.quarter,
+        'total',v_pool.total_amount,
+        'remaining',v_pool.remaining_amount,
+        'single_award_limit',v_pool.single_award_limit,
+        'approved_at',v_pool.approved_at
+      )
+    end,
+    'ledger',v_ledger,
+    'points_are_permanent',true
+  );
+end;
+$fn$;
+
+create or replace function public.unlock_knowledge_content(p_post uuid)
+returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_post public.community_posts%rowtype;
+  v_unlock public.enterprise_knowledge_unlocks%rowtype;
+  v_cost integer;
+  v_balance integer;
+  v_ledger uuid;
+  v_after integer;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  if p_post is null then raise exception 'knowledge post is required'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  perform 1 from public.profiles where id=v_uid for update;
+
+  select * into v_post
+    from public.community_posts
+   where id=p_post
+   for share;
+  if not found then raise exception 'knowledge post not found'; end if;
+
+  if v_post.is_required then
+    return jsonb_build_object(
+      'ok',true,'unlocked',true,'required',true,'cost',0,
+      'content',v_post.content,'points_are_permanent',true
+    );
+  end if;
+  if v_post.unlock_cost=0 or v_post.author_id=v_uid then
+    return jsonb_build_object(
+      'ok',true,'unlocked',true,'required',false,'cost',0,
+      'content',v_post.content,'points_are_permanent',true
+    );
+  end if;
+
+  select * into v_unlock
+    from public.enterprise_knowledge_unlocks u
+   where u.profile_id=v_uid
+     and u.post_id=p_post;
+  if found then
+    return jsonb_build_object(
+      'ok',true,'unlocked',true,'required',false,
+      'cost',v_unlock.cost,'already_unlocked',true,
+      'content',v_post.content,'points_are_permanent',true
+    );
+  end if;
+
+  v_cost:=v_post.unlock_cost;
+  select coalesce(sum(l.amount),0)::integer into v_balance
+    from public.enterprise_point_ledger l
+   where l.enterprise_id=v_eid
+     and l.profile_id=v_uid;
+  if v_balance<v_cost then
+    raise exception 'insufficient points to unlock knowledge';
+  end if;
+
+  insert into public.enterprise_point_ledger(
+    enterprise_id,profile_id,amount,entry_type,pool_id,evidence_type,
+    evidence_id,reason,actor_profile_id
+  ) values(
+    v_eid,v_uid,-v_cost,'unlock',null,'knowledge',p_post,
+    'Unlock knowledge content',v_uid
+  ) returning id into v_ledger;
+
+  insert into public.enterprise_knowledge_unlocks(
+    enterprise_id,profile_id,post_id,cost,ledger_id
+  ) values(
+    v_eid,v_uid,p_post,v_cost,v_ledger
+  );
+
+  v_after:=v_balance-v_cost;
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'knowledge.unlocked',v_uid,
+    jsonb_build_object(
+      'post_id',p_post,'ledger_id',v_ledger,'cost',v_cost,
+      'balance_after',v_after
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'unlocked',true,'required',false,
+    'cost',v_cost,'balance',v_after,'ledger_id',v_ledger,
+    'content',v_post.content,'points_are_permanent',true
+  );
+end;
+$fn$;
+
+-- ------------------------------------------------------------ task 5 grants
+revoke all on function public._identity_is_chairperson(uuid,uuid) from public;
+revoke all on function public._identity_is_chairperson(uuid,uuid) from anon;
+revoke all on function public._identity_is_chairperson(uuid,uuid) from authenticated;
+
+revoke all on function public._identity_apply_point_pool_motion(uuid) from public;
+revoke all on function public._identity_apply_point_pool_motion(uuid) from anon;
+revoke all on function public._identity_apply_point_pool_motion(uuid) from authenticated;
+
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from public;
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from anon;
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from authenticated;
+grant execute on function public._identity_can_read_community_post(uuid,uuid) to authenticated;
+
+revoke all on function public.award_points(uuid,integer,text,uuid,text) from public;
+revoke all on function public.award_points(uuid,integer,text,uuid,text) from anon;
+revoke all on function public.award_points(uuid,integer,text,uuid,text) from authenticated;
+grant execute on function public.award_points(uuid,integer,text,uuid,text) to authenticated;
+
+revoke all on function public.get_point_state() from public;
+revoke all on function public.get_point_state() from anon;
+revoke all on function public.get_point_state() from authenticated;
+grant execute on function public.get_point_state() to authenticated;
+
+revoke all on function public.unlock_knowledge_content(uuid) from public;
+revoke all on function public.unlock_knowledge_content(uuid) from anon;
+revoke all on function public.unlock_knowledge_content(uuid) from authenticated;
+grant execute on function public.unlock_knowledge_content(uuid) to authenticated;
 
 -- ------------------------------------------------------------ task 4 grants
 revoke all on function public._identity_is_board_director(uuid,uuid) from public;

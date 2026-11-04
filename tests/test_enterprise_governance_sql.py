@@ -595,5 +595,182 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
                 self.sql,
             )
 
+    def test_point_pool_schema_is_finite_and_board_approved(self):
+        compact = " ".join(self.sql.lower().split())
+        for text in (
+            "create table if not exists public.enterprise_point_pools",
+            "create table if not exists public.enterprise_point_ledger",
+            "create table if not exists public.enterprise_knowledge_unlocks",
+            "single_award_limit",
+            "remaining_amount<=total_amount",
+            "board_motion_id",
+            "quarter",
+            "carries_to",
+        ):
+            self.assertIn(text, compact)
+        apply_pool = " ".join(
+            self.rpc_definition("_identity_apply_point_pool_motion").split()
+        )
+        self.assertIn("v_m.kind<>'point_pool'", apply_pool)
+        self.assertIn("v_m.status<>'passed'", apply_pool)
+        self.assertIn("point pool already approved for quarter", apply_pool)
+        finalize = " ".join(self.rpc_definition("finalize_board_motion").split())
+        self.assertIn("_identity_apply_point_pool_motion", finalize)
+
+    def test_point_pool_motion_requires_finite_budget_payload(self):
+        create = " ".join(self.rpc_definition("create_board_motion").split())
+        for text in (
+            "v_kind='point_pool'",
+            "point pool quarter is invalid",
+            "point pool total must be positive",
+            "point pool single award limit is invalid",
+            "v_payload->>'quarter'",
+            "v_payload->>'total_amount'",
+            "v_payload->>'single_award_limit'",
+        ):
+            self.assertIn(text, create)
+
+    def test_award_points_guards_and_writes_permanent_ledger(self):
+        award = " ".join(self.rpc_definition("award_points").split())
+        for text in (
+            "p_profile uuid",
+            "p_amount integer",
+            "p_evidence_type text",
+            "p_evidence_id uuid",
+            "p_reason text",
+            "security definer",
+            "set search_path=public,auth,pg_temp",
+            "public._identity_is_chairperson",
+            "chairperson cannot award points to self",
+            "point amount must be positive",
+            "single award limit exceeded",
+            "evidence is required for point awards",
+            "reason is required for point awards",
+            "point evidence was already awarded",
+            "no active point pool for current quarter",
+            "point pool exceeded",
+            "for update",
+            "remaining_amount=remaining_amount-p_amount",
+            "insert into public.enterprise_point_ledger",
+            "'award'",
+            "point.awarded",
+            "points_are_permanent',true",
+        ):
+            self.assertIn(text, award)
+        chair = " ".join(
+            self.rpc_definition("_identity_is_chairperson").split()
+        )
+        self.assertIn("m.role_key='chairperson'", chair)
+        self.assertIn("a.office_key='chairperson'", chair)
+        self.assertIn("a.status='active'", chair)
+
+    def test_point_state_and_knowledge_unlocks_are_permanent(self):
+        state = " ".join(self.rpc_definition("get_point_state").split())
+        for text in (
+            "security definer",
+            "set search_path=public,auth,pg_temp",
+            "'balance'",
+            "'pool'",
+            "'ledger'",
+            "sum(l.amount)",
+            "order by l.created_at desc",
+            "v_quarter",
+        ):
+            self.assertIn(text, state)
+
+        unlock = " ".join(
+            self.rpc_definition("unlock_knowledge_content").split()
+        )
+        for text in (
+            "p_post uuid",
+            "security definer",
+            "set search_path=public,auth,pg_temp",
+            "v_post.is_required",
+            "v_post.unlock_cost",
+            "for update",
+            "enterprise_knowledge_unlocks",
+            "insufficient points to unlock knowledge",
+            "insert into public.enterprise_point_ledger",
+            "'unlock'",
+            "knowledge.unlocked",
+            "points_are_permanent',true",
+            "'content',v_post.content",
+        ):
+            self.assertIn(text, unlock)
+        compact_unlock = unlock.replace(" ", "")
+        self.assertIn("-v_cost", compact_unlock)
+
+    def test_point_tables_and_content_access_are_least_privilege(self):
+        for table in (
+            "enterprise_point_pools",
+            "enterprise_point_ledger",
+            "enterprise_knowledge_unlocks",
+        ):
+            self.assertIn(
+                f"alter table public.{table} enable row level security;",
+                self.sql,
+            )
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on table public.{table} from {role};",
+                    self.sql,
+                )
+            self.assertNotIn(
+                f"grant all on table public.{table} to authenticated;",
+                self.sql,
+            )
+
+        helper = " ".join(
+            self.rpc_definition("_identity_can_read_community_post").split()
+        )
+        for text in (
+            "security definer",
+            "set search_path=public,auth,pg_temp",
+            "p.is_required",
+            "p.unlock_cost=0",
+            "p.author_id=p_uid",
+            "enterprise_knowledge_unlocks",
+            "u.profile_id=p_uid",
+            "u.post_id=p.id",
+        ):
+            self.assertIn(text, helper)
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "create policy \"community posts readable by members\"",
+            compact,
+        )
+        self.assertIn(
+            "using (public._identity_can_read_community_post(id,auth.uid()))",
+            compact,
+        )
+
+        for signature in (
+            "award_points(uuid,integer,text,uuid,text)",
+            "get_point_state()",
+            "unlock_knowledge_content(uuid)",
+        ):
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on function public.{signature} from {role};",
+                    self.sql,
+                )
+            self.assertIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
+        for signature in (
+            "_identity_is_chairperson(uuid,uuid)",
+            "_identity_apply_point_pool_motion(uuid)",
+        ):
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on function public.{signature} from {role};",
+                    self.sql,
+                )
+            self.assertNotIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
+
 if __name__ == "__main__":
     unittest.main()
