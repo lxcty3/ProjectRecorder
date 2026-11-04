@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from community_client import CommunityClient
 from community_ui import CommunityWorker
+from role_templates_ui import RoleTemplatePage
 from widgets import SectionTitle, StatCard, label, muted
 
 __all__ = ["IdentityPage", "RoleMotionDialog"]
@@ -371,6 +372,9 @@ class IdentityPage(QWidget):
         role_layout.addWidget(self.role_text, 1)
         self.tabs.addTab(role_page, "身份权限")
 
+        self.role_template_page = RoleTemplatePage(self.window)
+        self.tabs.addTab(self.role_template_page, "身份模板")
+
         root.addWidget(self.tabs, 1)
         self.status_label = label("登录后加载企业身份", "CommunityFeedStatus")
         root.addWidget(self.status_label)
@@ -384,6 +388,7 @@ class IdentityPage(QWidget):
         if self.session and session and self.session.user_id != session.user_id:
             self.snapshot = {}
         self.session = session
+        self.role_template_page.apply_account_session(session)
         if session is None:
             self.snapshot = {}
             self.identity_label.setText("尚未登录")
@@ -446,11 +451,13 @@ class IdentityPage(QWidget):
 
         def work():
             session = self._client_session()
-            state = CommunityClient().identity_state(session)
-            return state, session
+            client = CommunityClient()
+            state = client.identity_state(session)
+            templates = client.role_templates(session)
+            return state, templates, session
 
         def done(result):
-            state, session = result
+            state, templates, session = result
             if session is not self.session:
                 self.session = session
                 self.window.account_session = session
@@ -458,6 +465,10 @@ class IdentityPage(QWidget):
                     "community_session", session.to_dict()
                 )
             self.snapshot = state if isinstance(state, dict) else {}
+            if not templates:
+                templates = self.snapshot.get("templates", [])
+            self.role_template_page.snapshot = {"templates": templates}
+            self.role_template_page.render()
             self._last_refresh = time.time()
             if hasattr(self.window, "apply_identity_state"):
                 self.window.apply_identity_state(self.snapshot)
