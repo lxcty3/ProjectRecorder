@@ -2717,7 +2717,6 @@ begin
      where l.enterprise_id=v_eid
        and (v_can_read_full_ledger or l.profile_id=v_uid)
      order by l.created_at desc
-     limit 100
   ) l
   left join public.profiles recipient on recipient.id=l.profile_id
   left join public.profiles a on a.id=l.actor_profile_id;

@@ -567,7 +567,7 @@ class MainWindow(QMainWindow):
         """Use fine-grained enterprise capabilities once identity state loads."""
         session = self.account_session
         if session is None:
-            return False
+            return True
         me = self._identity_me()
         granted = me.get("permissions")
         if isinstance(granted, list):
@@ -576,6 +576,8 @@ class MainWindow(QMainWindow):
         return session.role == "boss"
 
     def _management_action_allowed(self, permission):
+        if self.account_session is None:
+            return True
         return bool(
             self._effective_ui_mode() == "advanced"
             and self._has_identity_permission(permission)

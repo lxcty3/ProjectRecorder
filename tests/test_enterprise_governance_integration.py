@@ -1012,9 +1012,26 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
                 ),
             )
 
+        for index in range(105):
+            self._as(
+                None,
+                "insert into public.enterprise_point_ledger("
+                "enterprise_id,profile_id,amount,entry_type,evidence_type,"
+                "evidence_id,reason,actor_profile_id"
+                ") values(%s,%s,1,'award','acceptance',%s,%s,%s)",
+                (
+                    enterprise_id,
+                    employee_id,
+                    uuid.uuid4(),
+                    f"bulk ledger row {index}",
+                    owner_id,
+                ),
+            )
+
         owner_state = self._as(
             owner_id, "select public.get_point_state()"
         )[0]
+        self.assertGreater(len(owner_state["ledger"]), 100)
         self.assertTrue(owner_state["can_read_full_ledger"])
         self.assertEqual("enterprise", owner_state["ledger_scope"])
         self.assertEqual(
@@ -1026,6 +1043,7 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             employee_id, "select public.get_point_state()"
         )[0]
         self.assertFalse(employee_state["can_read_full_ledger"])
+        self.assertGreater(len(employee_state["ledger"]), 100)
         self.assertEqual(
             {employee_id},
             {uuid.UUID(entry["profile_id"]) for entry in employee_state["ledger"]},
@@ -1045,6 +1063,8 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             {employee_id, other_id},
             {uuid.UUID(entry["profile_id"]) for entry in auditor_state["ledger"]},
         )
+        self.assertGreater(len(auditor_state["ledger"]), 100)
+
     def test_point_function_and_table_grants_are_least_privilege(self):
         user_id = uuid.uuid4()
         expected_function_grants = (

@@ -654,7 +654,7 @@ function renderIdentityBoard(state) {
   const pool = pointState.pool || {};
   pointCount.textContent = `${num(pointState.balance)} 积分`;
   const ledger = Array.isArray(pointState.ledger) ? pointState.ledger : [];
-  const ledgerRows = ledger.slice(0, 30).map(entry => `
+  const ledgerRows = ledger.map(entry => `
     <div class="identity-vote-line">
       <span>${escapeHtml(entry.profile_name || "成员")}</span>
       <span>${num(entry.amount) > 0 ? "+" : ""}${num(entry.amount)}</span>

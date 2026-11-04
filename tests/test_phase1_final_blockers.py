@@ -231,5 +231,102 @@ class PhaseOneFinalBlockersTest(unittest.TestCase):
         self.assertIn("skipUnless", integration)
         self.assertIn("psycopg2", integration)
 
+    def test_employee_cloud_loaded_publishes_log_enriched_tasks(self):
+        from collaboration import EmployeeCloudPage
+
+        app = QApplication.instance() or QApplication([])
+        self.assertIsNotNone(app)
+        window = SimpleNamespace(identity_state={})
+        today = TodayPage(window)
+        window.today_page = today
+        page = EmployeeCloudPage(window)
+        page.session = SimpleNamespace(user_id="u1")
+        page._loaded({
+            "tasks": [
+                {"id": "logged", "title": "Logged", "employee_id": "u1",
+                 "accept_status": "accepted", "plan_date": "2026-11-04"},
+                {"id": "accepted-only", "title": "Accepted",
+                 "employee_id": "u1", "accept_status": "accepted",
+                 "plan_date": "2026-11-04"},
+            ],
+            "task_logs": [
+                {"id": "log-1", "task_id": "logged", "employee_id": "u1",
+                 "finished_at": "2026-11-04T10:00:00Z"},
+            ],
+        })
+        self.assertEqual(
+            [True, False], [task["completed"] for task in today.tasks]
+        )
+        self.assertEqual("已完成", page.table.item(0, 2).text())
+
+    def test_logged_out_local_actions_are_not_simple_mode_blocked(self):
+        from main import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.account_session = None
+        window.identity_state = {}
+        self.assertTrue(window._management_action_allowed("projects.manage"))
+        self.assertTrue(window._management_action_allowed("data.export_all"))
+
+        class FakeAction:
+            def __init__(self):
+                self.enabled = False
+
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+        project_action = FakeAction()
+        export_action = FakeAction()
+        window.management_actions = [
+            (project_action, "projects.manage"),
+            (export_action, "data.export_all"),
+        ]
+        window._refresh_management_actions()
+        self.assertTrue(project_action.enabled)
+        self.assertTrue(export_action.enabled)
+
+        window.account_session = SimpleNamespace(
+            user_id="u1", role="boss", profile={}
+        )
+        window.identity_state = {"me": {
+            "permissions": ["projects.manage", "data.export_all"],
+            "preferred_mode": "simple",
+        }}
+        self.assertFalse(window._management_action_allowed("projects.manage"))
+        self.assertFalse(window._management_action_allowed("data.export_all"))
+        window._refresh_management_actions()
+        self.assertFalse(project_action.enabled)
+        self.assertFalse(export_action.enabled)
+
+    def test_install_unified_declares_unlock_columns_before_references(self):
+        import pglast
+
+        install = read("mobile/sql/install-unified.sql")
+        pglast.parse_sql(install)
+        create_start = install.index(
+            "create table if not exists public.community_posts"
+        )
+        index_start = install.index("create index", create_start)
+        policy_start = install.index("create policy", create_start)
+        create_block = install[create_start:index_start]
+        self.assertIn("unlock_cost integer", create_block)
+        self.assertIn("is_required boolean", create_block)
+        for column in ("unlock_cost", "is_required"):
+            alter = f"add column if not exists {column}"
+            alter_start = install.index(alter, create_start)
+            self.assertLess(alter_start, policy_start)
+        self.assertLess(create_start, policy_start)
+        self.assertIn(
+            "using (author_id = auth.uid() or is_required or unlock_cost = 0)",
+            install,
+        )
+
+    def test_authorized_ledger_is_not_truncated(self):
+        point_state = self.rpc_definition("get_point_state")
+        self.assertNotIn("limit 100", point_state)
+        mobile_identity = read("mobile/identity.js")
+        self.assertNotIn("ledger.slice(0, 30)", mobile_identity)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -628,8 +628,9 @@ class EmployeeCloudPage(QWidget):
 
     def _loaded(self, snapshot):
         self.snapshot = snapshot
-        tasks = [row for row in snapshot.get("tasks", [])
-                 if row.get("employee_id") == self.session.user_id]
+        tasks = cloud_tasks_for_user(
+            snapshot, self.session.user_id if self.session else ""
+        )
         if self.window is not None and hasattr(self.window, "today_page"):
             self.window.today_page.set_cloud_tasks(tasks)
         self.table.setRowCount(len(tasks))
