@@ -565,3 +565,96 @@ class CommunityClient:
             token=session.access_token,
             body={"p_mode": mode},
         )
+
+    # ---------------------------------------------------------- operations
+    def operations_dashboard(self, session, weeks=None):
+        body = {}
+        if weeks is not None:
+            body["p_weeks"] = int(weeks)
+        data = _request(
+            "POST", "/rest/v1/rpc/get_operations_dashboard",
+            token=session.access_token, body=body,
+        )
+        return data if isinstance(data, dict) else {}
+
+    def upsert_project_economics(self, session, project_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_project_economics",
+            token=session.access_token,
+            body={
+                "p_project": str(project_id),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def upsert_profile_skill(self, session, profile_id, skill, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_profile_skill",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_skill": str(skill or ""),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def upsert_capacity_demand(self, session, demand_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_capacity_demand",
+            token=session.access_token,
+            body={
+                "p_demand": str(demand_id) if demand_id else None,
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def upsert_worklog_dimensions(self, session, worklog_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_worklog_dimensions",
+            token=session.access_token,
+            body={
+                "p_worklog": str(worklog_id),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def worklog_dimensions(self, session, worklog_id, data):
+        return self.upsert_worklog_dimensions(session, worklog_id, data)
+
+    def my_performance_evidence(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_my_performance_evidence",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {"items": []}
+
+    def submit_performance_statement(self, session, evidence_id, statement):
+        return _request(
+            "POST", "/rest/v1/rpc/submit_performance_statement",
+            token=session.access_token,
+            body={
+                "p_evidence": str(evidence_id),
+                "p_statement": str(statement or ""),
+            },
+        )
+
+    def review_performance_evidence(self, session, evidence_id, note):
+        return _request(
+            "POST", "/rest/v1/rpc/review_performance_evidence",
+            token=session.access_token,
+            body={
+                "p_evidence": str(evidence_id),
+                "p_note": str(note or ""),
+            },
+        )
+
+    def upsert_performance_evidence(self, session, profile_id, period, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_performance_evidence",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_period": str(period or ""),
+                "p_data": dict(data or {}),
+            },
+        )
