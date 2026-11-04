@@ -28,7 +28,7 @@ const HERE = __dirname;
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "identity.js", "today.js",
-               "account.js", "community.js", "app.js"];
+               "decision.js", "account.js", "community.js", "app.js"];
 
 let failed = 0;
 function fail(label, detail) {
@@ -4831,6 +4831,61 @@ test("企业治理：积分与模式有本地缓存", () => {
   }
 });
 
+test("决策中心：手机管理审批页完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-decisions", "decision-list", "approval-list",
+    "decision-summary", "btn-decisions-refresh",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="decisions"') === -1) {
+    throw new Error("高级导航缺少经营决策入口");
+  }
+  if (html.indexOf('src="decision.js"') === -1) {
+    throw new Error("index.html 没有加载 decision.js");
+  }
+
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (!/const PAGES = \[[\s\S]*?"decisions"/.test(app)) {
+    throw new Error("PAGES 没有登记 decisions");
+  }
+  if (app.indexOf('target === "decisions"') === -1
+      || app.indexOf("loadDecisionCenter(true);") === -1) {
+    throw new Error("showPage() 没有加载决策中心");
+  }
+  if (app.indexOf("bindDecisionCenter()") === -1) {
+    throw new Error("app.js 没有绑定决策中心事件");
+  }
+
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
+  if (today.indexOf('return management ? "decisions" : "dash";') === -1) {
+    throw new Error("高级管理模式没有默认进入决策中心");
+  }
+
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  if (account.indexOf('"decisions"') === -1
+      || account.indexOf("loadDecisionCenter") === -1) {
+    throw new Error("账号登录/同步没有刷新决策中心");
+  }
+
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"decision\.js"/.test(build)) {
+    throw new Error("build-www.js 没有打包 decision.js");
+  }
+
+  const decision = fs.readFileSync(path.join(HERE, "decision.js"), "utf8");
+  for (const text of [
+    "renderDecisionCenter", "loadDecisionCenter", "bindDecisionCenter",
+    "act_on_decision", "act_on_approval", "data-decision-action",
+    "data-approval-action", "evidence", "impact_days", "impact_amount",
+    "owner_name", "due_at", "actions", "idempotency",
+  ]) {
+    if (decision.indexOf(text) === -1) {
+      throw new Error(`decision.js 缺少 ${text}`);
+    }
+  }
+});
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

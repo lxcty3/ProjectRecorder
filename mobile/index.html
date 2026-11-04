@@ -391,6 +391,26 @@
   </div>
 </section>
 
+<!-- ====================== 经营决策（高级管理） ====================== -->
+<section id="page-decisions" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>经营决策</h1>
+      <div class="sub">先处理影响交付和金额最大的事项</div>
+    </div>
+    <button class="icon-btn" id="btn-decisions-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="decision-summary" class="decision-summary"></div>
+    <div class="section-head"><span>决策队列</span>
+      <span class="meta">证据 · 影响 · 责任人 · 截止</span></div>
+    <div id="decision-list"></div>
+    <div class="section-head"><span>我的审批</span>
+      <span class="meta">统一收件箱</span></div>
+    <div id="approval-list"></div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -537,6 +557,7 @@
     <button data-page="me"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
+    <button data-page="decisions"><b>决策</b></button>
     <button data-page="dash"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
     <button data-page="assist"><b>助手</b></button>
@@ -600,6 +621,7 @@
 <script src="notify.js"></script>
 <script src="identity.js"></script>
 <script src="today.js"></script>
+<script src="decision.js"></script>
 <script src="account.js"></script>
 <script src="community.js"></script>
 <script src="app.js"></script>

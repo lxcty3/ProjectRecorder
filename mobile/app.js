@@ -156,16 +156,17 @@ function setBanner(element, text, kind) {
 /* 底部导航要占位置，所以这些页面的 body 要留出底部空间。
    登录页和派任务页没有导航，不用留。 */
 function makeNavScrollable() {
-  ["page-today", "page-dash", "page-team", "page-assist", "page-identity",
-   "page-tasks", "page-community", "page-me"].forEach(id => {
+  ["page-today", "page-decisions", "page-dash", "page-team", "page-assist",
+   "page-identity", "page-tasks", "page-community", "page-me"].forEach(id => {
     $(id).classList.add("has-nav");
   });
 }
 
 /*: 所有页面。加新页面必须登记在这里——
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
-const PAGES = ["login", "today", "dash", "project", "tasks", "team", "assist",
-               "identity", "community", "assign", "staff", "me"];
+const PAGES = ["login", "today", "decisions", "dash", "project", "tasks",
+               "team", "assist", "identity", "community", "assign", "staff",
+               "me"];
 
 function showPage(name) {
   const target = PAGES.indexOf(name) === -1 ? "dash" : name;
@@ -191,6 +192,10 @@ function showPage(name) {
   if (target === "today") {
     renderToday();
     if (typeof refreshPointState === "function") refreshPointState(false);
+  }
+  if (target === "decisions") {
+    renderDecisionCenter();
+    loadDecisionCenter(true);
   }
   if (target === "dash") renderDash();
   if (target === "team") renderTeam();
@@ -496,6 +501,8 @@ function bindGlobalEvents() {
   /* 社区的两个固定按钮在这里统一接线。 */
   $("btn-community-refresh").onclick = () => loadCommunityPosts(true);
   $("btn-identity-refresh").onclick = () => refreshIdentity(true);
+  $("btn-decisions-refresh").onclick = () => loadDecisionCenter(true);
+  if (typeof bindDecisionCenter === "function") bindDecisionCenter();
   $("btn-community-send").onclick = () => submitCommunityPost();
 
   /* **按下任何按钮都轻震一下。**

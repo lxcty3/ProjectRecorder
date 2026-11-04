@@ -16,7 +16,10 @@ function mobileAdvancedAllowed() {
 }
 
 function mobileHomePage() {
-  return mobileAdvancedAllowed() && DB.uiMode === "advanced" ? "dash" : "today";
+  if (!mobileAdvancedAllowed() || DB.uiMode !== "advanced") return "today";
+  const management = typeof identityHasManagementView === "function"
+    ? identityHasManagementView() : true;
+  return management ? "decisions" : "dash";
 }
 
 function todayTaskRows() {

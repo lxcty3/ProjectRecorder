@@ -158,6 +158,10 @@ function emptyDatabase() {
        离线时继续显示最后一次确认过的值。 */
     pointState: { balance: 0, pool: null, ledger: [], at: 0 },
 
+    /* 经营决策中心最近一次服务端快照。没有数据时保持空数组，
+       绝不在客户端伪造决策或审批。 */
+    decisionCenter: { decisions: [], approvals: [], members: [], at: 0 },
+
     /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
        才能切到 advanced。服务端仍会独立校验。 */
     uiMode: "simple",
@@ -276,6 +280,15 @@ function migrate(data) {
     { balance: 0, pool: null, ledger: [], at: 0 }, merged.pointState || {}
   );
   if (!Array.isArray(merged.pointState.ledger)) merged.pointState.ledger = [];
+  merged.decisionCenter = Object.assign(
+    { decisions: [], approvals: [], members: [], at: 0 },
+    merged.decisionCenter || {}
+  );
+  ["decisions", "approvals", "members"].forEach(key => {
+    if (!Array.isArray(merged.decisionCenter[key])) {
+      merged.decisionCenter[key] = [];
+    }
+  });
   if (merged.uiMode !== "advanced") merged.uiMode = "simple";
   ["projects", "steps", "employees", "worklogs", "assignments",
    "assessments", "metrics", "sessions", "habits", "habitLogs",

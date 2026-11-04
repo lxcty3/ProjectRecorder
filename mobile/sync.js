@@ -1541,6 +1541,9 @@ async function syncNow(reason) {
       syncBusy = 0;
       syncInFlight = null;
       emitSync(syncStatus());
+      if (typeof refreshDecisionCenterIfActive === "function") {
+        refreshDecisionCenterIfActive();
+      }
       if (syncAgain && DB.profile) {
         const nextReason = syncAgainReason || "queued";
         syncAgain = false;

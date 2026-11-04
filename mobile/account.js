@@ -385,6 +385,7 @@ function finishLogin() {
   syncNow("login");
   if (typeof refreshIdentity === "function") refreshIdentity(true);
   if (typeof refreshPointState === "function") refreshPointState(true);
+  if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
   showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
 }
@@ -394,6 +395,7 @@ function resumeSession() {
   applyRoleUI();
   startSyncLoop();
   if (typeof refreshPointState === "function") refreshPointState(false);
+  if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
   refreshNotifyPermission().then(() => renderMe());
   if (typeof ensureGetuiPushConsent === "function") {
     ensureGetuiPushConsent();
@@ -445,8 +447,8 @@ function applyRoleUI() {
     toggleMe.textContent = advanced ? "回到简单模式" : "切换到高级模式";
   }
 
-  const advancedPages = ["dash", "project", "team", "assist", "identity",
-                         "assign", "staff"];
+  const advancedPages = ["decisions", "dash", "project", "team", "assist",
+                         "identity", "assign", "staff"];
   if (profile && !advanced && advancedPages.indexOf(currentPageName()) !== -1) {
     showPage("today");
   }
