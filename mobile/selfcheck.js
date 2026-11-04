@@ -4763,7 +4763,11 @@ test("深色主题的背景确实比文字深", () => {
 
 test("企业治理：今日工位存在", () => {
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  for (const id of ["page-today", "today-task-list", "btn-mode-toggle"]) {
+  for (const id of [
+    "page-today", "today-task-list", "btn-mode-toggle",
+    "identity-board", "identity-point-state",
+    "community-unlock-cost", "community-required",
+  ]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
   for (const script of ["today.js", "identity.js"]) {
@@ -4792,10 +4796,29 @@ test("企业治理：今日工位存在", () => {
     }
   }
 
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  for (const fn of [
+    "renderIdentityBoard", "openBoardPointMotion", "openChairAward",
+    "identityBoardVote", "identityBoardFinalize",
+  ]) {
+    if (identity.indexOf(`function ${fn}`) === -1) {
+      throw new Error(`identity.js 缺少 ${fn}`);
+    }
+  }
+  if (identity.indexOf("propose_enterprise_share_change") === -1
+      || identity.indexOf("set_enterprise_shareholder") !== -1) {
+    throw new Error("股份调整必须走股东表决，不能直接改股份");
+  }
+  if (identity.indexOf("已披露利益冲突") === -1) {
+    throw new Error("治理提案没有展示利益冲突披露");
+  }
+
   const community = fs.readFileSync(path.join(HERE, "community.js"), "utf8");
   if (community.indexOf("unlock_cost") === -1
-      || community.indexOf("data-community-unlock") === -1) {
-    throw new Error("知识星球没有展示解锁成本和操作");
+      || community.indexOf("data-community-unlock") === -1
+      || community.indexOf("list_knowledge_posts") === -1
+      || community.indexOf("p_unlock_cost") === -1) {
+    throw new Error("知识星球没有完成付费知识发现、发布和解锁");
   }
 });
 

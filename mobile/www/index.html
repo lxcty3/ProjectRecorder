@@ -376,8 +376,17 @@
     <div class="section-head"><span>股东表决</span>
       <span class="meta" id="identity-motion-count"></span></div>
     <div id="identity-motions"></div>
+
+    <div class="section-head"><span>董事会</span>
+      <span class="meta" id="identity-board-count"></span></div>
+    <div id="identity-board"></div>
+
+    <div class="section-head"><span>积分状态</span>
+      <span class="meta" id="identity-point-count"></span></div>
+    <div id="identity-point-state"></div>
+
     <div class="community-note">
-      任免按持股比例投票；弃权计入出席率，但不计入赞成率。
+      任免与股份调整按持股比例投票；董事会一人一票；弃权计入出席率。
     </div>
   </div>
 </section>
@@ -400,6 +409,14 @@
       <div class="chips community-topics" id="community-topics"></div>
       <textarea id="community-input" maxlength="2000"
         placeholder="写一条所有成员都能看到的消息。&#10;可以提问、分享经验、同步判断或发出一条灵感。"></textarea>
+      <div class="row2">
+        <div><label for="community-unlock-cost">解锁积分（0 = 免费）</label>
+          <input id="community-unlock-cost" type="number" min="0" value="0"></div>
+        <label class="community-required">
+          <input id="community-required" type="checkbox">
+          设为必读
+        </label>
+      </div>
       <div class="community-compose-foot">
         <span class="meta" id="community-count">0 / 2000</span>
         <button class="btn" id="btn-community-send">发布</button>

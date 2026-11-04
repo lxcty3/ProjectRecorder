@@ -58,6 +58,10 @@ const IDENTITY_MOTION_LABELS = Object.freeze({
   cancelled: "已取消",
 });
 
+const IDENTITY_MAJOR_ROLES = Object.freeze([
+  "chairperson", "director", "supervisor", "ceo", "finance", "identity_admin",
+]);
+
 let identityBusy = false;
 let identityLastAttempt = 0;
 
@@ -111,8 +115,7 @@ function identityHasAdvancedAccess() {
     "company.manage", "projects.view_all", "projects.manage",
     "people.view_all", "people.manage", "worklogs.approve",
     "tasks.assign", "tasks.grade", "finance.view", "finance.manage",
-    "reports.view", "audit.read", "identity.view", "identity.propose",
-    "identity.vote", "identity.manage_shares", "identity.manage_templates",
+    "reports.view", "audit.read", "identity.manage_templates",
     "governance.manage", "governance.vote",
   ]);
 }
@@ -222,11 +225,16 @@ function renderIdentity() {
     $("identity-sub").textContent = "股东按股份投票任免";
     $("identity-member-count").textContent = "";
     $("identity-motion-count").textContent = "";
+    if ($("identity-board")) $("identity-board").innerHTML = "";
+    if ($("identity-point-state")) $("identity-point-state").innerHTML = "";
+    if ($("identity-board-count")) $("identity-board-count").textContent = "";
+    if ($("identity-point-count")) $("identity-point-count").textContent = "";
     return;
   }
 
   const enterprise = state.enterprise || {};
-  const sharePercent = identityPercent(me.share_percent);
+  const canSeeShares = Object.prototype.hasOwnProperty.call(me, "shares");
+  const sharePercent = canSeeShares ? identityPercent(me.share_percent) : 0;
   $("identity-sub").textContent = enterprise.name || "企业治理";
   meCard.innerHTML = `
     <div class="identity-me-head">
@@ -239,14 +247,17 @@ function renderIdentity() {
         </div>
       </div>
       <div class="identity-weight">
-        <b>${sharePercent}%</b><span>股份权重</span>
+        <b>${canSeeShares ? sharePercent + "%" : "—"}</b>
+        <span>${canSeeShares ? "股份权重" : "仅本人权限"}</span>
       </div>
     </div>
     <div class="identity-meta-grid">
       <div><span>成员</span><b>${escapeHtml(me.name || "—")}</b></div>
       <div><span>部门</span><b>${escapeHtml(me.department || "—")}</b></div>
       <div><span>职务</span><b>${escapeHtml(me.title || "—")}</b></div>
-      <div><span>计票门槛</span><b>${num(enterprise.quorum_bps) / 100}% 出席</b></div>
+      ${canSeeShares
+        ? `<div><span>计票门槛</span><b>${num(enterprise.quorum_bps) / 100}% 出席</b></div>`
+        : ""}
     </div>
     ${errorBox ? `<div class="identity-stale">${escapeHtml(errorBox)}</div>` : ""}
   `;
@@ -260,6 +271,7 @@ function renderIdentity() {
 
   renderIdentityMembers(state);
   renderIdentityMotions(state);
+  renderIdentityBoard(state);
 }
 
 function renderIdentityMembers(state) {
@@ -320,11 +332,18 @@ function renderIdentityMembers(state) {
 
 function identityMotionCard(motion) {
   const me = identityMe() || {};
-  const kind = motion.kind === "appointment" ? "任免 / 调整" : "免职";
-  const target = motion.target_name || "成员";
+  const kind = motion.kind === "appointment" ? "任免 / 调整"
+    : motion.kind === "share_change" ? "股份调整"
+    : motion.kind === "template_change" ? "身份模板变更" : "免职";
+  let target = motion.target_name || "企业";
   const targetRole = motion.proposed_role_key
     ? ` → ${identityRoleLabel(motion.proposed_role_key)}`
     : "";
+  if (motion.kind === "share_change") {
+    target += ` · 目标 ${num((motion.payload || {}).shares)} 股`;
+  } else if (motion.kind === "template_change") {
+    target += ` · ${(motion.payload || {}).template_key || "模板"}`;
+  }
   const status = IDENTITY_MOTION_LABELS[motion.status] || motion.status || "—";
   const open = motion.status === "open";
   const canVote = open && motion.can_vote && identityCan("identity.vote");
@@ -352,6 +371,8 @@ function identityMotionCard(motion) {
         <span class="identity-status ${escapeHtml(motion.status || "")}">${escapeHtml(status)}</span>
       </div>
       <div class="identity-motion-reason">${escapeHtml(motion.reason || "未填写原因")}</div>
+      ${motion.conflict_disclosed
+        ? '<div class="identity-disclosure">已披露利益冲突</div>' : ""}
       <div class="identity-vote-line">
         <span>出席 ${identityPercent(motion.turnout_percent)}%</span>
         <span>赞成 ${identityPercent(motion.yes_percent)}%</span>
@@ -453,9 +474,15 @@ function openIdentityMotion(profileId) {
   ]);
 
   const kind = $("id-kind");
-  kind.onchange = () => {
+  const role = $("id-role");
+  const syncMotionForm = () => {
     $("id-role-fields").classList.toggle("hidden", kind.value !== "appointment");
+    $("id-days").value = kind.value === "appointment"
+      && IDENTITY_MAJOR_ROLES.indexOf(role.value) !== -1 ? "5" : "3";
   };
+  kind.onchange = syncMotionForm;
+  role.onchange = syncMotionForm;
+  syncMotionForm();
 }
 
 async function submitIdentityMotion() {
@@ -485,26 +512,42 @@ function openIdentityShares(profileId) {
   const member = (state && state.members || []).find(item =>
     String(item.profile_id) === String(profileId));
   if (!member) return;
-  openSheet("调整股份", `
+  openSheet("发起股份调整提案", `
     <div class="identity-member-sheet">
       <b>${escapeHtml(member.name)}</b>
       <span>${escapeHtml(identityRoleLabel(member.role_key))}</span>
     </div>
-    <label for="id-shares">股份权重</label>
+    <label for="id-shares">拟调整后的股份权重</label>
     <input id="id-shares" type="number" min="0" step="0.0001"
            inputmode="decimal" value="${num(member.shares)}">
+    <label for="id-share-reason">调整原因</label>
+    <textarea id="id-share-reason"
+      placeholder="股东投票时会看到这项说明"></textarea>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input id="id-share-conflict" type="checkbox" style="width:auto;margin:0">
+      利益冲突：已主动披露
+    </label>
     <div class="hint" style="margin-top:8px">
-      权重会折算成百分比参与投票。所有者必须保留大于 0 的股份。
+      股份调整属于重大事项，默认投票 5 天，通过后才会生效。
     </div>
   `, [
     { label: "取消", onClick: closeSheet },
-    { label: "保存股份", onClick: async () => {
+    { label: "提交重大表决", onClick: async () => {
       const shares = Number($("id-shares").value || 0);
+      const reason = $("id-share-reason").value.trim();
+      if (!reason) {
+        toast("股份调整必须填写原因");
+        return;
+      }
+      const conflict = $("id-share-conflict").checked;
       closeSheet();
-      await identityRpc("set_enterprise_shareholder", {
+      await identityRpc("propose_enterprise_share_change", {
         p_profile: profileId,
         p_shares: shares,
-      }, "股份权重已更新");
+        p_reason: reason,
+        p_days: 5,
+        p_conflict_disclosed: conflict,
+      }, "股份调整已提交重大股东表决");
     } },
   ]);
 }
@@ -548,3 +591,195 @@ async function identityRpc(name, args, successText) {
   }
 }
 
+
+function identityBoardCard(motion) {
+  const me = identityMe() || {};
+  const open = motion.status === "open";
+  const canVote = open && motion.can_vote;
+  const canFinalize = open && motion.can_finalize;
+  const voteButtons = canVote ? `
+    <button class="btn" data-board-vote="${escapeHtml(motion.id)}"
+      data-board-choice="yes">赞成</button>
+    <button class="btn ghost" data-board-vote="${escapeHtml(motion.id)}"
+      data-board-choice="no">反对</button>
+    <button class="btn ghost" data-board-vote="${escapeHtml(motion.id)}"
+      data-board-choice="abstain">弃权</button>` : "";
+  const finalizeButton = canFinalize
+    ? `<button class="btn ghost" data-board-finalize="${escapeHtml(motion.id)}">截止计票</button>`
+    : "";
+  const pointPayload = motion.kind === "point_pool" ? `
+    <div class="identity-vote-line">
+      <span>新增 ${num((motion.payload || {}).total_amount)} 分</span>
+      <span>单次上限 ${num((motion.payload || {}).single_award_limit)}</span>
+    </div>` : "";
+  return `<div class="identity-motion ${open ? "open" : ""}">
+    <div class="identity-motion-head"><div>
+      <div class="identity-eyebrow">董事会 · ${escapeHtml(motion.kind || "事项")}</div>
+      <b>${escapeHtml(motion.title || "董事会议案")}</b>
+    </div><span class="identity-status ${escapeHtml(motion.status || "")}">${
+      escapeHtml(IDENTITY_MOTION_LABELS[motion.status] || motion.status || "")
+    }</span></div>
+    ${pointPayload}
+    <div class="identity-vote-line">
+      <span>赞成 ${num(motion.yes_count)} / 出席 ${num(motion.cast_count)}</span>
+      <span>${motion.conflict_disclosed ? "已披露利益冲突" : "未披露冲突"}</span>
+      <span>${escapeHtml(motion.proposer_name || "董事")} 发起</span>
+    </div>
+    <div class="identity-motion-actions">${finalizeButton}${voteButtons}</div>
+  </div>`;
+}
+
+function renderIdentityBoard(state) {
+  const box = $("identity-board");
+  const count = $("identity-board-count");
+  const pointBox = $("identity-point-state");
+  const pointCount = $("identity-point-count");
+  if (!box || !count || !pointBox || !pointCount) return;
+  const me = state.me || {};
+  const motions = Array.isArray(state.board_motions) ? state.board_motions : [];
+  count.textContent = `${motions.filter(item => item.status === "open").length} 项待表决`;
+  const actions = [
+    me.is_board_director
+      ? '<button class="btn" id="btn-board-point-motion">发起积分池议案</button>'
+      : "",
+    me.is_chairperson
+      ? '<button class="btn ghost" id="btn-chair-award">董事长发放积分</button>'
+      : "",
+  ].join("");
+  box.innerHTML = actions + (motions.length
+    ? motions.map(identityBoardCard).join("")
+    : '<div class="identity-empty"><b>暂无董事会事项</b>'
+      + '<span>董事可发起积分池等经营议案。</span></div>');
+  const pointState = state.point_state || {};
+  const pool = pointState.pool || {};
+  pointCount.textContent = `${num(pointState.balance)} 积分`;
+  pointBox.innerHTML = `<div class="identity-motion open">
+    <div class="identity-motion-head"><div>
+      <div class="identity-eyebrow">本期积分池</div>
+      <b>${escapeHtml(pool.quarter || "暂无积分池")}</b>
+    </div><span class="identity-status open">永久积分</span></div>
+    <div class="identity-vote-line">
+      <span>余额 ${num(pointState.balance)}</span>
+      <span>剩余 ${num(pool.remaining)} / ${num(pool.total)}</span>
+      <span>单次上限 ${num(pool.single_award_limit)}</span>
+    </div></div>`;
+  const newButton = $("btn-board-point-motion");
+  if (newButton) newButton.onclick = openBoardPointMotion;
+  const awardButton = $("btn-chair-award");
+  if (awardButton) awardButton.onclick = openChairAward;
+  box.querySelectorAll("[data-board-vote]").forEach(button => {
+    button.onclick = () => identityBoardVote(
+      button.dataset.boardVote, button.dataset.boardChoice
+    );
+  });
+  box.querySelectorAll("[data-board-finalize]").forEach(button => {
+    button.onclick = () => identityBoardFinalize(button.dataset.boardFinalize);
+  });
+}
+
+function openBoardPointMotion() {
+  const now = new Date();
+  const quarter = `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+  const pointState = (identityState() || {}).point_state || {};
+  const pool = pointState.pool || {};
+  openSheet("发起积分池议案", `
+    <label for="board-title">议案标题</label>
+    <input id="board-title" value="${escapeHtml(quarter + " 积分池")}">
+    <label for="board-quarter">季度</label>
+    <input id="board-quarter" value="${escapeHtml(quarter)}">
+    <div class="row2">
+      <div><label for="board-total">新增额度</label>
+        <input id="board-total" type="number" min="1" value="1000"></div>
+      <div><label for="board-limit">单次上限</label>
+        <input id="board-limit" type="number" min="1" value="100"></div>
+    </div>
+    <label for="board-carry">结转来源（可选）</label>
+    <input id="board-carry" placeholder="${escapeHtml(pool.id || "上一积分池 UUID")}">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input id="board-conflict" type="checkbox" style="width:auto;margin:0">
+      利益冲突：已主动披露
+    </label>
+  `, [
+    { label: "取消", onClick: closeSheet },
+    { label: "提交董事会", onClick: async () => {
+      const payload = {
+        quarter: $("board-quarter").value.trim().toUpperCase(),
+        total_amount: Number($("board-total").value || 0),
+        single_award_limit: Number($("board-limit").value || 0),
+      };
+      const carry = $("board-carry").value.trim();
+      if (carry) payload.carry_from = carry;
+      const title = $("board-title").value.trim();
+      const conflict = $("board-conflict").checked;
+      closeSheet();
+      await identityRpc("create_board_motion", {
+        p_title: title,
+        p_kind: "point_pool",
+        p_payload: payload,
+        p_conflict_disclosed: conflict,
+      }, "积分池议案已提交董事会");
+    } },
+  ]);
+}
+
+async function identityBoardVote(motionId, choice) {
+  await identityRpc("cast_board_vote", {
+    p_motion: motionId,
+    p_choice: choice,
+  }, choice === "yes" ? "已投赞成票"
+    : choice === "no" ? "已投反对票" : "已投弃权票");
+}
+
+async function identityBoardFinalize(motionId) {
+  if (!confirm("确认截止并计票？董事会出席过半且出席董事过半赞成才通过。")) return;
+  await identityRpc("finalize_board_motion", {
+    p_motion: motionId,
+  }, "董事会表决已计票");
+}
+
+function openChairAward() {
+  const state = identityState() || {};
+  const me = state.me || {};
+  const members = (state.members || []).filter(member =>
+    member.status === "active"
+    && String(member.profile_id) !== String(me.profile_id));
+  const options = members.map(member =>
+    `<option value="${escapeHtml(member.profile_id)}">${escapeHtml(member.name)}</option>`
+  ).join("");
+  openSheet("董事长发放积分", `
+    <label for="award-member">成员</label>
+    <select id="award-member">${options}</select>
+    <label for="award-amount">积分</label>
+    <input id="award-amount" type="number" min="1" value="10">
+    <label for="award-evidence-type">证据类型</label>
+    <select id="award-evidence-type">
+      <option value="acceptance">验收</option>
+      <option value="collaboration">协作</option>
+      <option value="knowledge">知识贡献</option>
+    </select>
+    <label for="award-evidence">证据 UUID</label>
+    <input id="award-evidence">
+    <label for="award-reason">发放原因</label>
+    <textarea id="award-reason"></textarea>
+    <div class="hint">发放后积分永久有效，且不能超过积分池和单次上限。</div>
+  `, [
+    { label: "取消", onClick: closeSheet },
+    { label: "确认发放", onClick: async () => {
+      const evidence = $("award-evidence").value.trim();
+      const reason = $("award-reason").value.trim();
+      if (!evidence || !reason) {
+        toast("证据和原因都必须填写");
+        return;
+      }
+      const args = {
+        p_profile: $("award-member").value,
+        p_amount: Number($("award-amount").value || 0),
+        p_evidence_type: $("award-evidence-type").value,
+        p_evidence_id: evidence,
+        p_reason: reason,
+      };
+      closeSheet();
+      await identityRpc("award_points", args, "积分已发放");
+    } },
+  ]);
+}

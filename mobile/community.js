@@ -97,18 +97,20 @@ function renderCommunityFeed() {
       entry.entry_type === "unlock"
       && String(entry.evidence_id) === String(post.id));
     const required = !!post.is_required;
-    const locked = !mine && !required && !unlocked && cost > 0;
+    const locked = typeof post.locked === "boolean"
+      ? post.locked : (!mine && !required && !unlocked && cost > 0);
     const access = required ? '<span class="community-access required">必读</span>'
       : cost > 0 ? `<span class="community-access${unlocked || mine ? " unlocked" : ""}">${
           unlocked || mine ? "已解锁" : cost + " 积分"
         }</span>` : "";
     const body = locked
       ? '<div class="community-locked"><b>这是付费知识</b>'
+        + `<span>${communityEscape(post.preview || "解锁后可永久查看全文")}</span>`
         + `<span>使用 ${cost} 积分后可永久查看。</span>`
         + `<button class="btn" data-community-unlock="${
           communityEscape(post.id)
         }">解锁全文</button></div>`
-      : communityEscape(post.content);
+      : communityEscape(post.content || post.preview || "");
     return '<article class="community-post">'
       + '<div class="community-post-head">'
       + '<span class="community-avatar ' + role + '">' + initial + "</span>"
@@ -221,10 +223,9 @@ async function loadCommunityPosts(force) {
   const status = $("community-status");
   if (status) status.textContent = "同步中…";
   try {
-    const result = await cloudClient.from("community_posts")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(80);
+    const result = await cloudClient.rpc("list_knowledge_posts", {
+      p_limit: 80,
+    });
     if (result.error) throw result.error;
     communityPosts = Array.isArray(result.data) ? result.data : [];
     communityLastLoad = Date.now();
@@ -278,6 +279,8 @@ async function submitCommunityPost() {
     const result = await cloudClient.rpc("post_community_message", {
       p_content: content,
       p_topic: communityTopic,
+      p_unlock_cost: Number(($("community-unlock-cost") || {}).value || 0),
+      p_is_required: !!($("community-required") || {}).checked,
     });
     if (result.error) throw result.error;
     input.value = "";
