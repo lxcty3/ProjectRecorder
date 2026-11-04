@@ -415,10 +415,13 @@ revoke all on function public.get_enterprise_role_templates() from anon;
 grant execute on function public.get_enterprise_role_templates() to authenticated;
 
 -- ------------------------------------------------------------ assignment-aware permissions
--- Active assignments contribute permissions from the template's current
--- version. Time bounds are evaluated here so a due assignment stops
--- granting access even before the expiry RPC marks it expired.
-create or replace function public._identity_role_permissions(p_eid uuid,p_uid uuid)
+-- Effective permission grants retain all dimensions required by the
+-- permission ceiling. Assignments are ignored unless the profile is still
+-- an active enterprise member and the grant is time-valid.
+create or replace function public._identity_role_permission_grants(
+  p_eid uuid,
+  p_uid uuid
+)
 returns jsonb
 language plpgsql
 stable
@@ -426,18 +429,80 @@ security definer
 set search_path=public,auth,pg_temp
 as $fn$
 declare
-  v_permissions jsonb:='[]'::jsonb;
+  v_grants jsonb:='[]'::jsonb;
   v_owner uuid;
 begin
-  select coalesce(r.permissions,'[]'::jsonb) into v_permissions
-    from public.enterprise_members m
-    join public.enterprise_role_catalog r on r.key=m.role_key
-   where m.enterprise_id=p_eid and m.profile_id=p_uid and m.status='active';
-  v_permissions:=coalesce(v_permissions,'[]'::jsonb);
+  if not exists (
+    select 1
+      from public.enterprise_members em
+     where em.enterprise_id=p_eid
+       and em.profile_id=p_uid
+       and em.status='active'
+  ) then
+    return '[]'::jsonb;
+  end if;
 
-  v_permissions:=v_permissions||coalesce((
-    select jsonb_agg(distinct to_jsonb(p.permission_key))
+  select coalesce(jsonb_agg(distinct jsonb_build_object(
+    'permission_key',btrim(permission.value),
+    'resource',split_part(btrim(permission.value),'.',1),
+    'action',case
+      when strpos(btrim(permission.value),'.')>0
+        then substr(btrim(permission.value),strpos(btrim(permission.value),'.')+1)
+      else btrim(permission.value)
+    end,
+    'scope',case
+      when right(btrim(permission.value),4)='_all' then 'company'
+      when split_part(btrim(permission.value),'.',1) in (
+        'company','finance','reports','audit','identity'
+      ) then 'company'
+      when split_part(btrim(permission.value),'.',1) in ('projects','tasks')
+        then 'project'
+      when split_part(btrim(permission.value),'.',1) in (
+        'people','worklogs','leave','rewards'
+      ) then 'department'
+      else 'self'
+    end,
+    'conditions','{}'::jsonb,
+    'high_risk',btrim(permission.value) in (
+      'identity.manage_templates',
+      'identity.manage_shares',
+      'governance.vote',
+      'governance.manage',
+      'finance.manage',
+      'finance.approve_company',
+      'data.export_all',
+      'data.delete_all',
+      'company.delete'
+    )
+  )),'[]'::jsonb)
+  into v_grants
+  from public.enterprise_members em
+  join public.enterprise_role_catalog r on r.key=em.role_key
+  cross join lateral jsonb_array_elements_text(
+    case
+      when jsonb_typeof(r.permissions)='array' then r.permissions
+      else '[]'::jsonb
+    end
+  ) permission(value)
+  where em.enterprise_id=p_eid
+    and em.profile_id=p_uid
+    and em.status='active'
+    and btrim(permission.value)<>'';
+
+  v_grants:=v_grants||coalesce((
+    select jsonb_agg(distinct jsonb_build_object(
+      'permission_key',p.permission_key,
+      'resource',p.resource,
+      'action',p.action,
+      'scope',p.scope,
+      'conditions',p.conditions,
+      'high_risk',p.high_risk
+    ))
       from public.enterprise_role_assignments a
+      join public.enterprise_members em
+        on em.enterprise_id=a.enterprise_id
+       and em.profile_id=a.profile_id
+       and em.status='active'
       join public.enterprise_role_template_versions av
         on av.id=a.template_version_id
       join public.enterprise_role_templates t
@@ -456,21 +521,92 @@ begin
   ),'[]'::jsonb);
 
   if public._identity_shares(p_eid,p_uid)>0 then
-    v_permissions:=v_permissions||'["identity.propose","identity.vote"]'::jsonb;
+    v_grants:=v_grants||jsonb_build_array(
+      jsonb_build_object(
+        'permission_key','identity.propose',
+        'resource','identity',
+        'action','propose',
+        'scope','company',
+        'conditions','{}'::jsonb,
+        'high_risk',false
+      ),
+      jsonb_build_object(
+        'permission_key','identity.vote',
+        'resource','identity',
+        'action','vote',
+        'scope','company',
+        'conditions','{}'::jsonb,
+        'high_risk',false
+      )
+    );
   end if;
 
   select owner_profile_id into v_owner from public.enterprises where id=p_eid;
   if v_owner=p_uid then
-    v_permissions:=v_permissions||'["identity.manage_shares"]'::jsonb;
+    v_grants:=v_grants||jsonb_build_array(jsonb_build_object(
+      'permission_key','identity.manage_shares',
+      'resource','identity',
+      'action','manage_shares',
+      'scope','company',
+      'conditions','{}'::jsonb,
+      'high_risk',true
+    ));
   end if;
 
   return (
     select coalesce(jsonb_agg(distinct value),'[]'::jsonb)
-      from jsonb_array_elements_text(v_permissions) value
+      from jsonb_array_elements(v_grants) value
   );
 end;
 $fn$;
 
+create or replace function public._identity_role_permissions(p_eid uuid,p_uid uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select coalesce(jsonb_agg(distinct value->>'permission_key'),'[]'::jsonb)
+    from jsonb_array_elements(
+      public._identity_role_permission_grants(p_eid,p_uid)
+    ) value;
+$fn$;
+
+create or replace function public._identity_permissions_are_grantable(
+  p_eid uuid,
+  p_uid uuid,
+  p_requested jsonb
+)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+begin
+  if jsonb_typeof(p_requested) is distinct from 'array' then
+    return false;
+  end if;
+
+  return not exists (
+    select 1
+      from jsonb_array_elements(p_requested) requested(value)
+     where not exists (
+       select 1
+         from jsonb_array_elements(
+           public._identity_role_permission_grants(p_eid,p_uid)
+         ) held(value)
+        where held.value->>'permission_key'=requested.value->>'permission_key'
+          and held.value->>'resource'=requested.value->>'resource'
+          and held.value->>'action'=requested.value->>'action'
+          and held.value->>'scope'=requested.value->>'scope'
+          and coalesce(held.value->'conditions','{}'::jsonb)=coalesce(requested.value->'conditions','{}'::jsonb)
+          and coalesce((held.value->>'high_risk')::boolean,false)=coalesce((requested.value->>'high_risk')::boolean,false)
+     )
+  );
+end;
+$fn$;
 -- ------------------------------------------------------------ template writes
 create or replace function public.clone_role_template(
   p_source uuid,
@@ -492,7 +628,6 @@ declare
   v_name text:=btrim(coalesce(p_name,''));
   v_key text:=btrim(coalesce(p_key,''));
   v_permissions jsonb:='[]'::jsonb;
-  v_requested jsonb:='[]'::jsonb;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -535,17 +670,7 @@ begin
   from public.enterprise_role_template_permissions p
   where p.template_version_id=v_source_version_id;
 
-  select coalesce(jsonb_agg(value->>'permission_key'),'[]'::jsonb)
-    into v_requested
-    from jsonb_array_elements(v_permissions) value;
-
-  if exists (
-    select 1
-      from jsonb_array_elements_text(v_requested) requested(key)
-     where not (
-       public._identity_role_permissions(v_eid,v_uid) ? requested.key
-     )
-  ) then
+  if not public._identity_permissions_are_grantable(v_eid,v_uid,v_permissions) then
     raise exception 'cannot grant permissions you do not hold';
   end if;
 
@@ -599,6 +724,21 @@ begin
   from public.enterprise_role_template_permissions p
   where p.template_version_id=v_source_version_id;
 
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'role_template.cloned',null,
+    jsonb_build_object(
+      'source_template_id',p_source,
+      'source_version_id',v_source_version_id,
+      'template_id',v_template_id,
+      'key',v_key,
+      'name',v_name,
+      'version',1,
+      'permission_count',jsonb_array_length(v_permissions)
+    )
+  );
+
   return jsonb_build_object(
     'ok',true,
     'template_id',v_template_id,
@@ -636,7 +776,6 @@ declare
   v_conditions jsonb;
   v_permission_high_risk boolean;
   v_permissions jsonb:='[]'::jsonb;
-  v_requested jsonb:='[]'::jsonb;
   v_high_risk boolean:=false;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
@@ -796,17 +935,7 @@ begin
     ));
   end loop;
 
-  select coalesce(jsonb_agg(value->>'permission_key'),'[]'::jsonb)
-    into v_requested
-    from jsonb_array_elements(v_permissions) value;
-
-  if exists (
-    select 1
-      from jsonb_array_elements_text(v_requested) requested(key)
-     where not (
-       public._identity_role_permissions(v_eid,auth.uid()) ? requested.key
-     )
-  ) then
+  if not public._identity_permissions_are_grantable(v_eid,v_uid,v_permissions) then
     raise exception 'cannot grant permissions you do not hold';
   end if;
 
@@ -855,6 +984,20 @@ begin
      set name=v_name
    where id=p_template;
 
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'role_template.updated',null,
+    jsonb_build_object(
+      'template_id',p_template,
+      'previous_version',v_current_version.version,
+      'version',v_new_version,
+      'version_id',v_new_version_id,
+      'name',v_name,
+      'permission_count',jsonb_array_length(v_permissions)
+    )
+  );
+
   return jsonb_build_object(
     'ok',true,
     'template_id',p_template,
@@ -866,10 +1009,13 @@ end;
 $fn$;
 
 -- ------------------------------------------------------------ secondary assignments
+drop function if exists public.set_member_role_assignment(uuid,uuid,timestamptz);
+
 create or replace function public.set_member_role_assignment(
   p_profile uuid,
   p_template uuid,
-  p_ends_at timestamptz
+  p_ends_at timestamptz,
+  p_reason text default ''
 )
 returns jsonb
 language plpgsql
@@ -883,6 +1029,8 @@ declare
   v_template_version_id uuid;
   v_office_key text;
   v_assignment_id uuid;
+  v_template_permissions jsonb:='[]'::jsonb;
+  v_reason text:=btrim(coalesce(p_reason,''));
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -934,6 +1082,18 @@ begin
     raise exception 'role template has no active version';
   end if;
 
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'permission_key',p.permission_key,
+    'resource',p.resource,
+    'action',p.action,
+    'scope',p.scope,
+    'conditions',p.conditions,
+    'high_risk',p.high_risk
+  ) order by p.permission_key),'[]'::jsonb)
+  into v_template_permissions
+  from public.enterprise_role_template_permissions p
+  where p.template_version_id=v_template_version_id;
+
   if exists (
     select 1
       from public.enterprise_role_template_permissions p
@@ -943,13 +1103,8 @@ begin
     raise exception 'template contains high-risk permissions';
   end if;
 
-  if exists (
-    select 1
-      from public.enterprise_role_template_permissions p
-     where p.template_version_id=v_template_version_id
-       and not (
-         public._identity_role_permissions(v_eid,v_uid) ? p.permission_key
-       )
+  if not public._identity_permissions_are_grantable(
+    v_eid,v_uid,v_template_permissions
   ) then
     raise exception 'cannot grant permissions you do not hold';
   end if;
@@ -1002,6 +1157,21 @@ begin
      where id=v_assignment_id;
   end if;
 
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'role_assignment.set',p_profile,
+    jsonb_build_object(
+      'assignment_id',v_assignment_id,
+      'template_id',v_template_id,
+      'template_version_id',v_template_version_id,
+      'office_key',v_office_key,
+      'starts_at',now(),
+      'ends_at',p_ends_at,
+      'reason',v_reason
+    )
+  );
+
   return jsonb_build_object(
     'ok',true,
     'assignment_id',v_assignment_id,
@@ -1010,7 +1180,8 @@ begin
     'template_id',v_template_id,
     'template_version_id',v_template_version_id,
     'office_key',v_office_key,
-    'ends_at',p_ends_at
+    'ends_at',p_ends_at,
+    'reason',v_reason
   );
 end;
 $fn$;
@@ -1031,6 +1202,9 @@ begin
   if not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
   end if;
+  if not (public._identity_role_permissions(v_eid,v_uid) ? 'identity.manage_templates') then
+    raise exception 'identity template management permission required';
+  end if;
 
   update public.enterprise_role_assignments
      set status='expired'
@@ -1040,6 +1214,14 @@ begin
      and ends_at <= now();
 
   get diagnostics v_expired=row_count;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'role_assignments.expired',null,
+    jsonb_build_object('expired_count',v_expired)
+  );
+
   return jsonb_build_object(
     'ok',true,
     'enterprise_id',v_eid,
@@ -1049,6 +1231,14 @@ end;
 $fn$;
 
 -- ------------------------------------------------------------ template RPC grants
+revoke all on function public._identity_role_permission_grants(uuid,uuid) from public;
+revoke all on function public._identity_role_permission_grants(uuid,uuid) from anon;
+revoke all on function public._identity_role_permission_grants(uuid,uuid) from authenticated;
+
+revoke all on function public._identity_permissions_are_grantable(uuid,uuid,jsonb) from public;
+revoke all on function public._identity_permissions_are_grantable(uuid,uuid,jsonb) from anon;
+revoke all on function public._identity_permissions_are_grantable(uuid,uuid,jsonb) from authenticated;
+
 revoke all on function public._identity_role_permissions(uuid,uuid) from public;
 revoke all on function public._identity_role_permissions(uuid,uuid) from anon;
 revoke all on function public._identity_role_permissions(uuid,uuid) from authenticated;
@@ -1063,10 +1253,10 @@ revoke all on function public.update_role_template(uuid,text,jsonb) from anon;
 revoke all on function public.update_role_template(uuid,text,jsonb) from authenticated;
 grant execute on function public.update_role_template(uuid,text,jsonb) to authenticated;
 
-revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz) from public;
-revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz) from anon;
-revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz) from authenticated;
-grant execute on function public.set_member_role_assignment(uuid,uuid,timestamptz) to authenticated;
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from public;
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from anon;
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from authenticated;
+grant execute on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) to authenticated;
 
 revoke all on function public.expire_role_assignments() from public;
 revoke all on function public.expire_role_assignments() from anon;

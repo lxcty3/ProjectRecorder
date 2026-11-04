@@ -11,6 +11,12 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def rpc_definition(self, name):
+        lowered = self.sql.lower()
+        marker = f"create or replace function public.{name}("
+        start = lowered.find(marker)
+        self.assertGreaterEqual(start, 0)
+        return lowered[start:].split("$fn$;", 1)[0]
     def test_sql_parses_and_is_ascii(self):
         pglast.parse_sql(self.sql)
         self.assertTrue(all(ord(ch) < 128 for ch in self.sql))
@@ -116,7 +122,7 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         for signature in (
             "public.clone_role_template(uuid,text,text)",
             "public.update_role_template(uuid,text,jsonb)",
-            "public.set_member_role_assignment(uuid,uuid,timestamptz)",
+            "public.set_member_role_assignment(uuid,uuid,timestamptz,text)",
             "public.expire_role_assignments()",
         ):
             self.assertIn(signature, self.sql)
@@ -162,13 +168,22 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         self.assertIn("a.starts_at <= now()", compact)
         self.assertIn("a.ends_at is null or a.ends_at > now()", compact)
         self.assertIn("tv.status='active'", compact)
+        self.assertIn(
+            "join public.enterprise_members em on em.enterprise_id=a.enterprise_id and em.profile_id=a.profile_id and em.status='active'",
+            compact,
+        )
 
     def test_mutation_rpcs_require_template_management_permission(self):
-        compact = " ".join(self.sql.lower().split())
-        self.assertGreaterEqual(
-            compact.count("? 'identity.manage_templates'"),
-            3,
-        )
+        for name in (
+            "clone_role_template",
+            "update_role_template",
+            "set_member_role_assignment",
+            "expire_role_assignments",
+        ):
+            self.assertIn(
+                "? 'identity.manage_templates'",
+                self.rpc_definition(name),
+            )
 
     def test_assignment_reuses_only_secondary_rows(self):
         compact = " ".join(self.sql.lower().split())
@@ -184,11 +199,90 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             "from public.enterprise_role_templates t where t.id=p_template and t.enterprise_id=v_eid and t.archived_at is null for update",
             assignment,
         )
+
+    def test_permission_ceiling_requires_full_exact_grant(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("public._identity_permissions_are_grantable", compact)
+        self.assertIn(
+            "held.value->>'permission_key'=requested.value->>'permission_key'",
+            compact,
+        )
+        self.assertIn(
+            "held.value->>'resource'=requested.value->>'resource'",
+            compact,
+        )
+        self.assertIn(
+            "held.value->>'action'=requested.value->>'action'",
+            compact,
+        )
+        self.assertIn("jsonb_typeof(p_requested) is distinct from 'array'", compact)
+        self.assertIn("return false", compact)
+        for name in (
+            "clone_role_template",
+            "update_role_template",
+            "set_member_role_assignment",
+        ):
+            self.assertIn(
+                "public._identity_permissions_are_grantable",
+                self.rpc_definition(name),
+            )
+
+    def test_permission_ceiling_rejects_scope_escalation(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "held.value->>'scope'=requested.value->>'scope'",
+            compact,
+        )
+
+    def test_permission_ceiling_rejects_condition_mismatch(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "coalesce(held.value->'conditions','{}'::jsonb)=coalesce(requested.value->'conditions','{}'::jsonb)",
+            compact,
+        )
+
+    def test_assignment_rpc_accepts_reason_and_audits_it(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("p_reason text default ''", compact)
+        self.assertIn("'reason',v_reason", compact)
+        self.assertIn(
+            "drop function if exists public.set_member_role_assignment(uuid,uuid,timestamptz);",
+            compact,
+        )
+
+    def test_successful_mutations_write_identity_audit(self):
+        for name, action in (
+            ("clone_role_template", "role_template.cloned"),
+            ("update_role_template", "role_template.updated"),
+            ("set_member_role_assignment", "role_assignment.set"),
+            ("expire_role_assignments", "role_assignments.expired"),
+        ):
+            definition = self.rpc_definition(name)
+            self.assertIn(
+                "insert into public.enterprise_identity_audit",
+                definition,
+            )
+            self.assertIn(action, definition)
+
+    def test_internal_permission_helpers_are_not_client_executable(self):
+        for signature in (
+            "_identity_role_permission_grants(uuid,uuid)",
+            "_identity_permissions_are_grantable(uuid,uuid,jsonb)",
+        ):
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on function public.{signature} from {role};",
+                    self.sql,
+                )
+            self.assertNotIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
     def test_new_rpcs_are_authenticated_only(self):
         for signature in (
             "clone_role_template(uuid,text,text)",
             "update_role_template(uuid,text,jsonb)",
-            "set_member_role_assignment(uuid,uuid,timestamptz)",
+            "set_member_role_assignment(uuid,uuid,timestamptz,text)",
             "expire_role_assignments()",
         ):
             self.assertIn(
