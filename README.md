@@ -27,7 +27,7 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 - 没登录时仍可使用本地项目、工时、预测和知识库；登录后社区自动同步。
 - 退出账号不会删除任何本地项目数据。
 
-## 八个页签
+## 九个页签
 
 ### 驾驶舱
 所有项目一览。顶部四张指标卡（在管项目 / 需要处理 / 在岗员工 / 本周工时），下面一张表按风险排序。
@@ -71,6 +71,19 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 
 员工账号登录桌面端默认使用简单模式，只显示“今日”和知识星球，不显示预算、团队风险和老板数据；具备管理、财务、审计或治理权限后可在桌面顶部切换高级模式。
 
+### 经营决策中心
+
+高级模式默认进入“经营决策中心”，把跨项目、跨模块的影响集中成一条处理队列：
+
+- **入口权限**：只有具备管理、财务、审计或治理能力的身份可进入高级模式和决策中心；简单模式员工看不到入口。
+- **决策队列**：按交付影响天数、涉及金额、风险等级和等待时间排序；每条决策展示来源证据、负责人、截止时间和处理状态。
+- **统一审批**：请假、工时、费用、采购、奖励、任务延期和身份事项进入同一个审批收件箱。
+- **证据下钻**：决策和审批带有结构化来源记录，可追到任务、工时、审批、任务延期或身份治理事项。
+- **幂等与审计**：批准、拒绝、退回补充、取消、确认、分派、延期和关闭都要求幂等键，并由服务端写入审批事件和企业审计。
+- **授权边界**：不同审批类型校验不同权限；严重/高风险或金额达到 5 万元的审批要求高管身份。身份事项沿用股东权重投票，不由普通审批绕过。
+- **真实动作**：桌面和手机按钮只在服务端返回对应 `actions` 能力时显示；没有数据时显示空状态，不用假数据填充。
+- **数据库边界**：决策和审批表启用 RLS，直接表权限收回，客户端只可调用 `get_decision_center`、`act_on_decision` 和 `act_on_approval` 三个 SECURITY DEFINER RPC。
+
 ### 企业身份与股东投票
 
 电脑端「企业身份」页和手机端「治理」页读取同一套 Supabase 企业数据。当前已实现：
@@ -103,6 +116,22 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 `community.sql` 必须先于治理扩展，因为付费知识字段、列表 RPC 和解锁 RLS 依赖社区表。`install-unified.sql` 不包含阶段一治理扩展，`enterprise-governance-v2.sql` 必须单独执行。
 
 桌面端和手机端共享同一套治理数据。直接修改股份的旧 RPC 已只保留为内部/初始化权限，普通客户端不能再调用；股份和模板高风险改动必须经过股东表决。
+
+阶段 2A 部署顺序：
+
+在阶段一治理扩展和任务延期脚本之后运行决策中心迁移：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+```
+
+`decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
+
+`install-unified.sql` 末尾包含一个受前置条件保护的 Phase 2A 区块：基础统一安装时如果阶段一或任务延期表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 为准。
 
 ### 统一云端部署
 
@@ -363,15 +392,21 @@ Compress-Archive -Path dist\项目记录器.exe `
 python -m pip install -r requirements-test.txt
 $env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/project_recorder_test'
 python -m unittest tests.test_enterprise_governance_integration -v
+python -m unittest tests.test_decision_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
 
 ```text
+mobile/sql/unified-platform.sql
 mobile/sql/enterprise-identity.sql
 mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
 ```
+
+决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。
 
 注意：
 

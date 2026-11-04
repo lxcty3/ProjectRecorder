@@ -78,3 +78,9 @@ today_ui.py
 mobile/today.js
 mobile/www/today.js
 mobile/sql/enterprise-governance-v2.sql
+decision_rules.py
+decision_ui.py
+mobile/decision.js
+mobile/sql/decision-approvals-v1.sql
+mobile/www/decision.js
+mobile/sql/task-accept-extension.sql
