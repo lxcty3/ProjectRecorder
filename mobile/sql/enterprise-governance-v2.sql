@@ -1262,3 +1262,771 @@ revoke all on function public.expire_role_assignments() from public;
 revoke all on function public.expire_role_assignments() from anon;
 revoke all on function public.expire_role_assignments() from authenticated;
 grant execute on function public.expire_role_assignments() to authenticated;
+
+-- ------------------------------------------------------------ shareholder motion snapshots
+alter table public.enterprise_role_motions
+  add column if not exists motion_class text not null default 'ordinary'
+    check (motion_class in ('ordinary','major')),
+  add column if not exists share_snapshot jsonb not null default '{}'::jsonb,
+  add column if not exists required_bps integer not null default 5001
+    check (required_bps between 1 and 10000),
+  add column if not exists conflict_disclosed boolean not null default false;
+
+-- ------------------------------------------------------------ board motions
+create table if not exists public.enterprise_board_motions (
+  id uuid primary key default gen_random_uuid(),
+  enterprise_id uuid not null references public.enterprises(id) on delete cascade,
+  title text not null,
+  kind text not null check (kind in ('point_pool','governance','operations')),
+  payload jsonb not null default '{}'::jsonb,
+  proposer_profile_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'open'
+    check (status in ('open','passed','rejected','cancelled')),
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+
+create table if not exists public.enterprise_board_votes (
+  motion_id uuid not null
+    references public.enterprise_board_motions(id) on delete cascade,
+  director_profile_id uuid not null
+    references public.profiles(id) on delete cascade,
+  choice text not null check (choice in ('yes','no','abstain')),
+  voted_at timestamptz not null default now(),
+  primary key (motion_id,director_profile_id)
+);
+
+create index if not exists board_vote_idx
+  on public.enterprise_board_votes(motion_id,choice);
+
+alter table public.enterprise_board_motions enable row level security;
+alter table public.enterprise_board_votes enable row level security;
+
+revoke all on table public.enterprise_board_motions from public;
+revoke all on table public.enterprise_board_motions from anon;
+revoke all on table public.enterprise_board_motions from authenticated;
+revoke all on table public.enterprise_board_votes from public;
+revoke all on table public.enterprise_board_votes from anon;
+revoke all on table public.enterprise_board_votes from authenticated;
+
+-- ------------------------------------------------------------ board helpers
+create or replace function public._identity_is_board_director(
+  p_eid uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select exists(
+    select 1
+      from public.enterprise_members m
+     where m.enterprise_id=p_eid
+       and m.profile_id=p_uid
+       and m.status='active'
+       and (
+         m.role_key in ('chairperson','director')
+         or exists(
+           select 1
+             from public.enterprise_role_assignments a
+            where a.enterprise_id=m.enterprise_id
+              and a.profile_id=m.profile_id
+              and a.status='active'
+              and a.starts_at<=now()
+              and (a.ends_at is null or a.ends_at>now())
+              and a.office_key in ('chairperson','director')
+         )
+       )
+  );
+$fn$;
+
+create or replace function public._identity_board_director_count(p_eid uuid)
+returns integer
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select count(distinct m.profile_id)::integer
+    from public.enterprise_members m
+   where m.enterprise_id=p_eid
+     and m.status='active'
+     and (
+       m.role_key in ('chairperson','director')
+       or exists(
+         select 1
+           from public.enterprise_role_assignments a
+          where a.enterprise_id=m.enterprise_id
+            and a.profile_id=m.profile_id
+            and a.status='active'
+            and a.starts_at<=now()
+            and (a.ends_at is null or a.ends_at>now())
+            and a.office_key in ('chairperson','director')
+       )
+     );
+$fn$;
+
+-- ------------------------------------------------------------ board RPCs
+create or replace function public.create_board_motion(
+  p_title text,
+  p_kind text,
+  p_payload jsonb default '{}'::jsonb
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_kind text:=lower(trim(coalesce(p_kind,'')));
+  v_title text:=trim(coalesce(p_title,''));
+  v_payload jsonb:=coalesce(p_payload,'{}'::jsonb);
+  v_motion uuid;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if not public._identity_is_board_director(v_eid,v_uid) then
+    raise exception 'only board directors may propose board motions';
+  end if;
+  if v_title='' then raise exception 'motion title is required'; end if;
+  if v_kind not in ('point_pool','governance','operations') then
+    raise exception 'invalid board motion kind';
+  end if;
+  if jsonb_typeof(v_payload) is distinct from 'object' then
+    raise exception 'board motion payload must be an object';
+  end if;
+
+  insert into public.enterprise_board_motions(
+    enterprise_id,title,kind,payload,proposer_profile_id
+  ) values(
+    v_eid,v_title,v_kind,v_payload,v_uid
+  )
+  returning id into v_motion;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'board_motion.created',null,
+    jsonb_build_object(
+      'board_motion_id',v_motion,'title',v_title,'kind',v_kind
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'board_motion_id',v_motion,'status','open'
+  );
+end;
+$fn$;
+
+create or replace function public.cast_board_vote(
+  p_motion uuid,
+  p_choice text
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_board_motions%rowtype;
+  v_choice text:=lower(trim(coalesce(p_choice,'')));
+  v_director_count integer;
+  v_cast_count integer;
+  v_status text;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  if v_choice not in ('yes','no','abstain') then raise exception 'invalid vote'; end if;
+
+  select * into v_m
+    from public.enterprise_board_motions
+   where id=p_motion
+   for update;
+  if not found then raise exception 'board motion not found'; end if;
+  if v_m.status<>'open' then raise exception 'board motion is closed'; end if;
+  if not public._identity_is_board_director(v_m.enterprise_id,v_uid) then
+    raise exception 'only board directors may vote';
+  end if;
+
+  insert into public.enterprise_board_votes(
+    motion_id,director_profile_id,choice
+  ) values(p_motion,v_uid,v_choice)
+  on conflict (motion_id,director_profile_id) do update
+    set choice=excluded.choice,voted_at=now();
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_m.enterprise_id,v_uid,'board_motion.vote_cast',null,
+    jsonb_build_object(
+      'board_motion_id',p_motion,'choice',v_choice
+    )
+  );
+
+  select count(*)::integer into v_cast_count
+    from public.enterprise_board_votes
+   where motion_id=p_motion;
+  v_director_count:=public._identity_board_director_count(v_m.enterprise_id);
+
+  if v_director_count>0 and v_cast_count>=v_director_count then
+    perform public.finalize_board_motion(p_motion);
+  end if;
+
+  select status into v_status
+    from public.enterprise_board_motions
+   where id=p_motion;
+
+  return jsonb_build_object(
+    'ok',true,'choice',v_choice,'cast_count',v_cast_count,
+    'director_count',v_director_count,'motion_status',v_status
+  );
+end;
+$fn$;
+
+create or replace function public.finalize_board_motion(p_motion uuid)
+returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_board_motions%rowtype;
+  v_director_count integer;
+  v_cast_count integer;
+  v_yes_count integer;
+  v_status text;
+  v_reason text;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+
+  select * into v_m
+    from public.enterprise_board_motions
+   where id=p_motion
+   for update;
+  if not found then raise exception 'board motion not found'; end if;
+  if v_m.status<>'open' then
+    return jsonb_build_object('ok',true,'status',v_m.status);
+  end if;
+  if not public._identity_is_board_director(v_m.enterprise_id,v_uid) then
+    raise exception 'only board directors may finalize board motions';
+  end if;
+
+  v_director_count:=public._identity_board_director_count(v_m.enterprise_id);
+  select
+    count(*)::integer,
+    count(*) filter(where choice='yes')::integer
+  into v_cast_count,v_yes_count
+  from public.enterprise_board_votes
+  where motion_id=p_motion;
+
+  if not (v_cast_count*2>v_director_count) then
+    raise exception 'board quorum not reached';
+  end if;
+
+  if v_yes_count*2>v_cast_count then
+    v_status:='passed';
+    v_reason:='Approved by a majority of directors present';
+  else
+    v_status:='rejected';
+    v_reason:='Majority yes vote not reached';
+  end if;
+
+  update public.enterprise_board_motions
+     set status=v_status,decided_at=now()
+   where id=p_motion;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_m.enterprise_id,v_uid,'board_motion.'||v_status,null,
+    jsonb_build_object(
+      'board_motion_id',p_motion,
+      'director_count',v_director_count,
+      'cast_count',v_cast_count,
+      'yes_count',v_yes_count,
+      'reason',v_reason
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'status',v_status,'director_count',v_director_count,
+    'cast_count',v_cast_count,'yes_count',v_yes_count,'reason',v_reason
+  );
+end;
+$fn$;
+
+-- ------------------------------------------------------------ shareholder RPC replacements
+create or replace function public._identity_finalize_motion(p_motion uuid)
+returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_role_motions%rowtype;
+  v_total numeric;
+  v_cast numeric;
+  v_yes numeric;
+  v_no numeric;
+  v_turnout_bps integer:=0;
+  v_yes_bps integer:=0;
+  v_status text;
+  v_reason text;
+begin
+  select * into v_m
+    from public.enterprise_role_motions
+   where id=p_motion
+   for update;
+  if not found then raise exception 'motion not found'; end if;
+  if v_m.status<>'open' then
+    return jsonb_build_object('ok',true,'status',v_m.status);
+  end if;
+  if not public._identity_is_member(v_m.enterprise_id,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  select coalesce(sum(value::numeric),0)
+    into v_total
+    from jsonb_each_text(v_m.share_snapshot);
+
+  select
+    coalesce(sum(coalesce(
+      (v_m.share_snapshot->>rv.voter_profile_id::text)::numeric,0
+    )),0),
+    coalesce(sum(coalesce(
+      (v_m.share_snapshot->>rv.voter_profile_id::text)::numeric,0
+    )) filter(where rv.choice='yes'),0),
+    coalesce(sum(coalesce(
+      (v_m.share_snapshot->>rv.voter_profile_id::text)::numeric,0
+    )) filter(where rv.choice='no'),0)
+  into v_cast,v_yes,v_no
+  from public.enterprise_role_votes rv
+  where rv.motion_id=p_motion;
+
+  if v_total>0 then
+    v_turnout_bps:=floor(v_cast/v_total*10000)::integer;
+    if v_m.motion_class='major' then
+      v_yes_bps:=floor(v_yes/v_total*10000)::integer;
+    elsif (v_yes+v_no)>0 then
+      v_yes_bps:=floor(v_yes/(v_yes+v_no)*10000)::integer;
+    end if;
+  end if;
+
+  if v_total<=0 then
+    v_status:='rejected';
+    v_reason:='No voting shares in proposal snapshot';
+  elsif v_m.motion_class='major' then
+    if v_yes_bps<v_m.required_bps then
+      v_status:='rejected';
+      v_reason:='Major approval threshold not reached';
+    else
+      v_status:='passed';
+      v_reason:='Approved by major shareholder vote';
+    end if;
+  else
+    if v_turnout_bps<5000 then
+      v_status:='rejected';
+      v_reason:='Quorum not reached';
+    elsif v_yes*10000<=(v_yes+v_no)*5000 then
+      v_status:='rejected';
+      v_reason:='Approval threshold not reached';
+    else
+      v_status:='passed';
+      v_reason:='Approved by weighted shareholder vote';
+    end if;
+  end if;
+
+  update public.enterprise_role_motions
+     set status=v_status,decided_at=now(),decision_reason=v_reason,
+         updated_at=now()
+   where id=p_motion;
+
+  if v_status='passed' then
+    if v_m.kind='appointment' then
+      update public.enterprise_members
+         set role_key=v_m.proposed_role_key,
+             department=v_m.proposed_department,
+             title=v_m.proposed_title,
+             appointed_by=v_m.proposer_profile_id,
+             appointed_at=now(),updated_at=now(),status='active'
+       where enterprise_id=v_m.enterprise_id
+         and profile_id=v_m.target_profile_id;
+    else
+      update public.enterprise_members
+         set role_key='employee',department='',title='',
+             appointed_by=v_m.proposer_profile_id,
+             appointed_at=now(),updated_at=now(),status='active'
+       where enterprise_id=v_m.enterprise_id
+         and profile_id=v_m.target_profile_id;
+    end if;
+  end if;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_m.enterprise_id,v_uid,'motion.'||v_status,v_m.target_profile_id,
+    jsonb_build_object(
+      'motion_id',v_m.id,'kind',v_m.kind,'role',v_m.proposed_role_key,
+      'motion_class',v_m.motion_class,'required_bps',v_m.required_bps,
+      'turnout_bps',v_turnout_bps,'yes_bps',v_yes_bps,'reason',v_reason
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'status',v_status,'motion_class',v_m.motion_class,
+    'required_bps',v_m.required_bps,'turnout_bps',v_turnout_bps,
+    'yes_bps',v_yes_bps,'reason',v_reason
+  );
+end;
+$fn$;
+
+create or replace function public.propose_enterprise_role(
+  p_target uuid,
+  p_kind text,
+  p_role_key text default 'employee',
+  p_department text default '',
+  p_title text default '',
+  p_reason text default '',
+  p_days integer default 3
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_target public.enterprise_members%rowtype;
+  v_days integer:=least(greatest(coalesce(p_days,3),1),14);
+  v_motion uuid;
+  v_kind text:=lower(trim(coalesce(p_kind,'')));
+  v_role text:=nullif(trim(coalesce(p_role_key,'')),'');
+  v_effective_role text;
+  v_motion_class text;
+  v_required_bps integer;
+  v_snapshot jsonb:='{}'::jsonb;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  perform 1
+    from public.enterprises
+   where id=v_eid
+   for update;
+
+  if public._identity_shares(v_eid,v_uid)<=0 then
+    raise exception 'only shareholders may propose role changes';
+  end if;
+  if v_kind not in ('appointment','removal') then
+    raise exception 'invalid motion kind';
+  end if;
+
+  select * into v_target
+    from public.enterprise_members
+   where enterprise_id=v_eid
+     and profile_id=p_target
+     and status='active';
+  if not found then raise exception 'target is not an active enterprise member'; end if;
+
+  if v_kind='appointment' then
+    if v_role is null then raise exception 'role is required'; end if;
+    if not exists(
+      select 1 from public.enterprise_role_catalog where key=v_role
+    ) then
+      raise exception 'unknown role';
+    end if;
+    if v_target.role_key=v_role then
+      raise exception 'target already holds this role';
+    end if;
+  else
+    if v_target.role_key='employee' then
+      raise exception 'target already has the base employee role';
+    end if;
+    v_role:=null;
+  end if;
+
+  v_effective_role:=case
+    when v_kind='appointment' then v_role
+    else v_target.role_key
+  end;
+  v_motion_class:=case
+    when v_effective_role in (
+      'chairperson','director','supervisor','ceo','finance','identity_admin'
+    ) then 'major'
+    else 'ordinary'
+  end;
+  v_required_bps:=case when v_motion_class='major' then 6667 else 5001 end;
+
+  select coalesce(jsonb_object_agg(s.profile_id::text,s.shares),'{}'::jsonb)
+    into v_snapshot
+    from public.enterprise_shareholders s
+    join public.enterprise_members m
+      on m.enterprise_id=s.enterprise_id
+     and m.profile_id=s.profile_id
+   where s.enterprise_id=v_eid
+     and s.shares>0
+     and m.status='active';
+
+  insert into public.enterprise_role_motions(
+    enterprise_id,kind,target_profile_id,proposed_role_key,
+    proposed_department,proposed_title,reason,proposer_profile_id,
+    quorum_bps,approval_bps,closes_at,motion_class,share_snapshot,
+    required_bps
+  ) values(
+    v_eid,v_kind,p_target,v_role,trim(coalesce(p_department,'')),
+    trim(coalesce(p_title,'')),trim(coalesce(p_reason,'')),v_uid,
+    case when v_motion_class='major' then 0 else 5000 end,
+    v_required_bps,now()+make_interval(days=>v_days),v_motion_class,
+    v_snapshot,v_required_bps
+  )
+  returning id into v_motion;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'motion.created',p_target,
+    jsonb_build_object(
+      'motion_id',v_motion,'kind',v_kind,'role',v_role,
+      'effective_role',v_effective_role,
+      'motion_class',v_motion_class,'required_bps',v_required_bps,
+      'shareholder_count',(
+        select count(*) from jsonb_object_keys(v_snapshot)
+      )
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'motion_id',v_motion,'motion_class',v_motion_class,
+    'required_bps',v_required_bps
+  );
+exception when unique_violation then
+  raise exception 'this member already has an open role motion';
+end;
+$fn$;
+
+create or replace function public.cast_enterprise_role_vote(
+  p_motion uuid,
+  p_choice text
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_role_motions%rowtype;
+  v_choice text:=lower(trim(coalesce(p_choice,'')));
+  v_shares numeric;
+  v_cast numeric;
+  v_total numeric;
+  v_result jsonb;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  if v_choice not in ('yes','no','abstain') then raise exception 'invalid vote'; end if;
+
+  select * into v_m
+    from public.enterprise_role_motions
+   where id=p_motion
+   for update;
+  if not found then raise exception 'motion not found'; end if;
+  if v_m.status<>'open' then raise exception 'motion is closed'; end if;
+  if now()>=v_m.closes_at then
+    perform public._identity_finalize_motion(p_motion);
+    raise exception 'voting period has ended';
+  end if;
+  if not public._identity_is_member(v_m.enterprise_id,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  v_shares:=coalesce(
+    (v_m.share_snapshot->>v_uid::text)::numeric,
+    0
+  );
+  if v_shares<=0 then
+    raise exception 'only shareholders in the proposal snapshot may vote';
+  end if;
+
+  insert into public.enterprise_role_votes(
+    motion_id,voter_profile_id,choice,shares_at_vote
+  ) values(p_motion,v_uid,v_choice,v_shares)
+  on conflict (motion_id,voter_profile_id) do update
+    set choice=excluded.choice,shares_at_vote=excluded.shares_at_vote,
+        voted_at=now(),updated_at=now();
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_m.enterprise_id,v_uid,'motion.vote_cast',null,
+    jsonb_build_object(
+      'motion_id',p_motion,'choice',v_choice,'shares',v_shares,
+      'motion_class',v_m.motion_class
+    )
+  );
+
+  select coalesce(sum(coalesce(
+    (v_m.share_snapshot->>rv.voter_profile_id::text)::numeric,0
+  )),0)
+    into v_cast
+    from public.enterprise_role_votes rv
+   where rv.motion_id=p_motion;
+
+  select coalesce(sum(value::numeric),0)
+    into v_total
+    from jsonb_each_text(v_m.share_snapshot);
+
+  if v_total>0 and v_cast>=v_total then
+    v_result:=public._identity_finalize_motion(p_motion);
+  end if;
+
+  return jsonb_build_object(
+    'ok',true,'choice',v_choice,'shares',v_shares,
+    'voted_shares',v_cast,'eligible_shares',v_total,
+    'motion_status',coalesce(v_result->>'status','open')
+  );
+end;
+$fn$;
+
+create or replace function public.close_enterprise_role_vote(p_motion uuid)
+returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_m public.enterprise_role_motions%rowtype;
+  v_cast numeric;
+  v_total numeric;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+
+  select * into v_m
+    from public.enterprise_role_motions
+   where id=p_motion;
+  if not found then raise exception 'motion not found'; end if;
+  if not public._identity_is_member(v_m.enterprise_id,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  select coalesce(sum(coalesce(
+    (v_m.share_snapshot->>rv.voter_profile_id::text)::numeric,0
+  )),0)
+    into v_cast
+    from public.enterprise_role_votes rv
+   where rv.motion_id=p_motion;
+
+  select coalesce(sum(value::numeric),0)
+    into v_total
+    from jsonb_each_text(v_m.share_snapshot);
+
+  if now()<v_m.closes_at and v_cast<v_total then
+    raise exception 'voting is still in progress';
+  end if;
+
+  return public._identity_finalize_motion(p_motion);
+end;
+$fn$;
+
+create or replace function public.set_enterprise_shareholder(
+  p_profile uuid,
+  p_shares numeric
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_owner uuid;
+  v_total numeric;
+  v_shares numeric:=round(greatest(coalesce(p_shares,0),0),4);
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  select owner_profile_id into v_owner
+    from public.enterprises
+   where id=v_eid
+   for update;
+
+  if v_uid<>v_owner then raise exception 'only the enterprise owner may change shares'; end if;
+  if not public._identity_is_member(v_eid,p_profile) then
+    raise exception 'target is not an active enterprise member';
+  end if;
+  if p_profile=v_owner and v_shares<=0 then
+    raise exception 'enterprise owner must retain voting shares';
+  end if;
+  if exists(
+    select 1
+      from public.enterprise_role_motions
+     where enterprise_id=v_eid
+       and status='open'
+  ) then
+    raise exception 'cannot change shares while a shareholder motion is open';
+  end if;
+
+  insert into public.enterprise_shareholders(
+    enterprise_id,profile_id,shares,updated_by
+  ) values(v_eid,p_profile,v_shares,v_uid)
+  on conflict (enterprise_id,profile_id) do update
+    set shares=excluded.shares,updated_by=excluded.updated_by,
+        updated_at=now();
+
+  select public._identity_total_shares(v_eid) into v_total;
+  if v_total<=0 then
+    raise exception 'enterprise must have positive voting shares';
+  end if;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'shares.updated',p_profile,
+    jsonb_build_object('shares',v_shares,'total_shares',v_total)
+  );
+
+  return jsonb_build_object(
+    'ok',true,'shares',v_shares,'total_shares',v_total
+  );
+end;
+$fn$;
+
+-- ------------------------------------------------------------ task 4 grants
+revoke all on function public._identity_is_board_director(uuid,uuid) from public;
+revoke all on function public._identity_is_board_director(uuid,uuid) from anon;
+revoke all on function public._identity_is_board_director(uuid,uuid) from authenticated;
+revoke all on function public._identity_board_director_count(uuid) from public;
+revoke all on function public._identity_board_director_count(uuid) from anon;
+revoke all on function public._identity_board_director_count(uuid) from authenticated;
+revoke all on function public._identity_finalize_motion(uuid) from public;
+revoke all on function public._identity_finalize_motion(uuid) from anon;
+revoke all on function public._identity_finalize_motion(uuid) from authenticated;
+
+revoke all on function public.create_board_motion(text,text,jsonb) from public;
+revoke all on function public.create_board_motion(text,text,jsonb) from anon;
+revoke all on function public.create_board_motion(text,text,jsonb) from authenticated;
+grant execute on function public.create_board_motion(text,text,jsonb) to authenticated;
+
+revoke all on function public.cast_board_vote(uuid,text) from public;
+revoke all on function public.cast_board_vote(uuid,text) from anon;
+revoke all on function public.cast_board_vote(uuid,text) from authenticated;
+grant execute on function public.cast_board_vote(uuid,text) to authenticated;
+
+revoke all on function public.finalize_board_motion(uuid) from public;
+revoke all on function public.finalize_board_motion(uuid) from anon;
+revoke all on function public.finalize_board_motion(uuid) from authenticated;
+grant execute on function public.finalize_board_motion(uuid) to authenticated;
+
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from public;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from anon;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from authenticated;
+grant execute on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) to authenticated;
+
+revoke all on function public.cast_enterprise_role_vote(uuid,text) from public;
+revoke all on function public.cast_enterprise_role_vote(uuid,text) from anon;
+revoke all on function public.cast_enterprise_role_vote(uuid,text) from authenticated;
+grant execute on function public.cast_enterprise_role_vote(uuid,text) to authenticated;
+
+revoke all on function public.close_enterprise_role_vote(uuid) from public;
+revoke all on function public.close_enterprise_role_vote(uuid) from anon;
+revoke all on function public.close_enterprise_role_vote(uuid) from authenticated;
+grant execute on function public.close_enterprise_role_vote(uuid) to authenticated;
+
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from public;
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from anon;
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from authenticated;
+grant execute on function public.set_enterprise_shareholder(uuid,numeric) to authenticated;

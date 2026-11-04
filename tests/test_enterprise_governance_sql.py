@@ -36,7 +36,12 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         for name in (
             "motion_class",
             "share_snapshot",
+            "required_bps",
+            "conflict_disclosed",
             "enterprise_board_motions",
+            "enterprise_board_votes",
+            "board_vote_idx",
+            "6667",
             "enterprise_point_pools",
             "enterprise_point_ledger",
             "unlock_knowledge_content",
@@ -314,6 +319,199 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             definition = lowered[start:].split("$fn$;", 1)[0]
             self.assertIn("security definer", definition)
             self.assertIn("set search_path=public,auth,pg_temp", definition)
+
+    def test_shareholder_proposal_snapshots_active_shares(self):
+        propose = self.rpc_definition("propose_enterprise_role")
+        compact = " ".join(propose.split())
+        self.assertIn(
+            "jsonb_object_agg(s.profile_id::text,s.shares)",
+            compact,
+        )
+        self.assertIn("into v_snapshot", compact)
+        self.assertIn("share_snapshot", compact)
+        self.assertIn(
+            "join public.enterprise_members m on m.enterprise_id=s.enterprise_id and m.profile_id=s.profile_id",
+            compact,
+        )
+        self.assertIn("s.shares>0 and m.status='active'", compact)
+        self.assertIn(
+            "from public.enterprises where id=v_eid for update",
+            compact,
+        )
+
+    def test_shareholder_motion_class_and_required_thresholds(self):
+        compact = " ".join(self.rpc_definition("propose_enterprise_role").split())
+        self.assertIn("v_motion_class:=case", compact)
+        for role in (
+            "chairperson",
+            "director",
+            "supervisor",
+            "ceo",
+            "finance",
+            "identity_admin",
+        ):
+            self.assertIn(f"'{role}'", compact)
+        self.assertIn(
+            "v_required_bps:=case when v_motion_class='major' then 6667 else 5001 end",
+            compact,
+        )
+
+    def test_shareholder_vote_weight_comes_from_snapshot(self):
+        compact = " ".join(
+            self.rpc_definition("cast_enterprise_role_vote").split()
+        )
+        self.assertIn("v_m.share_snapshot", compact)
+        self.assertIn("v_uid::text", compact)
+        self.assertNotIn("v_shares:=public._identity_shares", compact)
+
+    def test_shareholder_finalize_uses_snapshot_and_class_thresholds(self):
+        compact = " ".join(
+            self.rpc_definition("_identity_finalize_motion").split()
+        )
+        self.assertIn("jsonb_each_text(v_m.share_snapshot)", compact)
+        self.assertIn("motion_class='major'", compact)
+        self.assertIn("v_m.required_bps", compact)
+        self.assertIn("v_turnout_bps<5000", compact)
+        self.assertIn("v_yes*10000<=(v_yes+v_no)*5000", compact)
+        self.assertNotIn(
+            "public._identity_total_shares(v_m.enterprise_id)",
+            compact,
+        )
+
+    def test_shareholder_proposal_vote_and_finalize_are_audited(self):
+        self.assertIn(
+            "'motion.created'",
+            self.rpc_definition("propose_enterprise_role"),
+        )
+        self.assertIn(
+            "'motion.vote_cast'",
+            self.rpc_definition("cast_enterprise_role_vote"),
+        )
+        self.assertIn(
+            "'motion.'||v_status",
+            self.rpc_definition("_identity_finalize_motion"),
+        )
+
+    def test_open_shareholder_motion_blocks_share_changes_and_new_holders(self):
+        compact = " ".join(
+            self.rpc_definition("set_enterprise_shareholder").split()
+        )
+        self.assertIn(
+            "from public.enterprises where id=v_eid for update",
+            compact,
+        )
+        self.assertIn(
+            "from public.enterprise_role_motions where enterprise_id=v_eid and status='open'",
+            compact,
+        )
+        self.assertIn("cannot change shares while a shareholder motion is open", compact)
+
+    def test_board_tables_enforce_one_director_one_vote(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn("create table if not exists public.enterprise_board_motions", compact)
+        self.assertIn("create table if not exists public.enterprise_board_votes", compact)
+        self.assertIn(
+            "primary key (motion_id,director_profile_id)",
+            compact,
+        )
+        self.assertIn(
+            "on conflict (motion_id,director_profile_id) do update",
+            compact,
+        )
+        self.assertNotIn("shares_at_vote", self.rpc_definition("cast_board_vote"))
+        self.assertIn(
+            "alter table public.enterprise_board_motions enable row level security;",
+            self.sql,
+        )
+        self.assertIn(
+            "alter table public.enterprise_board_votes enable row level security;",
+            self.sql,
+        )
+
+    def test_board_rpcs_require_director_office(self):
+        for name in (
+            "create_board_motion",
+            "cast_board_vote",
+            "finalize_board_motion",
+        ):
+            definition = self.rpc_definition(name)
+            self.assertIn("public._identity_is_board_director", definition)
+            self.assertIn("security definer", definition)
+            self.assertIn("set search_path=public,auth,pg_temp", definition)
+        director = " ".join(
+            self.rpc_definition("_identity_is_board_director").split()
+        )
+        self.assertIn("a.office_key in ('chairperson','director')", director)
+        self.assertIn("m.role_key in ('chairperson','director')", director)
+
+    def test_board_finalize_requires_majority_quorum_and_yes_votes(self):
+        compact = " ".join(
+            self.rpc_definition("finalize_board_motion").split()
+        )
+        self.assertIn("v_cast_count*2>v_director_count", compact)
+        self.assertIn("v_yes_count*2>v_cast_count", compact)
+
+    def test_board_actions_are_audited(self):
+        for name, action in (
+            ("create_board_motion", "board_motion.created"),
+            ("cast_board_vote", "board_motion.vote_cast"),
+            ("finalize_board_motion", "board_motion."),
+        ):
+            definition = self.rpc_definition(name)
+            self.assertIn(
+                "insert into public.enterprise_identity_audit",
+                definition,
+            )
+            self.assertIn(action, definition)
+
+    def test_board_and_shareholder_rpcs_have_least_privilege_grants(self):
+        for signature in (
+            "create_board_motion(text,text,jsonb)",
+            "cast_board_vote(uuid,text)",
+            "finalize_board_motion(uuid)",
+            "propose_enterprise_role(uuid,text,text,text,text,text,integer)",
+            "cast_enterprise_role_vote(uuid,text)",
+            "close_enterprise_role_vote(uuid)",
+            "set_enterprise_shareholder(uuid,numeric)",
+        ):
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on function public.{signature} from {role};",
+                    self.sql,
+                )
+            self.assertIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
+        for signature in (
+            "_identity_finalize_motion(uuid)",
+            "_identity_is_board_director(uuid,uuid)",
+            "_identity_board_director_count(uuid)",
+        ):
+            for role in ("public", "anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on function public.{signature} from {role};",
+                    self.sql,
+                )
+            self.assertNotIn(
+                f"grant execute on function public.{signature} to authenticated;",
+                self.sql,
+            )
+
+    def test_board_tables_have_no_client_table_grants(self):
+        for table in (
+            "enterprise_board_motions",
+            "enterprise_board_votes",
+        ):
+            for role in ("anon", "authenticated"):
+                self.assertIn(
+                    f"revoke all on table public.{table} from {role};",
+                    self.sql,
+                )
+            self.assertNotIn(
+                f"grant all on table public.{table} to authenticated;",
+                self.sql,
+            )
 
 if __name__ == "__main__":
     unittest.main()
