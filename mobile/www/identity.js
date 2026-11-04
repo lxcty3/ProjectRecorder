@@ -416,6 +416,11 @@ function openIdentityMotion(profileId) {
       <option value="5">5 天</option>
       <option value="7">7 天</option>
     </select>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input id="id-conflict-disclosed" type="checkbox"
+             style="width:auto;margin:0">
+      &#21033;&#30410;&#20914;&#31361;&#65306;&#24050;&#20027;&#21160;&#25259;&#38706;
+    </label>
     <div class="hint" style="margin-top:10px">
       出席率达到 ${num(state.enterprise.quorum_bps) / 100}% 且赞成票超过有效投票的 50% 才通过。
     </div>
@@ -438,6 +443,7 @@ async function submitIdentityMotion() {
   const title = $("id-title").value.trim();
   const reason = $("id-reason").value.trim();
   const days = Number($("id-days").value || 3);
+  const conflictDisclosed = $("id-conflict-disclosed").checked;
   closeSheet();
   await identityRpc("propose_enterprise_role", {
     p_target: target,
@@ -447,6 +453,7 @@ async function submitIdentityMotion() {
     p_title: kind === "appointment" ? title : "",
     p_reason: reason,
     p_days: days,
+    p_conflict_disclosed: conflictDisclosed,
   }, "任免提案已发起");
 }
 

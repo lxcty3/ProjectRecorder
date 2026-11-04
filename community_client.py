@@ -315,7 +315,7 @@ class CommunityClient:
 
     def propose_role_change(self, session, target_profile_id, kind,
                             role_key="employee", department="", title="",
-                            reason="", days=3):
+                            reason="", days=3, conflict_disclosed=False):
         return _request(
             "POST", "/rest/v1/rpc/propose_enterprise_role",
             token=session.access_token,
@@ -327,6 +327,7 @@ class CommunityClient:
                 "p_title": str(title or ""),
                 "p_reason": str(reason or ""),
                 "p_days": int(days or 3),
+                "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
 

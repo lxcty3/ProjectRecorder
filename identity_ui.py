@@ -5,6 +5,7 @@ import time
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -158,6 +159,10 @@ class RoleMotionDialog(QDialog):
         self.days_box.setRange(1, 14)
         self.days_box.setValue(3)
         self.days_box.setSuffix(" 天")
+        self.conflict_box = QCheckBox(
+            "\u6211\u4e0e\u8be5\u4e8b\u9879\u5b58\u5728\u5229\u76ca"
+            "\u5173\u7cfb\uff0c\u5df2\u4e3b\u52a8\u62ab\u9732"
+        )
 
         form.addRow("成员", self.target_box)
         form.addRow("事项", self.kind_box)
@@ -166,6 +171,7 @@ class RoleMotionDialog(QDialog):
         form.addRow("职务名称", self.title_edit)
         form.addRow("提案原因", self.reason_edit)
         form.addRow("投票期", self.days_box)
+        form.addRow("\u5229\u76ca\u51b2\u7a81", self.conflict_box)
         layout.addLayout(form)
 
         self.kind_box.currentIndexChanged.connect(self._sync_kind)
@@ -206,6 +212,7 @@ class RoleMotionDialog(QDialog):
             "title": self.title_edit.text().strip(),
             "reason": self.reason_edit.toPlainText().strip(),
             "days": self.days_box.value(),
+            "conflict_disclosed": self.conflict_box.isChecked(),
         }
         self.accept()
 
@@ -660,6 +667,7 @@ class IdentityPage(QWidget):
                 data["title"],
                 data["reason"],
                 data["days"],
+                conflict_disclosed=data["conflict_disclosed"],
             ),
             "任免提案已发起，等待股东投票",
         )

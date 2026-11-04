@@ -143,6 +143,62 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             (enterprise_id, owner_id, version_id, owner_id),
         )
 
+    def _set_share_split(
+        self, enterprise_id, owner_id, employee_id,
+        owner_shares, employee_shares,
+    ):
+        self._as(
+            None,
+            "update public.enterprise_shareholders set shares=%s "
+            "where enterprise_id=%s and profile_id=%s",
+            (owner_shares, enterprise_id, owner_id),
+        )
+        self._as(
+            None,
+            "insert into public.enterprise_shareholders("
+            "enterprise_id,profile_id,shares,updated_by"
+            ") values(%s,%s,%s,%s) "
+            "on conflict (enterprise_id,profile_id) do update "
+            "set shares=excluded.shares,updated_by=excluded.updated_by,"
+            "updated_at=now()",
+            (enterprise_id, employee_id, employee_shares, owner_id),
+        )
+
+    def _close_after_expiry(self, owner_id, motion_id):
+        self._as(
+            None,
+            "update public.enterprise_role_motions "
+            "set closes_at=now()-interval '1 second' where id=%s",
+            (motion_id,),
+        )
+        return self._as(
+            owner_id,
+            "select public.close_enterprise_role_vote(%s)",
+            (motion_id,),
+        )[0]
+
+    def _propose_major_and_close(
+        self, enterprise_id, owner_id, employee_id, owner_shares,
+        employee_shares,
+    ):
+        self._set_share_split(
+            enterprise_id, owner_id, employee_id,
+            owner_shares, employee_shares,
+        )
+        result = self._as(
+            owner_id,
+            "select public.propose_enterprise_role("
+            "%s,'appointment','director','','','',3,false)",
+            (employee_id,),
+        )[0]
+        motion_id = result["motion_id"]
+        self._as(
+            owner_id,
+            "select public.cast_enterprise_role_vote(%s,'yes')",
+            (motion_id,),
+        )
+        return motion_id, self._close_after_expiry(owner_id, motion_id)
+
     def test_snapshot_is_used_after_direct_share_mutation(self):
         enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
         result = self._as(
@@ -258,6 +314,126 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         )[0]
         self.assertTrue(ordinary_result["ok"])
 
+
+    def test_major_exact_6667_bps_passes(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        motion_id, result = self._propose_major_and_close(
+            enterprise_id, owner_id, employee_id, 6667, 3333
+        )
+        self.assertEqual("passed", result["status"])
+        self.assertEqual(6667, result["yes_bps"])
+        self.assertEqual(
+            "passed",
+            self._as(
+                None,
+                "select status from public.enterprise_role_motions where id=%s",
+                (motion_id,),
+            )[0],
+        )
+
+    def test_major_exact_6666_bps_is_rejected(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        motion_id, result = self._propose_major_and_close(
+            enterprise_id, owner_id, employee_id, 6666, 3334
+        )
+        self.assertEqual("rejected", result["status"])
+        self.assertEqual(6666, result["yes_bps"])
+        self.assertEqual(
+            "rejected",
+            self._as(
+                None,
+                "select status from public.enterprise_role_motions where id=%s",
+                (motion_id,),
+            )[0],
+        )
+
+    def test_ordinary_exact_50_percent_quorum_passes(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        self._set_share_split(
+            enterprise_id, owner_id, employee_id, 5000, 5000
+        )
+        result = self._as(
+            owner_id,
+            "select public.propose_enterprise_role("
+            "%s,'appointment','project_manager','','','',3,false)",
+            (employee_id,),
+        )[0]
+        motion_id = result["motion_id"]
+        self._as(
+            owner_id,
+            "select public.cast_enterprise_role_vote(%s,'yes')",
+            (motion_id,),
+        )
+        closed = self._close_after_expiry(owner_id, motion_id)
+        self.assertEqual("passed", closed["status"])
+        self.assertEqual(5000, closed["turnout_bps"])
+
+    def test_ordinary_exact_50_percent_approval_is_rejected(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        self._set_share_split(
+            enterprise_id, owner_id, employee_id, 5000, 5000
+        )
+        result = self._as(
+            owner_id,
+            "select public.propose_enterprise_role("
+            "%s,'appointment','project_manager','','','',3,false)",
+            (employee_id,),
+        )[0]
+        motion_id = result["motion_id"]
+        self._as(
+            owner_id,
+            "select public.cast_enterprise_role_vote(%s,'yes')",
+            (motion_id,),
+        )
+        vote_result = self._as(
+            employee_id,
+            "select public.cast_enterprise_role_vote(%s,'no')",
+            (motion_id,),
+        )[0]
+        self.assertEqual("rejected", vote_result["motion_status"])
+        decision = self._as(
+            None,
+            "select status,decision_reason "
+            "from public.enterprise_role_motions where id=%s",
+            (motion_id,),
+        )
+        self.assertEqual("rejected", decision[0])
+        self.assertIn("Approval threshold", decision[1])
+
+    def test_board_vote_replacement_keeps_one_vote_per_director(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        self._as(
+            None,
+            "update public.enterprise_members set role_key='director' "
+            "where enterprise_id=%s and profile_id=%s",
+            (enterprise_id, employee_id),
+        )
+        board_motion = self._as(
+            owner_id,
+            "select public.create_board_motion("
+            "'Vote replacement','operations','{}',false)",
+        )[0]
+        motion_id = board_motion["board_motion_id"]
+        self._as(
+            owner_id,
+            "select public.cast_board_vote(%s,'yes')",
+            (motion_id,),
+        )
+        second = self._as(
+            owner_id,
+            "select public.cast_board_vote(%s,'no')",
+            (motion_id,),
+        )[0]
+        self.assertEqual(1, second["cast_count"])
+        vote = self._as(
+            None,
+            "select count(*),min(choice) "
+            "from public.enterprise_board_votes "
+            "where motion_id=%s and director_profile_id=%s",
+            (motion_id, owner_id),
+        )
+        self.assertEqual(1, vote[0])
+        self.assertEqual("no", vote[1])
 
 if __name__ == "__main__":
     unittest.main()
