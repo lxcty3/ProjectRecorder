@@ -38,10 +38,16 @@ class RoleTemplateUiTest(unittest.TestCase):
         page.render()
         self.assertEqual(page.table.rowCount(), 0)
 
-    def test_identity_page_has_template_tab(self):
+    def test_identity_page_has_template_and_board_tabs(self):
         page = IdentityPage(None)
         labels = [page.tabs.tabText(i) for i in range(page.tabs.count())]
         self.assertIn("身份模板", labels)
+        self.assertIn("董事会与积分", labels)
+
+    def test_template_page_exposes_editor_and_assignment_actions(self):
+        page = RoleTemplatePage(None)
+        self.assertEqual(page.edit_button.text(), "编辑四维权限")
+        self.assertEqual(page.assign_button.text(), "临时指派")
 
     def test_today_page_empty(self):
         page = TodayPage(None)
@@ -67,6 +73,9 @@ class RoleTemplateUiTest(unittest.TestCase):
         self.assertEqual(page.card_done.value_label.text(), "1/2")
         self.assertEqual(page.card_points.value_label.text(), "42")
         self.assertTrue(page.next_button.isEnabled())
+        self.assertEqual(page.ledger_list.count(), 0)
+        page.set_cloud_tasks([{"title": "云端任务"}])
+        self.assertEqual(page.task_list.count(), 1)
 
     def test_today_page_refresh_rerenders(self):
         page = TodayPage(None)

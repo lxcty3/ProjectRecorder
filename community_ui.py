@@ -6,9 +6,9 @@ import time
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter, QTextEdit,
-    QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
 import theme
@@ -160,6 +160,7 @@ class CommunityLoginDialog(QDialog):
 
 class CommunityMessageCard(QFrame):
     delete_requested = pyqtSignal(str)
+    unlock_requested = pyqtSignal(str)
 
     def __init__(self, post, is_mine=False, parent=None):
         super().__init__(parent)
@@ -212,7 +213,11 @@ class CommunityMessageCard(QFrame):
             head.addWidget(delete_button)
         layout.addLayout(head)
 
-        body = QLabel(str(post.get("content") or ""))
+        locked = bool(post.get("locked"))
+        body_text = str(post.get("preview") if locked else post.get("content") or "")
+        if locked:
+            body_text = "付费知识预览：{}...".format(body_text[:180])
+        body = QLabel(body_text)
         body.setObjectName("CommunityMessageBody")
         body.setWordWrap(True)
         body.setTextFormat(Qt.TextFormat.PlainText)
@@ -220,6 +225,18 @@ class CommunityMessageCard(QFrame):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         layout.addWidget(body)
+        if locked:
+            access = QHBoxLayout()
+            cost = int(post.get("unlock_cost") or 0)
+            access.addWidget(label(f"使用 {cost} 积分永久解锁", "CommunityMeta"))
+            access.addStretch()
+            unlock_button = QPushButton("解锁全文")
+            unlock_button.setObjectName("PrimaryButton")
+            unlock_button.clicked.connect(
+                lambda: self.unlock_requested.emit(str(self.post.get("id")))
+            )
+            access.addWidget(unlock_button)
+            layout.addLayout(access)
 
 class CommunityPage(QWidget):
     """共享社区：消息保存在 Supabase，所有成员看到同一份数据。"""
@@ -334,6 +351,15 @@ class CommunityPage(QWidget):
         self.message_edit.setTabChangesFocus(True)
         self.message_edit.textChanged.connect(self._update_char_count)
         side_layout.addWidget(self.message_edit)
+        access_row = QHBoxLayout()
+        access_row.addWidget(label("解锁积分", "CommunityFieldLabel"))
+        self.unlock_cost = QSpinBox()
+        self.unlock_cost.setRange(0, 100000000)
+        self.unlock_cost.setValue(0)
+        access_row.addWidget(self.unlock_cost)
+        self.required_box = QCheckBox("设为必读")
+        access_row.addWidget(self.required_box)
+        side_layout.addLayout(access_row)
         row = QHBoxLayout()
         self.char_label = label("0 / 2000", "CommunityCharCount")
         row.addWidget(self.char_label)
@@ -490,6 +516,7 @@ class CommunityPage(QWidget):
             )
             card = CommunityMessageCard(post, is_mine=is_mine)
             card.delete_requested.connect(self.delete_post)
+            card.unlock_requested.connect(self.unlock_post)
             self.feed_layout.addWidget(card)
         self.feed_layout.addStretch()
 
@@ -644,11 +671,14 @@ class CommunityPage(QWidget):
         self.publish_button.setText("发送中…")
         old_session = self.session
 
+        cost = self.unlock_cost.value()
+        required = self.required_box.isChecked()
+
         def work():
             session = old_session
             if session.is_expired():
                 session = self.client.refresh(session)
-            self.client.publish(session, content, topic)
+            self.client.publish(session, content, topic, cost, required)
             return session, self.client.list_posts(session)
 
         self._spawn(
@@ -665,6 +695,8 @@ class CommunityPage(QWidget):
         self._save_session()
         self.posts = list(posts or [])
         self.message_edit.clear()
+        self.unlock_cost.setValue(0)
+        self.required_box.setChecked(False)
         self.publish_button.setEnabled(True)
         self.publish_button.setText("发布消息")
         self._set_identity()
@@ -691,6 +723,38 @@ class CommunityPage(QWidget):
             self.feed_status.setText("发布失败")
             self._render_feed()
         QMessageBox.warning(self, "发布失败", message)
+
+    def unlock_post(self, post_id):
+        if self.session is None:
+            self.open_login()
+            return
+        post = next(
+            (item for item in self.posts if str(item.get("id")) == str(post_id)),
+            None,
+        )
+        cost = int((post or {}).get("unlock_cost") or 0)
+        if QMessageBox.question(
+            self, "永久解锁知识",
+            f"使用 {cost} 积分解锁这篇知识？解锁后可永久查看。",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        if self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            self.client.unlock_knowledge(session, post_id)
+            return session, self.client.list_posts(session)
+
+        self._spawn(
+            work,
+            lambda result: self._on_published(*result),
+            self._on_publish_failed,
+        )
 
     def delete_post(self, post_id):
         if self.session is None:

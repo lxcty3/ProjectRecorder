@@ -31,8 +31,9 @@ import rules
 import theme
 from chart import BarChart, LoadChart
 from db import ASSIGN_STATUS, PRIORITY, PROJECT_STATUS, Store
-from community_client import CommunitySession
-from community_ui import CommunityLoginDialog
+from community_client import CommunityClient, CommunitySession
+from community_ui import CommunityLoginDialog, CommunityWorker
+from identity_rules import PermissionGrant, can_use_advanced_mode
 from collaboration import CollaborationPage, EmployeeCloudPage
 from detail import ImportDialog, ProjectDialog, SubmitWindow
 from knowledge_planet import KnowledgePlanetPage
@@ -459,6 +460,12 @@ class MainWindow(QMainWindow):
         top.addWidget(label(APP_SUBTITLE, "ToolMeta"))
         top.addStretch()
 
+        self.mode_button = QPushButton("切换到高级模式")
+        self.mode_button.setObjectName("GhostButton")
+        self.mode_button.setVisible(False)
+        self.mode_button.clicked.connect(self._toggle_ui_mode)
+        top.addWidget(self.mode_button)
+
         self.account_button = QPushButton("登录手机版账号")
         self.account_button.setObjectName("AccountButton")
         self.account_button.setToolTip(
@@ -563,15 +570,9 @@ class MainWindow(QMainWindow):
         me = self._identity_me()
         permissions = me.get("permissions")
         if isinstance(permissions, list):
-            return any(permission in permissions for permission in (
-                "company.manage", "projects.view_all", "projects.manage",
-                "people.view_all", "people.manage", "worklogs.approve",
-                "tasks.assign", "tasks.grade", "finance.view",
-                "finance.manage", "reports.view", "audit.read",
-                "identity.view", "identity.propose", "identity.vote",
-                "identity.manage_shares", "identity.manage_templates",
-                "governance.manage", "governance.vote",
-            ))
+            return can_use_advanced_mode(
+                [PermissionGrant(str(key)) for key in permissions]
+            )
         # Preserve the legacy owner experience until the identity RPC resolves.
         return self.account_session.role == "boss"
 
@@ -623,9 +624,12 @@ class MainWindow(QMainWindow):
             employee_tasks = bool(session and not management and advanced)
 
             self.tabs.setTabVisible(self.today_tab, not advanced)
-            for widget in (self.dashboard, self.knowledge_page,
-                           self.collaboration_page, self.assistant_page,
-                           self.employee_page, self.staffing_page):
+            self.tabs.setTabVisible(
+                self.tabs.indexOf(self.knowledge_page), logged
+            )
+            for widget in (self.dashboard, self.collaboration_page,
+                           self.assistant_page, self.employee_page,
+                           self.staffing_page):
                 self.tabs.setTabVisible(self.tabs.indexOf(widget), advanced)
             if hasattr(self, "identity_page"):
                 self.tabs.setTabVisible(self.identity_tab, advanced)
@@ -642,12 +646,47 @@ class MainWindow(QMainWindow):
                 self.tabs.setCurrentWidget(self.today_page)
             self.today_page.apply_account_session(session)
 
+        if hasattr(self, "mode_button"):
+            self.mode_button.setVisible(logged and self._advanced_mode_allowed())
+            self.mode_button.setText(
+                "切换到简单模式"
+                if self._effective_ui_mode() == "advanced"
+                else "切换到高级模式"
+            )
+
         if hasattr(self, "act_account_login"):
             self.act_account_login.setText(
                 "切换手机版账号…" if logged else "登录手机版账号…"
             )
         if hasattr(self, "act_account_logout"):
             self.act_account_logout.setEnabled(logged)
+
+    def _toggle_ui_mode(self):
+        if self.account_session is None:
+            return
+        target = "simple" if self._effective_ui_mode() == "advanced" else "advanced"
+        if target == "advanced" and not self._advanced_mode_allowed():
+            self.flash("当前身份没有高级模式权限", 3600)
+            return
+        worker = CommunityWorker(
+            lambda: CommunityClient().set_ui_mode(self.account_session, target),
+            self,
+        )
+        self._mode_worker = worker
+
+        def done(result):
+            mode = str((result or {}).get("mode") or target)
+            self.identity_state.setdefault("me", {})["preferred_mode"] = mode
+            self._refresh_account_ui()
+            self.flash(
+                "已切换到高级模式" if mode == "advanced" else "已回到简单模式",
+                3000,
+            )
+
+        worker.done.connect(done)
+        worker.failed.connect(lambda message: self.flash(str(message), 5000))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _account_button_clicked(self):
         if self.account_session is None:

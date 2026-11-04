@@ -29,7 +29,10 @@ from community_ui import CommunityWorker
 from role_templates_ui import RoleTemplatePage
 from widgets import SectionTitle, StatCard, label, muted
 
-__all__ = ["IdentityPage", "RoleMotionDialog"]
+__all__ = [
+    "IdentityPage", "RoleMotionDialog", "BoardPointPage",
+    "PointPoolMotionDialog", "AwardPointsDialog",
+]
 
 ROLE_LABELS = {
     "chairperson": "董事长",
@@ -176,6 +179,7 @@ class RoleMotionDialog(QDialog):
         layout.addLayout(form)
 
         self.kind_box.currentIndexChanged.connect(self._sync_kind)
+        self.role_box.currentIndexChanged.connect(self._sync_days)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Cancel
@@ -186,6 +190,16 @@ class RoleMotionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._sync_kind()
+        self._sync_days()
+
+    def _sync_days(self):
+        major_roles = {
+            "chairperson", "director", "supervisor", "ceo",
+            "finance", "identity_admin",
+        }
+        self.days_box.setValue(
+            5 if self.role_box.currentData() in major_roles else 3
+        )
 
     def _sync_kind(self):
         appointment = self.kind_box.currentData() == "appointment"
@@ -301,7 +315,7 @@ class IdentityPage(QWidget):
         self.propose_button.setObjectName("PrimaryButton")
         self.propose_button.clicked.connect(self._propose)
         member_head.addWidget(self.propose_button)
-        self.share_button = QPushButton("调整股份")
+        self.share_button = QPushButton("发起股份提案")
         self.share_button.setObjectName("GhostButton")
         self.share_button.clicked.connect(self._edit_shares)
         member_head.addWidget(self.share_button)
@@ -375,6 +389,9 @@ class IdentityPage(QWidget):
         self.role_template_page = RoleTemplatePage(self.window)
         self.tabs.addTab(self.role_template_page, "身份模板")
 
+        self.board_point_page = BoardPointPage(self.window)
+        self.tabs.addTab(self.board_point_page, "董事会与积分")
+
         root.addWidget(self.tabs, 1)
         self.status_label = label("登录后加载企业身份", "CommunityFeedStatus")
         root.addWidget(self.status_label)
@@ -389,6 +406,8 @@ class IdentityPage(QWidget):
             self.snapshot = {}
         self.session = session
         self.role_template_page.apply_account_session(session)
+        if hasattr(self, "board_point_page"):
+            self.board_point_page.apply_account_session(session)
         if session is None:
             self.snapshot = {}
             self.identity_label.setText("尚未登录")
@@ -403,7 +422,10 @@ class IdentityPage(QWidget):
 
     def shutdown(self):
         self.timer.stop()
-        for worker in list(self.workers):
+        workers = list(self.workers)
+        if hasattr(self, "board_point_page"):
+            workers.extend(self.board_point_page.workers)
+        for worker in workers:
             if worker.isRunning():
                 worker.wait(12000)
 
@@ -547,8 +569,19 @@ class IdentityPage(QWidget):
         for motion in motions:
             row = self.motion_table.rowCount()
             self.motion_table.insertRow(row)
-            kind = "任命 / 调整" if motion.get("kind") == "appointment" else "免职"
-            target = motion.get("target_name") or "成员"
+            kind = {
+                "appointment": "任命 / 调整",
+                "removal": "免职",
+                "share_change": "股份调整",
+                "template_change": "身份模板变更",
+            }.get(motion.get("kind"), motion.get("kind") or "事项")
+            target = motion.get("target_name") or "企业"
+            if motion.get("kind") == "share_change":
+                target += " · 目标 {:.4f} 股".format(
+                    float((motion.get("payload") or {}).get("shares") or 0)
+                )
+            elif motion.get("kind") == "template_change":
+                target += " · " + str((motion.get("payload") or {}).get("template_key") or "模板")
             if motion.get("proposed_role_key"):
                 target += " → " + role_label(motion.get("proposed_role_key"))
             result = "赞成 {:.2f}% · 出席 {:.2f}%".format(
@@ -557,6 +590,8 @@ class IdentityPage(QWidget):
             )
             deadline = str(motion.get("closes_at") or "")[:16].replace("T", " ")
             status = STATUS_LABELS.get(motion.get("status"), motion.get("status") or "—")
+            if motion.get("conflict_disclosed"):
+                status += " · 已披露利益冲突"
             if motion.get("status") == "open":
                 status += " · 截止 " + deadline
             else:
@@ -586,6 +621,10 @@ class IdentityPage(QWidget):
                 )
             )
         self.role_text.setPlainText("\n".join(role_lines))
+        self.role_template_page.snapshot["members"] = members
+        self.role_template_page.render()
+        if hasattr(self, "board_point_page"):
+            self.board_point_page.apply_snapshot(state)
 
         me_permissions = me.get("permissions") or []
         self.propose_button.setEnabled("identity.propose" in me_permissions)
@@ -735,8 +774,8 @@ class IdentityPage(QWidget):
         current = float(member.get("shares") or 0)
         shares, ok = QInputDialog.getDouble(
             self,
-            "调整股份",
-            "股份权重（所有股东会自动折算为百分比）：",
+            "发起股份调整提案",
+            "拟调整后的股份权重（将提交重大股东表决）：",
             current,
             0,
             1000000000,
@@ -744,10 +783,405 @@ class IdentityPage(QWidget):
         )
         if not ok:
             return
+        reason, ok = QInputDialog.getText(
+            self,
+            "股份调整提案",
+            "调整原因（股东投票时会看到）：",
+        )
+        if not ok or not reason.strip():
+            QMessageBox.warning(self, "缺少原因", "股份调整必须填写原因。")
+            return
+        conflict = QMessageBox.question(
+            self,
+            "利益冲突披露",
+            "你是否与该股份调整存在利益关系？",
+        ) == QMessageBox.StandardButton.Yes
         self._run_action(
-            lambda session: CommunityClient().set_shareholder(
-                session, member.get("profile_id"), shares
+            lambda session: CommunityClient().propose_share_change(
+                session, member.get("profile_id"), shares, reason.strip(),
+                conflict_disclosed=conflict,
             ),
-            "股份权重已更新",
+            "股份调整已提交重大股东表决",
         )
 
+
+
+class PointPoolMotionDialog(QDialog):
+    """Create a board point-pool motion."""
+
+    def __init__(self, parent=None, point_state=None):
+        super().__init__(parent)
+        self.data = None
+        self.setWindowTitle("发起积分池议案")
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(10)
+        root.addWidget(label("董事会积分池议案", "DialogTitle"))
+        root.addWidget(muted(
+            "积分池按季度审批，董事长只能在剩余额度内发放；未选结转的余额默认关闭。"
+        ))
+        form = QFormLayout()
+        quarter = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-Q") + str(
+            (datetime.datetime.now(datetime.timezone.utc).month - 1) // 3 + 1
+        )
+        self.title_edit = QLineEdit(f"{quarter} 积分池")
+        self.quarter_edit = QLineEdit(quarter)
+        self.total_spin = QSpinBox()
+        self.total_spin.setRange(1, 100000000)
+        self.total_spin.setValue(1000)
+        self.limit_spin = QSpinBox()
+        self.limit_spin.setRange(1, 100000000)
+        self.limit_spin.setValue(100)
+        self.carry_edit = QLineEdit()
+        self.carry_edit.setPlaceholderText("可选：上一积分池 UUID")
+        pool = (point_state or {}).get("pool") or {}
+        if pool.get("id"):
+            self.carry_edit.setPlaceholderText(
+                f"可选：{pool.get('quarter') or ''} {pool.get('id')}"
+            )
+        self.conflict_box = QCheckBox("我与该议案存在利益关系，已主动披露")
+        form.addRow("议案标题", self.title_edit)
+        form.addRow("季度", self.quarter_edit)
+        form.addRow("新增额度", self.total_spin)
+        form.addRow("单次上限", self.limit_spin)
+        form.addRow("结转来源", self.carry_edit)
+        form.addRow("利益冲突", self.conflict_box)
+        root.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("提交董事会")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _save(self):
+        title = self.title_edit.text().strip()
+        quarter = self.quarter_edit.text().strip().upper()
+        if not title or not quarter:
+            QMessageBox.warning(self, "缺少内容", "议案标题和季度不能为空。")
+            return
+        payload = {
+            "quarter": quarter,
+            "total_amount": self.total_spin.value(),
+            "single_award_limit": self.limit_spin.value(),
+        }
+        carry = self.carry_edit.text().strip()
+        if carry:
+            payload["carry_from"] = carry
+        self.data = {
+            "title": title,
+            "kind": "point_pool",
+            "payload": payload,
+            "conflict_disclosed": self.conflict_box.isChecked(),
+        }
+        self.accept()
+
+
+class AwardPointsDialog(QDialog):
+    """Chairperson award form with evidence and permanent-point context."""
+
+    def __init__(self, parent=None, members=None):
+        super().__init__(parent)
+        self.data = None
+        self.setWindowTitle("董事长发放积分")
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(10)
+        root.addWidget(label("按证据发放积分", "DialogTitle"))
+        form = QFormLayout()
+        self.member_box = QComboBox()
+        for member in members or []:
+            if member.get("status") == "active":
+                self.member_box.addItem(
+                    f"{member.get('name') or '成员'} · {member.get('role_name') or ''}",
+                    member.get("profile_id"),
+                )
+        self.amount_spin = QSpinBox()
+        self.amount_spin.setRange(1, 100000000)
+        self.amount_spin.setValue(10)
+        self.evidence_box = QComboBox()
+        self.evidence_box.addItems(["acceptance", "collaboration", "knowledge"])
+        self.evidence_edit = QLineEdit()
+        self.evidence_edit.setPlaceholderText("验收、协作或知识记录的 UUID")
+        self.reason_edit = QTextEdit()
+        self.reason_edit.setMaximumHeight(90)
+        self.reason_edit.setPlaceholderText("说明发放依据")
+        form.addRow("成员", self.member_box)
+        form.addRow("积分", self.amount_spin)
+        form.addRow("证据类型", self.evidence_box)
+        form.addRow("证据 ID", self.evidence_edit)
+        form.addRow("原因", self.reason_edit)
+        root.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("发放")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _save(self):
+        evidence_id = self.evidence_edit.text().strip()
+        reason = self.reason_edit.toPlainText().strip()
+        if not self.member_box.currentData() or not evidence_id or not reason:
+            QMessageBox.warning(self, "缺少内容", "成员、证据 ID 和原因都必须填写。")
+            return
+        self.data = {
+            "profile_id": self.member_box.currentData(),
+            "amount": self.amount_spin.value(),
+            "evidence_type": self.evidence_box.currentText(),
+            "evidence_id": evidence_id,
+            "reason": reason,
+        }
+        self.accept()
+
+
+class BoardPointPage(QWidget):
+    """Board motions, chair awards, and permanent point history."""
+
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+        self.session = None
+        self.snapshot = {}
+        self.workers = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 6, 0, 0)
+        root.setSpacing(8)
+        head = QHBoxLayout()
+        head.addWidget(SectionTitle("董事会与积分"))
+        head.addStretch()
+        self.new_button = QPushButton("发起积分池议案")
+        self.new_button.setObjectName("PrimaryButton")
+        self.new_button.clicked.connect(self._create_motion)
+        head.addWidget(self.new_button)
+        self.yes_button = QPushButton("赞成")
+        self.yes_button.setObjectName("GhostButton")
+        self.yes_button.clicked.connect(lambda: self._vote("yes"))
+        head.addWidget(self.yes_button)
+        self.no_button = QPushButton("反对")
+        self.no_button.setObjectName("GhostButton")
+        self.no_button.clicked.connect(lambda: self._vote("no"))
+        head.addWidget(self.no_button)
+        self.abstain_button = QPushButton("弃权")
+        self.abstain_button.setObjectName("GhostButton")
+        self.abstain_button.clicked.connect(lambda: self._vote("abstain"))
+        head.addWidget(self.abstain_button)
+        self.finalize_button = QPushButton("截止并计票")
+        self.finalize_button.setObjectName("GhostButton")
+        self.finalize_button.clicked.connect(self._finalize)
+        head.addWidget(self.finalize_button)
+        root.addLayout(head)
+
+        self.motion_table = QTableWidget(0, 6)
+        self.motion_table.setHorizontalHeaderLabels(
+            ["议案", "类型", "董事票数", "利益冲突", "状态", "发起人"]
+        )
+        self._style_table(self.motion_table)
+        self.motion_table.itemSelectionChanged.connect(self._update_actions)
+        root.addWidget(self.motion_table, 2)
+
+        cards = QHBoxLayout()
+        self.balance_card = StatCard("我的积分", "0", "分", "永久有效")
+        self.pool_card = StatCard("本期积分池", "0", "分", "董事会审批")
+        self.remaining_card = StatCard("剩余额度", "0", "分", "董事长发放")
+        cards.addWidget(self.balance_card)
+        cards.addWidget(self.pool_card)
+        cards.addWidget(self.remaining_card)
+        root.addLayout(cards)
+
+        award_row = QHBoxLayout()
+        award_row.addWidget(SectionTitle("积分发放与历史"))
+        award_row.addStretch()
+        self.award_button = QPushButton("董事长发放积分")
+        self.award_button.setObjectName("PrimaryButton")
+        self.award_button.clicked.connect(self._award)
+        award_row.addWidget(self.award_button)
+        root.addLayout(award_row)
+        self.ledger_table = QTableWidget(0, 5)
+        self.ledger_table.setHorizontalHeaderLabels(
+            ["时间", "变动", "类型", "原因", "操作者"]
+        )
+        self._style_table(self.ledger_table)
+        root.addWidget(self.ledger_table, 2)
+        self.status = muted("登录后加载董事会与积分台账")
+        root.addWidget(self.status)
+        self._update_actions()
+
+    @staticmethod
+    def _style_table(table):
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setShowGrid(False)
+        table.horizontalHeader().setStretchLastSection(True)
+
+    def apply_account_session(self, session):
+        self.session = session
+        if session is None:
+            self.snapshot = {}
+            self.render()
+        self._update_actions()
+
+    def apply_snapshot(self, snapshot):
+        self.snapshot = snapshot if isinstance(snapshot, dict) else {}
+        self.render()
+
+    def _selected_motion(self):
+        rows = self.motion_table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        item = self.motion_table.item(rows[0].row(), 0)
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def render(self):
+        me = (self.snapshot or {}).get("me") or {}
+        points = (self.snapshot or {}).get("point_state") or {}
+        pool = points.get("pool") or {}
+        self.balance_card.update_values(str(points.get("balance", 0)), "分", "永久有效")
+        self.pool_card.update_values(str(pool.get("total", 0)), "分", pool.get("quarter", "暂无积分池"))
+        self.remaining_card.update_values(str(pool.get("remaining", 0)), "分", "董事长发放")
+
+        motions = (self.snapshot or {}).get("board_motions") or []
+        self.motion_table.setRowCount(0)
+        for motion in motions:
+            row = self.motion_table.rowCount()
+            self.motion_table.insertRow(row)
+            votes = "赞成 {} / 出席 {}".format(
+                motion.get("yes_count", 0), motion.get("cast_count", 0)
+            )
+            values = [
+                motion.get("title") or "董事会事项",
+                "积分池" if motion.get("kind") == "point_pool" else (motion.get("kind") or ""),
+                votes,
+                "已披露" if motion.get("conflict_disclosed") else "未披露",
+                STATUS_LABELS.get(motion.get("status"), motion.get("status") or ""),
+                motion.get("proposer_name") or "—",
+            ]
+            for column, text in enumerate(values):
+                item = QTableWidgetItem(str(text))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, motion)
+                self.motion_table.setItem(row, column, item)
+        self.motion_table.resizeColumnsToContents()
+
+        ledger = points.get("ledger") or []
+        self.ledger_table.setRowCount(0)
+        for entry in ledger:
+            row = self.ledger_table.rowCount()
+            self.ledger_table.insertRow(row)
+            values = [
+                str(entry.get("created_at") or "")[:16].replace("T", " "),
+                ("+" if int(entry.get("amount") or 0) > 0 else "") + str(entry.get("amount") or 0),
+                entry.get("entry_type") or "",
+                entry.get("reason") or "",
+                entry.get("actor_name") or "—",
+            ]
+            for column, text in enumerate(values):
+                self.ledger_table.setItem(row, column, QTableWidgetItem(str(text)))
+        self.ledger_table.resizeColumnsToContents()
+        self.status.setText(
+            "董事会成员可建案表决；董事长可按已批准额度发放。"
+            if me.get("is_board_director") else "当前身份只可查看自己的积分台账。"
+        )
+        self._update_actions()
+
+    def _update_actions(self):
+        me = (self.snapshot or {}).get("me") or {}
+        motion = self._selected_motion()
+        board = bool(me.get("is_board_director"))
+        self.new_button.setEnabled(board)
+        can_vote = bool(board and motion and motion.get("can_vote"))
+        for button in (self.yes_button, self.no_button, self.abstain_button):
+            button.setEnabled(can_vote)
+        self.finalize_button.setEnabled(bool(board and motion and motion.get("can_finalize")))
+        self.award_button.setEnabled(bool(me.get("is_chairperson")))
+
+    def _run(self, work, success_text):
+        worker = CommunityWorker(work, self)
+        self.workers.append(worker)
+        def done(_):
+            self.status.setText(success_text)
+            if self.window is not None and hasattr(self.window, "identity_page"):
+                self.window.identity_page.refresh(True)
+        def cleanup():
+            if worker in self.workers:
+                self.workers.remove(worker)
+            worker.deleteLater()
+        worker.done.connect(done)
+        worker.failed.connect(
+            lambda message: QMessageBox.warning(self, "治理操作失败", message)
+        )
+        worker.finished.connect(cleanup)
+        worker.start()
+
+    def _create_motion(self):
+        if self.session is None:
+            return
+        dialog = PointPoolMotionDialog(
+            self, (self.snapshot or {}).get("point_state") or {}
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.data:
+            return
+        data = dialog.data
+        self._run(
+            lambda: CommunityClient().create_board_motion(
+                self.session, data["title"], data["kind"], data["payload"],
+                conflict_disclosed=data["conflict_disclosed"],
+            ),
+            "积分池议案已提交董事会",
+        )
+
+    def _vote(self, choice):
+        motion = self._selected_motion()
+        if not motion or self.session is None:
+            return
+        self._run(
+            lambda: CommunityClient().cast_board_vote(
+                self.session, motion.get("id"), choice
+            ),
+            "董事会投票已提交",
+        )
+
+    def _finalize(self):
+        motion = self._selected_motion()
+        if not motion or self.session is None:
+            return
+        self._run(
+            lambda: CommunityClient().finalize_board_motion(
+                self.session, motion.get("id")
+            ),
+            "董事会表决已计票",
+        )
+
+    def _award(self):
+        if self.session is None:
+            return
+        me = (self.snapshot or {}).get("me") or {}
+        members = [
+            member for member in (self.snapshot or {}).get("members", [])
+            if str(member.get("profile_id")) != str(me.get("profile_id"))
+        ]
+        dialog = AwardPointsDialog(self, members)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.data:
+            return
+        data = dialog.data
+        self._run(
+            lambda: CommunityClient().award_points(
+                self.session, data["profile_id"], data["amount"],
+                data["evidence_type"], data["evidence_id"], data["reason"],
+            ),
+            "积分已发放并写入永久台账",
+        )
