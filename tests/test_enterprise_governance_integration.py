@@ -556,6 +556,64 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         )[0]
         self.assertEqual("active", status)
 
+    def test_point_pool_motion_crossing_quarter_finalizes_as_rejected(self):
+        _, owner_id, _ = self._create_enterprise_fixture()
+        payload = json.dumps({
+            "quarter": self._current_quarter(),
+            "total_amount": 100,
+            "single_award_limit": 50,
+        })
+        motion = self._as(
+            owner_id,
+            "select public.create_board_motion("
+            "'Quarter boundary pool','point_pool',%s::jsonb,false)",
+            (payload,),
+        )[0]
+        motion_id = motion["board_motion_id"]
+        previous_quarter = self._shift_quarter(self._current_quarter(), -1)
+        self._as(
+            None,
+            "update public.enterprise_board_motions "
+            "set payload=jsonb_set(payload,'{quarter}',to_jsonb(%s::text)) "
+            "where id=%s",
+            (previous_quarter, motion_id),
+        )
+
+        vote = self._as(
+            owner_id,
+            "select public.cast_board_vote(%s,'yes')",
+            (motion_id,),
+        )[0]
+        self.assertEqual("rejected", vote["motion_status"])
+        motion_state = self._as(
+            None,
+            "select status,decided_at is not null "
+            "from public.enterprise_board_motions where id=%s",
+            (motion_id,),
+        )
+        self.assertEqual(("rejected", True), motion_state)
+        pools = self._as(
+            None,
+            "select count(*) from public.enterprise_point_pools "
+            "where board_motion_id=%s",
+            (motion_id,),
+        )[0]
+        self.assertEqual(0, pools)
+        audit = self._as(
+            None,
+            "select action,details->>'reason' "
+            "from public.enterprise_identity_audit "
+            "where details->>'board_motion_id'=%s "
+            "and action='board_motion.rejected' "
+            "order by id desc limit 1",
+            (str(motion_id),),
+        )
+        self.assertEqual(
+            ("board_motion.rejected",
+             "Point pool quarter is no longer current"),
+            audit,
+        )
+
     def test_award_points_requires_chairperson_and_rejects_self(self):
         _, owner_id, employee_id = self._create_enterprise_fixture()
         self._create_point_pool(owner_id, 100, 50)

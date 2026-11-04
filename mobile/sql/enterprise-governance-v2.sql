@@ -1691,6 +1691,8 @@ declare
   v_yes_count integer;
   v_status text;
   v_reason text;
+  v_current_quarter text;
+  v_pool_quarter text;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
 
@@ -1714,16 +1716,27 @@ begin
   from public.enterprise_board_votes
   where motion_id=p_motion;
 
-  if not (v_cast_count*2>v_director_count) then
-    raise exception 'board quorum not reached';
+  v_current_quarter:=to_char(now() at time zone 'UTC','YYYY')
+    ||'-Q'||to_char(now() at time zone 'UTC','Q');
+  if v_m.kind='point_pool' then
+    v_pool_quarter:=trim(coalesce(v_m.payload->>'quarter',''));
   end if;
 
-  if v_yes_count*2>v_cast_count then
-    v_status:='passed';
-    v_reason:='Approved by a majority of directors present';
-  else
+  if v_m.kind='point_pool' and v_pool_quarter<>v_current_quarter then
     v_status:='rejected';
-    v_reason:='Majority yes vote not reached';
+    v_reason:='Point pool quarter is no longer current';
+  else
+    if not (v_cast_count*2>v_director_count) then
+      raise exception 'board quorum not reached';
+    end if;
+
+    if v_yes_count*2>v_cast_count then
+      v_status:='passed';
+      v_reason:='Approved by a majority of directors present';
+    else
+      v_status:='rejected';
+      v_reason:='Majority yes vote not reached';
+    end if;
   end if;
 
   update public.enterprise_board_motions
@@ -1743,6 +1756,8 @@ begin
       'director_count',v_director_count,
       'cast_count',v_cast_count,
       'yes_count',v_yes_count,
+      'pool_quarter',v_pool_quarter,
+      'current_quarter',v_current_quarter,
       'reason',v_reason
     )
   );

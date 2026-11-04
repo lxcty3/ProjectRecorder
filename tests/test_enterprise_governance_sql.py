@@ -635,6 +635,20 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         )
         self.assertIn("quarter<>to_char(now() at time zone 'utc','yyyy')", compact)
 
+    def test_stale_point_pool_motion_finalizes_as_rejected(self):
+        finalize = " ".join(
+            self.rpc_definition("finalize_board_motion").split()
+        )
+        for text in (
+            "v_m.kind='point_pool'",
+            "v_pool_quarter<>v_current_quarter",
+            "v_status:='rejected'",
+            "point pool quarter is no longer current",
+            "board_motion.'||v_status",
+            "'reason',v_reason",
+        ):
+            self.assertIn(text, finalize)
+
     def test_point_pool_motion_requires_finite_budget_payload(self):
         create = " ".join(self.rpc_definition("create_board_motion").split())
         for text in (
