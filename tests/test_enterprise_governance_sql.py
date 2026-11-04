@@ -617,6 +617,24 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
         finalize = " ".join(self.rpc_definition("finalize_board_motion").split())
         self.assertIn("_identity_apply_point_pool_motion", finalize)
 
+    def test_point_pool_lifecycle_is_current_quarter_only(self):
+        create = " ".join(self.rpc_definition("create_board_motion").split())
+        apply_pool = " ".join(
+            self.rpc_definition("_identity_apply_point_pool_motion").split()
+        )
+        award = " ".join(self.rpc_definition("award_points").split())
+        for definition in (create, apply_pool):
+            self.assertIn("point pool quarter must be the current quarter", definition)
+            self.assertIn("to_char(now() at time zone 'utc','yyyy')", definition)
+            self.assertIn("to_char(now() at time zone 'utc','q')", definition)
+        self.assertIn("no active point pool for current quarter", award)
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "update public.enterprise_point_pools set status='closed'",
+            compact,
+        )
+        self.assertIn("quarter<>to_char(now() at time zone 'utc','yyyy')", compact)
+
     def test_point_pool_motion_requires_finite_budget_payload(self):
         create = " ".join(self.rpc_definition("create_board_motion").split())
         for text in (
@@ -729,6 +747,7 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             "p.is_required",
             "p.unlock_cost=0",
             "p.author_id=p_uid",
+            "p_uid is distinct from auth.uid()",
             "enterprise_knowledge_unlocks",
             "u.profile_id=p_uid",
             "u.post_id=p.id",

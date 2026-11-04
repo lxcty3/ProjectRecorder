@@ -1410,6 +1410,14 @@ alter table public.community_posts
   add column if not exists unlock_cost integer not null default 0 check(unlock_cost>=0),
   add column if not exists is_required boolean not null default false;
 
+-- Stale non-current pools from an earlier deployment remain inactive. The
+-- current-quarter pool is never changed by this repair.
+update public.enterprise_point_pools
+   set status='closed'
+ where status='active'
+   and quarter<>to_char(now() at time zone 'UTC','YYYY')
+     ||'-Q'||to_char(now() at time zone 'UTC','Q');
+
 alter table public.enterprise_point_pools enable row level security;
 alter table public.enterprise_point_ledger enable row level security;
 alter table public.enterprise_knowledge_unlocks enable row level security;
@@ -1431,7 +1439,9 @@ create or replace function public._identity_can_read_community_post(
 language sql stable security definer
 set search_path=public,auth,pg_temp
 as $fn$
-  select p_uid is not null and exists(
+  select p_uid is not null
+    and not (p_uid is distinct from auth.uid())
+    and exists(
     select 1
       from public.community_posts p
      where p.id=p_post
@@ -1531,6 +1541,7 @@ declare
   v_motion uuid;
   v_total integer;
   v_limit integer;
+  v_current_quarter text;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -1556,6 +1567,11 @@ begin
   if v_kind='point_pool' then
     if trim(coalesce(v_payload->>'quarter','')) !~ '^[0-9]{4}-Q[1-4]$' then
       raise exception 'point pool quarter is invalid';
+    end if;
+    v_current_quarter:=to_char(now() at time zone 'UTC','YYYY')
+      ||'-Q'||to_char(now() at time zone 'UTC','Q');
+    if v_payload->>'quarter'<>v_current_quarter then
+      raise exception 'point pool quarter must be the current quarter';
     end if;
     begin
       v_total:=(v_payload->>'total_amount')::integer;
@@ -1748,6 +1764,7 @@ declare
   v_uid uuid:=auth.uid();
   v_m public.enterprise_board_motions%rowtype;
   v_quarter text;
+  v_current_quarter text;
   v_total integer;
   v_limit integer;
   v_carry uuid;
@@ -1775,6 +1792,11 @@ begin
   v_quarter:=trim(coalesce(v_m.payload->>'quarter',''));
   if v_quarter !~ '^[0-9]{4}-Q[1-4]$' then
     raise exception 'point pool quarter is invalid';
+  end if;
+  v_current_quarter:=to_char(now() at time zone 'UTC','YYYY')
+    ||'-Q'||to_char(now() at time zone 'UTC','Q');
+  if v_quarter<>v_current_quarter then
+    raise exception 'point pool quarter must be the current quarter';
   end if;
   begin
     v_total:=(v_m.payload->>'total_amount')::integer;

@@ -1,15 +1,18 @@
-"""Opt-in PostgreSQL integration tests for Task 4 governance fixes.
+"""Opt-in PostgreSQL integration tests for governance and point fixes.
 
 These tests are intentionally skipped during normal test runs. To execute them,
 point PROJECT_RECORDER_TEST_DATABASE_URL at a disposable database with the
 enterprise identity and governance migrations already applied, and install a
 PostgreSQL driver compatible with psycopg2.
 
-The tests roll back all fixture data and do not require a persistent seed.
+Most tests roll back all fixture data and do not require a persistent seed.
+The concurrent award test commits its isolated fixture so two connections can
+race, then removes that fixture in a finally block.
 """
 
 import json
 import os
+import threading
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -106,6 +109,98 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             (owner_id,),
         )
         return enterprise_id, owner_id, employee_id
+
+    def _as_authenticated(self, user_id, sql, params=()):
+        claims = json.dumps({"sub": str(user_id), "role": "authenticated"})
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "select set_config('request.jwt.claim.sub',%s,true),"
+                " set_config('request.jwt.claims',%s,true)",
+                (str(user_id), claims),
+            )
+            cur.execute("set local role authenticated")
+            cur.execute(sql, params)
+            result = cur.fetchone() if cur.description else None
+            cur.execute("reset role")
+            return result
+
+    def _assert_authenticated_error(
+        self, user_id, message, sql, params=()
+    ):
+        claims = json.dumps({"sub": str(user_id), "role": "authenticated"})
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "select set_config('request.jwt.claim.sub',%s,true),"
+                " set_config('request.jwt.claims',%s,true)",
+                (str(user_id), claims),
+            )
+            cur.execute("set local role authenticated")
+            cur.execute("savepoint expected_authenticated_error")
+            caught = None
+            try:
+                cur.execute(sql, params)
+            except psycopg2.Error as exc:
+                caught = exc
+            if caught is not None:
+                cur.execute("rollback to savepoint expected_authenticated_error")
+                cur.execute("release savepoint expected_authenticated_error")
+            cur.execute("reset role")
+            if caught is None:
+                self.fail(f"expected SQL error containing: {message}")
+            self.assertIn(message, str(caught))
+
+    @staticmethod
+    def _current_quarter():
+        now = datetime.now(timezone.utc)
+        return f"{now.year}-Q{((now.month - 1) // 3) + 1}"
+
+    @classmethod
+    def _shift_quarter(cls, quarter, offset):
+        year_text, quarter_text = quarter.split("-Q")
+        index = int(year_text) * 4 + int(quarter_text) - 1 + offset
+        return f"{index // 4}-Q{(index % 4) + 1}"
+
+    def _create_point_pool(
+        self, owner_id, total_amount, single_award_limit,
+        quarter=None,
+    ):
+        quarter = quarter or self._current_quarter()
+        payload = json.dumps({
+            "quarter": quarter,
+            "total_amount": total_amount,
+            "single_award_limit": single_award_limit,
+        })
+        motion = self._as(
+            owner_id,
+            "select public.create_board_motion("
+            "'Point pool integration','point_pool',%s::jsonb,false)",
+            (payload,),
+        )[0]
+        motion_id = motion["board_motion_id"]
+        vote = self._as(
+            owner_id,
+            "select public.cast_board_vote(%s,'yes')",
+            (motion_id,),
+        )[0]
+        self.assertEqual("passed", vote["motion_status"])
+        return self._as(
+            None,
+            "select id,remaining_amount,total_amount,single_award_limit,status "
+            "from public.enterprise_point_pools "
+            "where board_motion_id=%s",
+            (motion_id,),
+        )
+
+    def _create_community_post(
+        self, author_id, content, unlock_cost=0, is_required=False
+    ):
+        return self._as(
+            None,
+            "insert into public.community_posts("
+            "author_id,content,unlock_cost,is_required"
+            ") values(%s,%s,%s,%s) returning id",
+            (author_id, content, unlock_cost, is_required),
+        )[0]
 
     def _provision_templates(self, enterprise_id):
         self._as(
@@ -434,6 +529,392 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(1, vote[0])
         self.assertEqual("no", vote[1])
+
+
+    def test_point_pool_motion_must_use_current_quarter(self):
+        _, owner_id, _ = self._create_enterprise_fixture()
+        current_pool = self._create_point_pool(owner_id, 100, 50)
+        previous_quarter = self._shift_quarter(self._current_quarter(), -1)
+        next_quarter = self._shift_quarter(self._current_quarter(), 1)
+        for quarter in (previous_quarter, next_quarter):
+            payload = json.dumps({
+                "quarter": quarter,
+                "total_amount": 100,
+                "single_award_limit": 50,
+            })
+            self._assert_sql_error(
+                owner_id,
+                "point pool quarter must be the current quarter",
+                "select public.create_board_motion("
+                "'Invalid lifecycle pool','point_pool',%s::jsonb,false)",
+                (payload,),
+            )
+        status = self._as(
+            None,
+            "select status from public.enterprise_point_pools where id=%s",
+            (current_pool[0],),
+        )[0]
+        self.assertEqual("active", status)
+
+    def test_award_points_requires_chairperson_and_rejects_self(self):
+        _, owner_id, employee_id = self._create_enterprise_fixture()
+        self._create_point_pool(owner_id, 100, 50)
+        self._assert_sql_error(
+            employee_id,
+            "only the active chairperson may award points",
+            "select public.award_points(%s,10,'acceptance',%s,'not chair')",
+            (owner_id, uuid.uuid4()),
+        )
+        self._assert_sql_error(
+            owner_id,
+            "chairperson cannot award points to self",
+            "select public.award_points(%s,10,'acceptance',%s,'self award')",
+            (owner_id, uuid.uuid4()),
+        )
+
+    def test_award_points_enforces_pool_and_duplicate_evidence(self):
+        _, owner_id, employee_id = self._create_enterprise_fixture()
+        pool_id = self._create_point_pool(owner_id, 100, 80)[0]
+        first_evidence = uuid.uuid4()
+        first = self._as(
+            owner_id,
+            "select public.award_points(%s,80,'acceptance',%s,'first award')",
+            (employee_id, first_evidence),
+        )[0]
+        self.assertEqual(20, first["pool_remaining"])
+        self.assertTrue(first["points_are_permanent"])
+        self._assert_sql_error(
+            owner_id,
+            "point pool exceeded",
+            "select public.award_points(%s,30,'acceptance',%s,'too much')",
+            (employee_id, uuid.uuid4()),
+        )
+        self._assert_sql_error(
+            owner_id,
+            "point evidence was already awarded",
+            "select public.award_points(%s,10,'acceptance',%s,'duplicate')",
+            (employee_id, first_evidence),
+        )
+        remaining = self._as(
+            owner_id,
+            "select public.award_points(%s,20,'acceptance',%s,'remaining award')",
+            (employee_id, uuid.uuid4()),
+        )[0]
+        self.assertEqual(0, remaining["pool_remaining"])
+        self._assert_sql_error(
+            owner_id,
+            "point pool exceeded",
+            "select public.award_points(%s,1,'acceptance',%s,'exhausted')",
+            (employee_id, uuid.uuid4()),
+        )
+        state = self._as(
+            None,
+            "select remaining_amount,status from public.enterprise_point_pools "
+            "where id=%s",
+            (pool_id,),
+        )
+        self.assertEqual((0, "active"), state)
+        audit_count = self._as(
+            None,
+            "select count(*) from public.enterprise_identity_audit "
+            "where action='point.awarded' and details->>'pool_id'=%s",
+            (str(pool_id),),
+        )[0]
+        self.assertEqual(2, audit_count)
+
+    def test_concurrent_awards_cannot_overspend_pool(self):
+        enterprise_id, owner_id, employee_id = (
+            self._create_enterprise_fixture()
+        )
+        pool_id = None
+        try:
+            pool_id = self._create_point_pool(owner_id, 100, 100)[0]
+            self.conn.commit()
+
+            barrier = threading.Barrier(2)
+            results = []
+            results_lock = threading.Lock()
+
+            def award(evidence_id):
+                conn = psycopg2.connect(TEST_DATABASE_URL)
+                try:
+                    claims = json.dumps({
+                        "sub": str(owner_id),
+                        "role": "authenticated",
+                    })
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "select set_config("
+                            "'request.jwt.claim.sub',%s,true),"
+                            " set_config('request.jwt.claims',%s,true)",
+                            (str(owner_id), claims),
+                        )
+                        cur.execute("set local role authenticated")
+                        barrier.wait(timeout=10)
+                        cur.execute(
+                            "select public.award_points("
+                            "%s,60,'concurrent',%s,'concurrent award')",
+                            (employee_id, evidence_id),
+                        )
+                        result = cur.fetchone()[0]
+                    conn.commit()
+                    with results_lock:
+                        results.append(("ok", result))
+                except Exception as exc:
+                    conn.rollback()
+                    with results_lock:
+                        results.append(("error", str(exc)))
+                finally:
+                    conn.close()
+
+            threads = [
+                threading.Thread(target=award, args=(uuid.uuid4(),))
+                for _ in range(2)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=20)
+
+            self.assertFalse(any(thread.is_alive() for thread in threads))
+            successes = [result for kind, result in results if kind == "ok"]
+            errors = [result for kind, result in results if kind == "error"]
+            self.assertEqual(1, len(successes))
+            self.assertEqual(1, len(errors))
+            self.assertIn("point pool exceeded", errors[0])
+
+            ledger = self._as(
+                None,
+                "select count(*),coalesce(sum(amount),0) "
+                "from public.enterprise_point_ledger "
+                "where pool_id=%s and entry_type='award'",
+                (pool_id,),
+            )
+            self.assertEqual((1, 60), ledger)
+            remaining = self._as(
+                None,
+                "select remaining_amount from public.enterprise_point_pools "
+                "where id=%s",
+                (pool_id,),
+            )[0]
+            self.assertEqual(40, remaining)
+            audit_count = self._as(
+                None,
+                "select count(*) from public.enterprise_identity_audit "
+                "where action='point.awarded' and details->>'pool_id'=%s",
+                (str(pool_id),),
+            )[0]
+            self.assertEqual(1, audit_count)
+        finally:
+            self.conn.rollback()
+            self._as(
+                None,
+                "delete from public.enterprises where id=%s",
+                (enterprise_id,),
+            )
+            self._as(
+                None,
+                "delete from public.profiles where id=%s",
+                (employee_id,),
+            )
+            self._as(
+                None,
+                "delete from public.profiles where id=%s",
+                (owner_id,),
+            )
+            self._as(
+                None,
+                "delete from auth.users where id in (%s,%s)",
+                (owner_id, employee_id),
+            )
+            self.conn.commit()
+
+    def test_required_free_and_paid_unlocks_are_permanent(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        self._create_point_pool(owner_id, 200, 100)
+        self._as(
+            owner_id,
+            "select public.award_points(%s,100,'acceptance',%s,'unlock budget')",
+            (employee_id, uuid.uuid4()),
+        )
+        required_id = self._create_community_post(
+            owner_id, "required content", unlock_cost=50, is_required=True
+        )
+        free_id = self._create_community_post(
+            owner_id, "free content", unlock_cost=0, is_required=False
+        )
+        paid_id = self._create_community_post(
+            owner_id, "paid content", unlock_cost=30, is_required=False
+        )
+
+        required = self._as(
+            employee_id,
+            "select public.unlock_knowledge_content(%s)",
+            (required_id,),
+        )[0]
+        self.assertTrue(required["required"])
+        self.assertEqual(0, required["cost"])
+        self.assertEqual("required content", required["content"])
+        self.assertEqual(
+            (1, 100),
+            self._as(
+                None,
+                "select count(*),coalesce(sum(amount),0) "
+                "from public.enterprise_point_ledger where enterprise_id=%s",
+                (enterprise_id,),
+            ),
+        )
+
+        free = self._as(
+            employee_id,
+            "select public.unlock_knowledge_content(%s)",
+            (free_id,),
+        )[0]
+        self.assertFalse(free["required"])
+        self.assertEqual(0, free["cost"])
+        self.assertEqual("free content", free["content"])
+        self.assertEqual(
+            (1, 100),
+            self._as(
+                None,
+                "select count(*),coalesce(sum(amount),0) "
+                "from public.enterprise_point_ledger where enterprise_id=%s",
+                (enterprise_id,),
+            ),
+        )
+
+        paid = self._as(
+            employee_id,
+            "select public.unlock_knowledge_content(%s)",
+            (paid_id,),
+        )[0]
+        self.assertEqual(30, paid["cost"])
+        self.assertEqual(70, paid["balance"])
+        self.assertEqual("paid content", paid["content"])
+        again = self._as(
+            employee_id,
+            "select public.unlock_knowledge_content(%s)",
+            (paid_id,),
+        )[0]
+        self.assertTrue(again["already_unlocked"])
+        self.assertEqual("paid content", again["content"])
+        ledger = self._as(
+            None,
+            "select count(*),coalesce(sum(amount),0) "
+            "from public.enterprise_point_ledger where enterprise_id=%s",
+            (enterprise_id,),
+        )
+        self.assertEqual((2, 70), ledger)
+        unlocks = self._as(
+            None,
+            "select count(*) from public.enterprise_knowledge_unlocks "
+            "where enterprise_id=%s",
+            (enterprise_id,),
+        )[0]
+        self.assertEqual(1, unlocks)
+        audit_count = self._as(
+            None,
+            "select count(*) from public.enterprise_identity_audit "
+            "where action='knowledge.unlocked' and enterprise_id=%s",
+            (enterprise_id,),
+        )[0]
+        self.assertEqual(1, audit_count)
+
+    def test_paid_post_rls_and_user_id_probe_are_safe(self):
+        _, owner_id, employee_id = self._create_enterprise_fixture()
+        self._create_point_pool(owner_id, 200, 100)
+        self._as(
+            owner_id,
+            "select public.award_points(%s,100,'acceptance',%s,'rls budget')",
+            (employee_id, uuid.uuid4()),
+        )
+        required_id = self._create_community_post(
+            owner_id, "rls required", unlock_cost=25, is_required=True
+        )
+        free_id = self._create_community_post(owner_id, "rls free")
+        paid_id = self._create_community_post(
+            owner_id, "rls paid", unlock_cost=20
+        )
+        locked_id = self._create_community_post(
+            owner_id, "rls locked", unlock_cost=20
+        )
+        self._as(
+            employee_id,
+            "select public.unlock_knowledge_content(%s)",
+            (paid_id,),
+        )
+
+        visible = self._as_authenticated(
+            employee_id,
+            "select array_agg(id order by id) from public.community_posts "
+            "where id in (%s,%s,%s,%s)",
+            (required_id, free_id, paid_id, locked_id),
+        )[0]
+        self.assertEqual({required_id, free_id, paid_id}, set(visible))
+
+        probe_other = self._as_authenticated(
+            employee_id,
+            "select public._identity_can_read_community_post(%s,%s)",
+            (paid_id, owner_id),
+        )[0]
+        self.assertFalse(probe_other)
+        unlocked_self = self._as_authenticated(
+            employee_id,
+            "select public._identity_can_read_community_post(%s,%s)",
+            (paid_id, employee_id),
+        )[0]
+        self.assertTrue(unlocked_self)
+        locked_self = self._as_authenticated(
+            employee_id,
+            "select public._identity_can_read_community_post(%s,%s)",
+            (locked_id, employee_id),
+        )[0]
+        self.assertFalse(locked_self)
+
+    def test_point_function_and_table_grants_are_least_privilege(self):
+        user_id = uuid.uuid4()
+        expected_function_grants = (
+            ("public.award_points(uuid,integer,text,uuid,text)", True),
+            ("public.get_point_state()", True),
+            ("public.unlock_knowledge_content(uuid)", True),
+            ("public._identity_can_read_community_post(uuid,uuid)", True),
+            ("public._identity_is_chairperson(uuid,uuid)", False),
+            ("public._identity_apply_point_pool_motion(uuid)", False),
+        )
+        for signature, expected in expected_function_grants:
+            granted = self._as(
+                None,
+                "select has_function_privilege("
+                "'authenticated',%s,'execute')",
+                (signature,),
+            )[0]
+            self.assertEqual(expected, granted, signature)
+
+        for table in (
+            "enterprise_point_pools",
+            "enterprise_point_ledger",
+            "enterprise_knowledge_unlocks",
+        ):
+            for privilege in ("select", "insert", "update", "delete"):
+                granted = self._as(
+                    None,
+                    "select has_table_privilege('authenticated',%s,%s)",
+                    (f"public.{table}", privilege),
+                )[0]
+                self.assertFalse(granted, f"{table}:{privilege}")
+
+        self._assert_authenticated_error(
+            user_id,
+            "permission denied for function",
+            "select public._identity_is_chairperson(%s,%s)",
+            (uuid.uuid4(), user_id),
+        )
+        self._assert_authenticated_error(
+            user_id,
+            "permission denied for function",
+            "select public._identity_apply_point_pool_motion(%s)",
+            (uuid.uuid4(),),
+        )
 
 if __name__ == "__main__":
     unittest.main()
