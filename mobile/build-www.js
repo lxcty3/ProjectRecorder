@@ -32,8 +32,9 @@ const FILES = [
   "assist.js",
   "sync.js",
   "notify.js",
-  "account.js",
   "identity.js",
+  "today.js",
+  "account.js",
   "community.js",
   "app.js",
 ];

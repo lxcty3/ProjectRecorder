@@ -42,6 +42,13 @@ const IDENTITY_PERMISSION_LABELS = Object.freeze({
   "reports.view": "查看经营报表",
   "audit.read": "查看审计信息",
   "community.post": "发布社区消息",
+  "identity.manage_templates": "管理身份模板",
+  "finance.manage": "管理财务",
+  "finance.approve_company": "审批公司财务",
+  "governance.manage": "管理治理事项",
+  "governance.vote": "参与治理表决",
+  "data.export_all": "导出全部数据",
+  "data.delete_all": "删除全部数据",
 });
 
 const IDENTITY_MOTION_LABELS = Object.freeze({
@@ -96,6 +103,17 @@ function identityHasManagementView() {
     "company.manage", "projects.view_all", "projects.manage",
     "people.view_all", "people.manage", "reports.view",
     "tasks.assign", "finance.view", "audit.read",
+  ]);
+}
+
+function identityHasAdvancedAccess() {
+  return identityCanAny([
+    "company.manage", "projects.view_all", "projects.manage",
+    "people.view_all", "people.manage", "worklogs.approve",
+    "tasks.assign", "tasks.grade", "finance.view", "finance.manage",
+    "reports.view", "audit.read", "identity.view", "identity.propose",
+    "identity.vote", "identity.manage_shares", "identity.manage_templates",
+    "governance.manage", "governance.vote",
   ]);
 }
 
@@ -168,9 +186,14 @@ async function refreshIdentity(force) {
     if (!data || !data.enterprise) throw new Error("服务端没有返回企业资料");
     DB.identity = data;
     DB.identityError = "";
+    const preferred = data.me && data.me.preferred_mode;
+    if (preferred === "simple" || preferred === "advanced") {
+      DB.uiMode = preferred;
+    }
     saveAll();
     if (typeof applyRoleUI === "function") applyRoleUI();
     if (typeof renderMe === "function") renderMe();
+    if (typeof renderToday === "function") renderToday();
     renderIdentity();
   } catch (error) {
     DB.identityError = identityErrorText(error);
