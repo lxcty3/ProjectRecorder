@@ -15,7 +15,39 @@ from community_client import CommunityClient
 from community_ui import CommunityWorker
 from widgets import SectionTitle, StatCard, label, muted
 
-__all__ = ["CollaborationPage", "CollaborationTaskDialog", "EmployeeCloudPage"]
+__all__ = [
+    "CollaborationPage",
+    "CollaborationTaskDialog",
+    "EmployeeCloudPage",
+    "cloud_tasks_for_user",
+]
+
+
+def cloud_tasks_for_user(snapshot, user_id):
+    """Return one user's tasks with completion derived from real task logs."""
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    user_text = str(user_id or "")
+    finished_task_ids = {
+        str(log.get("task_id"))
+        for log in snapshot.get("task_logs") or []
+        if str(log.get("employee_id") or "") == user_text
+        and log.get("task_id")
+        and (log.get("finished_at") or log.get("finish_date"))
+    }
+    tasks = []
+    for row in snapshot.get("tasks") or []:
+        if str(row.get("employee_id") or "") != user_text:
+            continue
+        task = dict(row)
+        status = str(task.get("status") or "").strip().lower()
+        task["completed"] = bool(
+            task.get("completed") is True
+            or task.get("done") is True
+            or status in {"done", "completed", "已完成"}
+            or str(task.get("id")) in finished_task_ids
+        )
+        tasks.append(task)
+    return tasks
 
 
 class CollaborationTaskDialog(QDialog):
@@ -539,12 +571,30 @@ class EmployeeCloudPage(QWidget):
         root.addLayout(actions)
 
     def apply_account_session(self, session):
+        previous_user = str(getattr(self, "account_user_id", "") or "")
+        next_user = str(session.user_id if session else "")
+        if previous_user != next_user:
+            self.account_user_id = next_user
+            self.snapshot = {}
+            self.table.setRowCount(0)
+            self._publish_tasks([])
+            self.status.setText(
+                f"{session.name} · 员工" if session else "尚未登录"
+            )
         self.session = session
-        self.status.setText(
-            f"{session.name} · 员工" if session else "尚未登录"
-        )
         if session and self.isVisible():
             self.refresh()
+
+    def _publish_tasks(self, tasks):
+        if self.window is not None and hasattr(self.window, "today_page"):
+            self.window.today_page.set_cloud_tasks(tasks)
+
+    def _refresh_failed(self, message):
+        self.snapshot = {}
+        self.table.setRowCount(0)
+        self._publish_tasks([])
+        self.status.setText("刷新失败，已清空旧账号任务")
+        QMessageBox.warning(self, "我的任务", str(message))
 
     def shutdown(self):
         for worker in list(self.workers):
@@ -572,20 +622,23 @@ class EmployeeCloudPage(QWidget):
             worker.deleteLater()
 
         worker.done.connect(done)
-        worker.failed.connect(lambda message: QMessageBox.warning(self, "我的任务", message))
+        worker.failed.connect(self._refresh_failed)
         worker.finished.connect(cleanup)
         worker.start()
 
     def _loaded(self, snapshot):
         self.snapshot = snapshot
-        tasks = [row for row in snapshot.get("tasks", [])
-                 if row.get("employee_id") == self.session.user_id]
+        tasks = cloud_tasks_for_user(
+            snapshot, self.session.user_id if self.session else ""
+        )
+        if self.window is not None and hasattr(self.window, "today_page"):
+            self.window.today_page.set_cloud_tasks(tasks)
         self.table.setRowCount(len(tasks))
         for index, task in enumerate(tasks):
             values = [
                 task.get("title") or "",
                 task.get("plan_date") or "",
-                task.get("accept_status") or "",
+                "已完成" if task.get("completed") else (task.get("accept_status") or ""),
                 task.get("est_hours") or 0,
                 task.get("grade") or "待评级",
             ]

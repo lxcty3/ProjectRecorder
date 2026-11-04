@@ -4,8 +4,11 @@ build.py
 cloud_integration.py
 cloud_migration.py
 collaboration.py
+community_client.py
 community_ui.py
 db.py
+docs\superpowers
+identity_ui.py
 main.py
 mobile/account.js
 mobile/android/app/build.gradle
@@ -30,12 +33,14 @@ mobile/assist.js
 mobile/build-www.js
 mobile/charts.js
 mobile/community.js
+mobile/identity.js
 mobile/index.html
 mobile/merit.js
 mobile/notify.js
 mobile/package.json
 mobile/selfcheck.js
 mobile/sql/community.sql
+mobile/sql/enterprise-identity.sql
 mobile/sql/install-unified.sql
 mobile/sql/merit-ledger.sql
 mobile/sql/push-device-rpc.sql
@@ -53,6 +58,7 @@ mobile/www/app.js
 mobile/www/assist.js
 mobile/www/charts.js
 mobile/www/community.js
+mobile/www/identity.js
 mobile/www/index.html
 mobile/www/merit.js
 mobile/www/notify.js
@@ -65,3 +71,10 @@ selfcheck.py
 style.qss
 sync_manifest.txt
 sync_to_git.ps1
+tests
+identity_rules.py
+role_templates_ui.py
+today_ui.py
+mobile/today.js
+mobile/www/today.js
+mobile/sql/enterprise-governance-v2.sql

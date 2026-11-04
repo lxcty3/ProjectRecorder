@@ -86,10 +86,31 @@ function renderCommunityFeed() {
     return;
   }
 
+  const ledger = DB.pointState && Array.isArray(DB.pointState.ledger)
+    ? DB.pointState.ledger : [];
   feed.innerHTML = communityPosts.map(post => {
     const mine = DB.profile && post.author_id === DB.profile.id;
     const initial = communityEscape(String(post.author_name || "成").slice(0, 1));
     const role = post.author_role === "boss" ? "boss" : "staff";
+    const cost = num(post.unlock_cost);
+    const unlocked = ledger.some(entry =>
+      entry.entry_type === "unlock"
+      && String(entry.evidence_id) === String(post.id));
+    const required = !!post.is_required;
+    const locked = typeof post.locked === "boolean"
+      ? post.locked : (!mine && !required && !unlocked && cost > 0);
+    const access = required ? '<span class="community-access required">必读</span>'
+      : cost > 0 ? `<span class="community-access${unlocked || mine ? " unlocked" : ""}">${
+          unlocked || mine ? "已解锁" : cost + " 积分"
+        }</span>` : "";
+    const body = locked
+      ? '<div class="community-locked"><b>这是付费知识</b>'
+        + `<span>${communityEscape(post.preview || "解锁后可永久查看全文")}</span>`
+        + `<span>使用 ${cost} 积分后可永久查看。</span>`
+        + `<button class="btn" data-community-unlock="${
+          communityEscape(post.id)
+        }">解锁全文</button></div>`
+      : communityEscape(post.content || post.preview || "");
     return '<article class="community-post">'
       + '<div class="community-post-head">'
       + '<span class="community-avatar ' + role + '">' + initial + "</span>"
@@ -97,18 +118,25 @@ function renderCommunityFeed() {
       + communityEscape(post.author_name || "成员") + "</b>"
       + '<span class="community-role">' + communityRoleLabel(post.author_role)
       + "</span>" + (mine ? '<span class="community-mine">我</span>' : "")
-      + "</div><div class=\"community-meta\">"
+      + access + "</div><div class=\"community-meta\">"
       + communityEscape(post.topic || "分享") + " · "
       + communityTime(post.created_at) + "</div></div>"
       + (mine ? '<button class="community-delete" data-community-delete="'
         + communityEscape(post.id) + '">删除</button>' : "")
       + "</div>"
-      + '<div class="community-post-body">'
-      + communityEscape(post.content) + "</div></article>";
+      + '<div class="community-post-body">' + body + "</div></article>";
   }).join("");
 
   feed.querySelectorAll("[data-community-delete]").forEach(button => {
     button.onclick = () => deleteCommunityPost(button.dataset.communityDelete);
+  });
+  feed.querySelectorAll("[data-community-unlock]").forEach(button => {
+    button.onclick = () => {
+      button.disabled = true;
+      unlockKnowledgePost(button.dataset.communityUnlock).finally(() => {
+        button.disabled = false;
+      });
+    };
   });
   if (status) status.textContent = communityPosts.length + " 条 · 刚刚更新";
 }
@@ -195,10 +223,9 @@ async function loadCommunityPosts(force) {
   const status = $("community-status");
   if (status) status.textContent = "同步中…";
   try {
-    const result = await cloudClient.from("community_posts")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(80);
+    const result = await cloudClient.rpc("list_knowledge_posts", {
+      p_limit: 80,
+    });
     if (result.error) throw result.error;
     communityPosts = Array.isArray(result.data) ? result.data : [];
     communityLastLoad = Date.now();
@@ -252,6 +279,8 @@ async function submitCommunityPost() {
     const result = await cloudClient.rpc("post_community_message", {
       p_content: content,
       p_topic: communityTopic,
+      p_unlock_cost: Number(($("community-unlock-cost") || {}).value || 0),
+      p_is_required: !!($("community-required") || {}).checked,
     });
     if (result.error) throw result.error;
     input.value = "";

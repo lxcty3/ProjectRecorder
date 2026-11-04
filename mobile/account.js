@@ -86,7 +86,9 @@ function renderLogin() {
     $("login-form").classList.add("hidden");
     $("login-resume").classList.remove("hidden");
     $("login-resume-name").textContent =
-      `${profile.name}（${profile.role === "boss" ? "老板" : "员工"}）`;
+      `${profile.name}（${DB.identity && DB.identity.me
+        ? identityRoleLabel(DB.identity.me.role_key)
+        : (profile.role === "boss" ? "老板" : "员工")}）`;
   } else {
     $("login-form").classList.remove("hidden");
     $("login-resume").classList.add("hidden");
@@ -381,7 +383,9 @@ function finishLogin() {
   }
   /* 立刻同步一次：员工需要马上看到今天的任务 */
   syncNow("login");
-  showPage(DB.profile && DB.profile.role === "employee" ? "tasks" : "dash");
+  if (typeof refreshIdentity === "function") refreshIdentity(true);
+  if (typeof refreshPointState === "function") refreshPointState(true);
+  showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
 }
 
@@ -389,6 +393,7 @@ function finishLogin() {
 function resumeSession() {
   applyRoleUI();
   startSyncLoop();
+  if (typeof refreshPointState === "function") refreshPointState(false);
   refreshNotifyPermission().then(() => renderMe());
   if (typeof ensureGetuiPushConsent === "function") {
     ensureGetuiPushConsent();
@@ -403,6 +408,7 @@ function logout() {
   const unregister = typeof unregisterGetuiPushDevice === "function"
     ? unregisterGetuiPushDevice() : Promise.resolve();
   Promise.resolve(unregister).then(() => cloudLogout()).then(() => {
+    if (typeof resetTodayState === "function") resetTodayState();
     applyRoleUI();
     closeSheet();
     showPage("login");
@@ -417,20 +423,35 @@ function logout() {
    让员工看到一堆自己用不上的按钮只会让人困惑。 */
 function applyRoleUI() {
   const profile = DB.profile;
-  const isStaff = !!(profile && profile.role === "employee");
+  const advancedAllowed = typeof identityHasAdvancedAccess === "function"
+    ? identityHasAdvancedAccess()
+    : !!(profile && profile.role === "boss");
+  const management = typeof identityHasManagementView === "function"
+    ? identityHasManagementView()
+    : !!(profile && profile.role === "boss");
+  const isStaff = !!(profile && !management);
+  if (!advancedAllowed) DB.uiMode = "simple";
+  const advanced = !!(profile && advancedAllowed && DB.uiMode === "advanced");
 
-  /* 底部导航：员工两个，老板四个。
-     两边最后一项都是「我的」——退出登录、云服务设置在那里。 */
-  $("nav-staff").classList.toggle("hidden", !isStaff);
-  $("nav-boss").classList.toggle("hidden", isStaff);
+  /* 简单模式只保留今天、知识星球和我的；高级模式才展开经营与治理页。 */
+  if ($("nav-simple")) $("nav-simple").classList.toggle("hidden", !profile || advanced);
+  if ($("nav-advanced")) $("nav-advanced").classList.toggle("hidden", !advanced);
 
-  /* 员工进任务页而不是看板 */
-  if (isStaff && !$("page-tasks").classList.contains("hidden")) {
-    /* 已经停在任务页就不用动 */
+  const toggle = $("btn-mode-toggle");
+  if (toggle) toggle.classList.toggle("hidden", !advancedAllowed);
+  const toggleMe = $("btn-mode-toggle-me");
+  if (toggleMe) {
+    toggleMe.classList.toggle("hidden", !advancedAllowed);
+    toggleMe.textContent = advanced ? "回到简单模式" : "切换到高级模式";
   }
 
-  /* 「我要请假」只给员工看 —— 老板给自己请假没意义，
-     而且那按钮放在「我的」页下半部分，两个身份都显示会显得乱。 */
+  const advancedPages = ["dash", "project", "team", "assist", "identity",
+                         "assign", "staff"];
+  if (profile && !advanced && advancedPages.indexOf(currentPageName()) !== -1) {
+    showPage("today");
+  }
+
+  /* 「我要请假」只给普通员工看。 */
   if ($("btn-me-leave")) {
     $("btn-me-leave").classList.toggle("hidden", !isStaff);
   }

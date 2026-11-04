@@ -27,7 +27,8 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "account.js", "community.js", "app.js"];
+               "sync.js", "notify.js", "identity.js", "today.js",
+               "account.js", "community.js", "app.js"];
 
 let failed = 0;
 function fail(label, detail) {
@@ -2575,7 +2576,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js"]
+  const sources = ["app.js", "account.js", "community.js", "today.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
 
@@ -3489,7 +3490,8 @@ test("界面上绑定的每个处理函数都真的有定义", () => {
      所以这里做一条真正的静态检查：凡是 `onclick = 某个名字` 的，
      那个名字必须在某个文件里被定义过。 */
   const FILES = ["app.js", "account.js", "sync.js", "notify.js",
-    "assist.js", "charts.js", "store.js", "community.js"];
+    "assist.js", "charts.js", "store.js", "identity.js", "today.js",
+    "community.js"];
 
   const defined = new Set();
   FILES.forEach(file => {
@@ -4368,9 +4370,11 @@ test("app.js 和 account.js 绑定的元素 id 都在 index.html 里", () => {
     .concat(matchAll(account, /id="([^"]+)"/g))
     .concat(matchAll(community, /id="([^"]+)"/g));
   /* JS 里查的 id。只认 $("...") —— 这是本项目的取元素约定。 */
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
   const queried = matchAll(app, /\$\("([^"]+)"\)/g)
     .concat(matchAll(account, /\$\("([^"]+)"\)/g))
-    .concat(matchAll(community, /\$\("([^"]+)"\)/g));
+    .concat(matchAll(community, /\$\("([^"]+)"\)/g))
+    .concat(matchAll(today, /\$\("([^"]+)"\)/g));
 
   const known = inHtml.concat(inJs);
   const missing = queried.filter(id => known.indexOf(id) === -1);
@@ -4429,7 +4433,8 @@ test("没有重名声明会撞掉库暴露的全局量", () => {
     "cordova",      // Cordova
   ];
   const files = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-                 "sync.js", "account.js", "community.js", "app.js"];
+                 "sync.js", "notify.js", "identity.js", "today.js",
+                 "account.js", "community.js", "app.js"];
   const problems = [];
 
   files.forEach(name => {
@@ -4458,7 +4463,8 @@ test("每个源文件都能单独执行且不重复声明", () => {
      有重复声明的话这里会抛 SyntaxError。 */
   const context = makeContext();
   const files = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-                 "sync.js", "account.js", "community.js"];
+                 "sync.js", "notify.js", "identity.js", "today.js",
+                 "account.js", "community.js"];
   files.forEach(name => {
     const source = fs.readFileSync(path.join(HERE, name), "utf8");
     try {
@@ -4477,8 +4483,11 @@ test("每个源文件都能单独执行且不重复声明", () => {
     "sync.js": ["syncStatus", "cloudLogin", "completeTask", "assignTask",
                 "startSyncLoop"],
     /* renderMe 在 app.js 里（它属于页面路由），不在这里 */
+    "identity.js": ["identityCan", "identityHasAdvancedAccess"],
+    "today.js": ["renderToday", "refreshPointState", "setMobileUiMode",
+                 "unlockKnowledgePost"],
     "account.js": ["renderLogin", "renderTasks", "renderStaff",
-                   "openStaffMenu", "syncStaffAccounts"],
+                   "openStaffMenu", "syncStaffAccounts", "applyRoleUI"],
     "community.js": ["renderCommunity", "loadCommunityPosts",
                      "submitCommunityPost", "deleteCommunityPost"],
   };
@@ -4748,6 +4757,77 @@ test("深色主题的背景确实比文字深", () => {
   const light = plain(run("THEME_COLORS.light"));
   if (brightness(light.bg) <= brightness(light.fg)) {
     throw new Error("浅色主题里背景不比文字亮，看起来会是反的");
+  }
+});
+
+
+test("企业治理：今日工位存在", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-today", "today-task-list", "btn-mode-toggle",
+    "identity-board", "identity-point-state",
+    "community-unlock-cost", "community-required",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  for (const script of ["today.js", "identity.js"]) {
+    if (html.indexOf(`src="${script}"`) === -1) {
+      throw new Error(`index.html 没有加载 ${script}`);
+    }
+  }
+
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (!/const PAGES = \[[\s\S]*?"today"/.test(app)) {
+    throw new Error("PAGES 没有登记 today");
+  }
+  if (app.indexOf('target === "today"') === -1
+      || app.indexOf("renderToday();") === -1) {
+    throw new Error("showPage() 没有 renderToday 入口");
+  }
+
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"today\.js"/.test(build)) throw new Error("build-www.js 没有打包 today.js");
+
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
+  for (const fn of ["renderToday", "refreshPointState", "setMobileUiMode",
+                    "unlockKnowledgePost"]) {
+    if (today.indexOf(`function ${fn}`) === -1) {
+      throw new Error(`today.js 缺少 ${fn}`);
+    }
+  }
+
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  for (const fn of [
+    "renderIdentityBoard", "openBoardPointMotion", "openChairAward",
+    "identityBoardVote", "identityBoardFinalize",
+  ]) {
+    if (identity.indexOf(`function ${fn}`) === -1) {
+      throw new Error(`identity.js 缺少 ${fn}`);
+    }
+  }
+  if (identity.indexOf("propose_enterprise_share_change") === -1
+      || identity.indexOf("set_enterprise_shareholder") !== -1) {
+    throw new Error("股份调整必须走股东表决，不能直接改股份");
+  }
+  if (identity.indexOf("已披露利益冲突") === -1) {
+    throw new Error("治理提案没有展示利益冲突披露");
+  }
+
+  const community = fs.readFileSync(path.join(HERE, "community.js"), "utf8");
+  if (community.indexOf("unlock_cost") === -1
+      || community.indexOf("data-community-unlock") === -1
+      || community.indexOf("list_knowledge_posts") === -1
+      || community.indexOf("p_unlock_cost") === -1) {
+    throw new Error("知识星球没有完成付费知识发现、发布和解锁");
+  }
+});
+
+test("企业治理：积分与模式有本地缓存", () => {
+  fresh();
+  if (run("DB.uiMode") !== "simple") throw new Error("uiMode 默认应为 simple");
+  if (run("DB.pointState.balance") !== 0) throw new Error("积分默认应为 0");
+  if (run("Array.isArray(DB.pointState.ledger)") !== true) {
+    throw new Error("pointState.ledger 默认应为数组");
   }
 });
 

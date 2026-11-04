@@ -334,11 +334,16 @@ def check_community_client():
         if path == "/rest/v1/profiles":
             return [{"id": "user-1", "name": "林墨", "role": "boss",
                      "code": "boss001"}]
-        if path == "/rest/v1/community_posts":
+        if path == "/rest/v1/rpc/list_knowledge_posts":
+            assert kwargs["body"]["p_limit"] == 80
             return [{"id": "post-1", "content": "大家好",
-                     "author_name": "林墨", "author_role": "boss"}]
+                     "author_name": "林墨", "author_role": "boss",
+                     "unlock_cost": 0, "is_required": False,
+                     "locked": False, "preview": "大家好"}]
         if path == "/rest/v1/rpc/post_community_message":
             assert kwargs["body"]["p_content"] == "大家好"
+            assert kwargs["body"]["p_unlock_cost"] == 0
+            assert kwargs["body"]["p_is_required"] is False
             return {"ok": True, "id": "post-1"}
         if path == "/rest/v1/rpc/delete_my_community_message":
             return True

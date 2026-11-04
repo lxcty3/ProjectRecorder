@@ -150,6 +150,18 @@ function emptyDatabase() {
        没网时不能把人挡在登录页外面。 */
     profile: null,
 
+    /* 最近一次从云端取到的企业身份快照。
+       离线时仍能显示上次确认过的身份和权限。 */
+    identity: null,
+
+    /* 企业积分快照。余额、季度池和流水都来自 get_point_state，
+       离线时继续显示最后一次确认过的值。 */
+    pointState: { balance: 0, pool: null, ledger: [], at: 0 },
+
+    /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
+       才能切到 advanced。服务端仍会独立校验。 */
+    uiMode: "simple",
+
     /* 上次同步的结果，界面上显示"已同步 / 待上传 N 条" */
     lastSync: { at: "", ok: true, pending: 0, message: "" },
 
@@ -260,6 +272,11 @@ function migrate(data) {
   const base = emptyDatabase();
   const merged = Object.assign({}, base, data || {});
   merged.seq = Object.assign({}, base.seq, (data && data.seq) || {});
+  merged.pointState = Object.assign(
+    { balance: 0, pool: null, ledger: [], at: 0 }, merged.pointState || {}
+  );
+  if (!Array.isArray(merged.pointState.ledger)) merged.pointState.ledger = [];
+  if (merged.uiMode !== "advanced") merged.uiMode = "simple";
   ["projects", "steps", "employees", "worklogs", "assignments",
    "assessments", "metrics", "sessions", "habits", "habitLogs",
    "tasks", "taskLogs", "remoteWorklogs", "staffAccounts", "syncQueue",

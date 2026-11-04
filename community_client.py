@@ -112,6 +112,29 @@ def _translate_error(message):
         return ("社区数据表还没有创建。\n\n"
                 "请让管理员在 Supabase 的 SQL Editor 运行：\n"
                 "mobile/sql/community.sql")
+    if (("could not find the function" in lower or "does not exist" in lower)
+            and ("enterprise" in lower or "identity" in lower)):
+        return ("企业身份服务还没有安装。\n\n"
+                "请让管理员在 Supabase 的 SQL Editor 运行：\n"
+                "mobile/sql/enterprise-identity.sql")
+    if "only shareholders may vote" in lower:
+        return "只有持股股东可以投票。"
+    if "only shareholders may propose" in lower:
+        return "只有持股股东可以发起任免提案。"
+    if "only the enterprise owner may change shares" in lower:
+        return "只有企业所有者可以调整股份。"
+    if "voting is still in progress" in lower:
+        return "投票还在进行，需等投票期结束或全部股东完成投票。"
+    if "cannot change shares while a role vote is open" in lower:
+        return "有任免投票正在进行，结束前不能调整股份。"
+    if "voting period has ended" in lower or "motion is closed" in lower:
+        return "这次投票已经结束。"
+    if "target already holds this role" in lower:
+        return "该成员已经担任这个身份。"
+    if "target already has the base employee role" in lower:
+        return "该成员目前就是普通员工，无需发起免职。"
+    if "open role motion" in lower:
+        return "该成员已有一项进行中的任免提案。"
     if "could not find the function" in lower or "does not exist" in lower:
         if "login_email" in lower:
             return ("账号登录服务还没有安装。\n\n"
@@ -251,27 +274,30 @@ class CommunityClient:
         )
 
     def list_posts(self, session, limit=80):
-        rows = _request(
-            "GET", "/rest/v1/community_posts",
+        data = _request(
+            "POST", "/rest/v1/rpc/list_knowledge_posts",
             token=session.access_token,
-            params={
-                "select": "*",
-                "order": "created_at.desc",
-                "limit": max(1, min(100, int(limit))),
-            },
+            body={"p_limit": max(1, min(100, int(limit)))},
         )
-        return rows if isinstance(rows, list) else []
+        return data if isinstance(data, list) else []
 
-    def publish(self, session, content, topic="share"):
+    def publish(self, session, content, topic="share",
+                unlock_cost=0, is_required=False):
         content = str(content or "").strip()
         if not content:
             raise CommunityError("先写点内容再发送。")
         if len(content) > 2000:
             raise CommunityError("消息太长了，请控制在 2000 字以内。")
+        cost = max(0, int(unlock_cost or 0))
         return _request(
             "POST", "/rest/v1/rpc/post_community_message",
             token=session.access_token,
-            body={"p_content": content, "p_topic": str(topic or "share")},
+            body={
+                "p_content": content,
+                "p_topic": str(topic or "share"),
+                "p_unlock_cost": cost,
+                "p_is_required": bool(is_required),
+            },
         )
 
     def delete_post(self, session, post_id):
@@ -279,4 +305,206 @@ class CommunityClient:
             "POST", "/rest/v1/rpc/delete_my_community_message",
             token=session.access_token,
             body={"p_post_id": str(post_id)},
+        )
+
+    # ------------------------------------------------------ enterprise identity
+    def identity_state(self, session):
+        """Return the current enterprise, member roles, shares and motions."""
+        return _request(
+            "POST", "/rest/v1/rpc/get_enterprise_identity_state",
+            token=session.access_token,
+            body={},
+        )
+
+    def propose_role_change(self, session, target_profile_id, kind,
+                            role_key="employee", department="", title="",
+                            reason="", days=None, conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_enterprise_role",
+            token=session.access_token,
+            body={
+                "p_target": str(target_profile_id),
+                "p_kind": str(kind or ""),
+                "p_role_key": str(role_key or "employee"),
+                "p_department": str(department or ""),
+                "p_title": str(title or ""),
+                "p_reason": str(reason or ""),
+                "p_days": int(days) if days is not None else None,
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
+    def cast_role_vote(self, session, motion_id, choice):
+        return _request(
+            "POST", "/rest/v1/rpc/cast_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_choice": str(choice or "")},
+        )
+
+    def close_role_vote(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/close_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
+        )
+
+    def cancel_role_vote(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/cancel_enterprise_role_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
+        )
+
+    def propose_share_change(self, session, profile_id, shares,
+                             reason, days=5, conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_enterprise_share_change",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_shares": float(shares or 0),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
+    def set_shareholder(self, session, profile_id, shares):
+        """Bootstrap/internal compatibility only; UI must use a motion."""
+        return _request(
+            "POST", "/rest/v1/rpc/set_enterprise_shareholder",
+            token=session.access_token,
+            body={"p_profile": str(profile_id), "p_shares": float(shares or 0)},
+        )
+
+    # ------------------------------------------------------- role templates
+    def role_templates(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_enterprise_role_templates",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, list) else []
+
+    def clone_role_template(self, session, source_id, key, name,
+                            reason="", days=5, conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/clone_role_template",
+            token=session.access_token,
+            body={
+                "p_source_template": str(source_id),
+                "p_key": str(key or ""),
+                "p_name": str(name or ""),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
+    def update_role_template(self, session, template_id, name, permissions,
+                             reason="", days=5, conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/update_role_template",
+            token=session.access_token,
+            body={
+                "p_template": str(template_id),
+                "p_name": str(name or ""),
+                "p_permissions": list(permissions or []),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+    def set_role_assignment(self, session, profile_id, template_id,
+                            ends_at=None, reason=""):
+        return _request(
+            "POST", "/rest/v1/rpc/set_member_role_assignment",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_template": str(template_id),
+                "p_ends_at": ends_at,
+                "p_reason": str(reason or ""),
+            },
+        )
+
+    def propose_template_change(self, session, template_id, name,
+                                permissions, reason, days=5,
+                                conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_template_change",
+            token=session.access_token,
+            body={
+                "p_template": str(template_id),
+                "p_name": str(name or ""),
+                "p_permissions": list(permissions or []),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
+    # -------------------------------------------------------- board motions
+    def create_board_motion(self, session, title, kind, payload,
+                            conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/create_board_motion",
+            token=session.access_token,
+            body={
+                "p_title": title,
+                "p_kind": kind,
+                "p_payload": payload,
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
+    def cast_board_vote(self, session, motion_id, choice):
+        return _request(
+            "POST", "/rest/v1/rpc/cast_board_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_choice": choice},
+        )
+
+    def finalize_board_motion(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/finalize_board_motion",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
+        )
+
+    # -------------------------------------------------------- points/modes
+    def point_state(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_point_state",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def award_points(self, session, profile_id, amount, evidence_type,
+                     evidence_id, reason):
+        return _request(
+            "POST", "/rest/v1/rpc/award_points",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_amount": int(amount),
+                "p_evidence_type": evidence_type,
+                "p_evidence_id": str(evidence_id),
+                "p_reason": reason,
+            },
+        )
+
+    def unlock_knowledge(self, session, post_id):
+        return _request(
+            "POST", "/rest/v1/rpc/unlock_knowledge_content",
+            token=session.access_token,
+            body={"p_post": str(post_id)},
+        )
+
+    def set_ui_mode(self, session, mode):
+        if mode not in ("simple", "advanced"):
+            raise ValueError("mode must be simple or advanced")
+        return _request(
+            "POST", "/rest/v1/rpc/set_enterprise_ui_mode",
+            token=session.access_token,
+            body={"p_mode": mode},
         )

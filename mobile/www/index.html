@@ -89,6 +89,29 @@
   </div>
 </section>
 
+<!-- ====================== 今日工位（简单模式） ====================== -->
+<section id="page-today" class="page hidden">
+  <div class="topbar">
+    <div class="grow"><h1>今天</h1><div class="sub" id="today-sub"></div></div>
+    <button class="icon-btn hidden" id="btn-mode-toggle" title="切换模式">⇄</button>
+  </div>
+  <div class="body">
+    <div class="identity-me-card" id="today-summary"></div>
+    <div class="section-head"><span>今日任务</span><span class="meta" id="today-count"></span></div>
+    <div id="today-task-list"></div>
+    <div class="btn-row">
+      <button class="btn ghost" id="btn-today-all-tasks"
+              style="width:100%">查看全部任务</button>
+    </div>
+
+    <div class="section-head"><span>积分与解锁</span><span class="meta" id="today-points"></span></div>
+    <div id="today-rewards"></div>
+    <div id="today-ledger"></div>
+    <button class="btn ghost" id="btn-today-community"
+            style="width:100%;margin-top:10px">去知识星球</button>
+  </div>
+</section>
+
 <!-- ====================== 看板 ====================== -->
 <section id="page-dash" class="page hidden">
   <div class="topbar">
@@ -331,6 +354,43 @@
   </div>
 </section>
 
+<!-- ====================== 企业身份 ====================== -->
+<section id="page-identity" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>企业身份</h1>
+      <div class="sub" id="identity-sub">股东按股份投票任免</div>
+    </div>
+    <button class="icon-btn" id="btn-identity-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div class="card identity-me-card" id="identity-me-card"></div>
+    <div class="section-head"><span>我的权限</span>
+      <span class="meta">身份决定可见功能</span></div>
+    <div class="chips" id="identity-permissions"></div>
+
+    <div class="section-head"><span>成员与身份</span>
+      <span class="meta" id="identity-member-count"></span></div>
+    <div id="identity-members"></div>
+
+    <div class="section-head"><span>股东表决</span>
+      <span class="meta" id="identity-motion-count"></span></div>
+    <div id="identity-motions"></div>
+
+    <div class="section-head"><span>董事会</span>
+      <span class="meta" id="identity-board-count"></span></div>
+    <div id="identity-board"></div>
+
+    <div class="section-head"><span>积分状态</span>
+      <span class="meta" id="identity-point-count"></span></div>
+    <div id="identity-point-state"></div>
+
+    <div class="community-note">
+      任免与股份调整按持股比例投票；董事会一人一票；弃权计入出席率。
+    </div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -349,6 +409,14 @@
       <div class="chips community-topics" id="community-topics"></div>
       <textarea id="community-input" maxlength="2000"
         placeholder="写一条所有成员都能看到的消息。&#10;可以提问、分享经验、同步判断或发出一条灵感。"></textarea>
+      <div class="row2">
+        <div><label for="community-unlock-cost">解锁积分（0 = 免费）</label>
+          <input id="community-unlock-cost" type="number" min="0" value="0"></div>
+        <label class="community-required">
+          <input id="community-required" type="checkbox">
+          设为必读
+        </label>
+      </div>
       <div class="community-compose-foot">
         <span class="meta" id="community-count">0 / 2000</span>
         <button class="btn" id="btn-community-send">发布</button>
@@ -418,6 +486,9 @@
 
     <div id="me-notify-hint"></div>
 
+    <button class="btn hidden" id="btn-mode-toggle-me"
+            style="width:100%;margin-bottom:8px">切换到高级模式</button>
+
     <button class="btn" id="btn-sync-now" style="width:100%">立即同步</button>
 
     <!-- 账号管理。**这两种身份都需要**，所以不放在 boss-extras 里。 -->
@@ -460,17 +531,19 @@
 <!-- 两套导航，按身份显示。
      员工只有两个入口——给他看一堆用不上的按钮只会让人困惑。 -->
 <nav id="nav">
-  <span id="nav-boss" class="nav-group">
-    <button data-page="dash" class="on"><b>看板</b></button>
+  <span id="nav-simple" class="nav-group">
+    <button data-page="today" class="on"><b>今天</b></button>
+    <button data-page="community"><b>星球</b></button>
+    <button data-page="me"><b>我的</b></button>
+  </span>
+  <span id="nav-advanced" class="nav-group hidden">
+    <button data-page="dash"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
     <button data-page="assist"><b>助手</b></button>
+    <button data-page="identity"><b>治理</b></button>
     <button data-page="community"><b>星球</b></button>
-    <button data-page="me" id="nav-me-boss"><b>我的</b></button>
-  </span>
-  <span id="nav-staff" class="nav-group hidden">
-    <button data-page="tasks"><b>任务</b></button>
-    <button data-page="community"><b>星球</b></button>
-    <button data-page="me" id="nav-me-staff"><b>我的</b></button>
+    <button data-page="today"><b>今天</b></button>
+    <button data-page="me"><b>我的</b></button>
   </span>
 </nav>
 
@@ -496,8 +569,9 @@
        2. store.js            —— 数据层，谁都依赖它
        3. calc.js / charts.js / assist.js  —— 纯计算/绘图
        4. sync.js             —— 云同步，依赖 store 和计算函数
-       5. account.js          —— 账号界面，依赖 sync
-       6. app.js              —— 主程序，最后加载并启动
+       5. identity.js/today.js —— 企业身份、积分与简单模式
+       6. account.js/community.js —— 账号、任务与知识星球
+       7. app.js              —— 主程序，最后加载并启动
      ============================================================ -->
 <script src="vendor/supabase.js"></script>
 <script>
@@ -524,6 +598,8 @@
 <!-- notify.js 要在 app.js 之前：app.js 启动时会调
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
+<script src="identity.js"></script>
+<script src="today.js"></script>
 <script src="account.js"></script>
 <script src="community.js"></script>
 <script src="app.js"></script>

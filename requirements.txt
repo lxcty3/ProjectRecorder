@@ -6,3 +6,9 @@ PyQt6>=6.5            # 界面
 # 以下为可选：只有导出 Excel（.xlsx）时才需要
 # 不装也能导出，只是格式退回 CSV（会自动生成 8 个文件）
 openpyxl>=3.1
+
+# SQL contract tests
+pglast>=8.7
+
+# Optional PostgreSQL integration-test driver (opt-in tests only)
+psycopg2-binary>=2.9

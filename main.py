@@ -31,11 +31,14 @@ import rules
 import theme
 from chart import BarChart, LoadChart
 from db import ASSIGN_STATUS, PRIORITY, PROJECT_STATUS, Store
-from community_client import CommunitySession
-from community_ui import CommunityLoginDialog
+from community_client import CommunityClient, CommunitySession
+from community_ui import CommunityLoginDialog, CommunityWorker
+from identity_rules import PermissionGrant, can_use_advanced_mode
 from collaboration import CollaborationPage, EmployeeCloudPage
 from detail import ImportDialog, ProjectDialog, SubmitWindow
 from knowledge_planet import KnowledgePlanetPage
+from identity_ui import IdentityPage, role_label
+from today_ui import TodayPage
 from metrics import budget_usage, load_ratio, num, sum_hours
 from server import DEFAULT_PORT, SubmitServer
 from timer_ui import SessionListDialog, TimerBar
@@ -322,6 +325,7 @@ class MainWindow(QMainWindow):
         # 电脑版与手机版共用同一套 Supabase 账号。登录状态只保存令牌，
         # 不保存密码；没有登录时仍可继续使用本地项目数据。
         self.account_session = self._load_account_session()
+        self.identity_state = {}
 
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(resource_path("assets", "app_icon.ico")))
@@ -351,6 +355,7 @@ class MainWindow(QMainWindow):
         act_new.setShortcut("Ctrl+N")
         act_new.triggered.connect(self.new_project)
         file_menu.addAction(act_new)
+        self.act_new = act_new
         act_knowledge = QAction("记录一条知识", self)
         act_knowledge.setShortcut("Ctrl+K")
         act_knowledge.triggered.connect(self.new_knowledge)
@@ -360,6 +365,7 @@ class MainWindow(QMainWindow):
         act_export.setShortcut("Ctrl+E")
         act_export.triggered.connect(self.export_data)
         file_menu.addAction(act_export)
+        self.act_export = act_export
         file_menu.addSeparator()
         act_quit = QAction("退出", self)
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
@@ -375,12 +381,14 @@ class MainWindow(QMainWindow):
         act_import.setShortcut("Ctrl+I")
         act_import.triggered.connect(self.import_submissions)
         self.menu_submit.addAction(act_import)
+        self.act_import = act_import
         act_snapshot = QAction("导出手机快照…", self)
         act_snapshot.setToolTip(
             "导出一份完整数据，发到手机上用「手机版」打开查看"
         )
         act_snapshot.triggered.connect(self.export_mobile_snapshot)
         self.menu_submit.addAction(act_snapshot)
+        self.act_snapshot = act_snapshot
         self.menu_submit.addSeparator()
         act_server = QAction("开启局域网服务", self)
         act_server.setCheckable(True)
@@ -390,13 +398,26 @@ class MainWindow(QMainWindow):
         act_show_url = QAction("显示服务地址…", self)
         act_show_url.triggered.connect(self.show_server_url)
         self.menu_submit.addAction(act_show_url)
+        self.act_show_url = act_show_url
         act_port = QAction("设置服务端口…", self)
         act_port.triggered.connect(self.change_server_port)
         self.menu_submit.addAction(act_port)
+        self.act_port = act_port
         self.menu_submit.addSeparator()
         act_sessions = QAction("查看计时明细…", self)
         act_sessions.triggered.connect(self.show_sessions)
         self.menu_submit.addAction(act_sessions)
+        self.act_sessions = act_sessions
+        self.management_actions = [
+            (self.act_new, "projects.manage"),
+            (self.act_export, "data.export_all"),
+            (self.act_import, "worklogs.approve"),
+            (self.act_snapshot, "data.export_all"),
+            (self.act_server, "company.manage"),
+            (self.act_show_url, "company.manage"),
+            (self.act_port, "company.manage"),
+            (self.act_sessions, "worklogs.approve"),
+        ]
 
         account_menu = bar.addMenu("账号(&A)")
         self.act_account_login = QAction("登录手机版账号…", self)
@@ -456,6 +477,12 @@ class MainWindow(QMainWindow):
         top.addWidget(label(APP_SUBTITLE, "ToolMeta"))
         top.addStretch()
 
+        self.mode_button = QPushButton("切换到高级模式")
+        self.mode_button.setObjectName("GhostButton")
+        self.mode_button.setVisible(False)
+        self.mode_button.clicked.connect(self._toggle_ui_mode)
+        top.addWidget(self.mode_button)
+
         self.account_button = QPushButton("登录手机版账号")
         self.account_button.setObjectName("AccountButton")
         self.account_button.setToolTip(
@@ -472,17 +499,23 @@ class MainWindow(QMainWindow):
         new_button.setObjectName("PrimaryButton")
         new_button.clicked.connect(self.new_project)
         top.addWidget(new_button)
+        self.new_project_button = new_button
+        self.management_actions.append((new_button, "projects.manage"))
         outer.addWidget(toolbar)
 
         # ---- 主选项卡 ----
         self.tabs = QTabWidget()
         self.tabs.setObjectName("RootTabs")
+        self.today_page = TodayPage(self)
+        self.today_tab = self.tabs.addTab(self.today_page, "今日")
         self.dashboard = DashboardPage(self)
         self.tabs.addTab(self.dashboard, "驾驶舱")
         self.knowledge_page = KnowledgePlanetPage(self)
         self.tabs.addTab(self.knowledge_page, "知识星球")
         self.collaboration_page = CollaborationPage(self)
         self.tabs.addTab(self.collaboration_page, "协作中心")
+        self.identity_page = IdentityPage(self)
+        self.identity_tab = self.tabs.addTab(self.identity_page, "企业身份")
         self.employee_cloud_page = EmployeeCloudPage(self)
         self.employee_cloud_tab = self.tabs.addTab(self.employee_cloud_page, "我的任务")
         self.tabs.setTabVisible(self.employee_cloud_tab, False)
@@ -527,15 +560,96 @@ class MainWindow(QMainWindow):
             return CommunitySession.from_dict(raw)
         return None
 
+    def _identity_me(self):
+        return (self.identity_state or {}).get("me") or {}
+
+    def _has_identity_permission(self, *permissions):
+        """Use fine-grained enterprise capabilities once identity state loads."""
+        session = self.account_session
+        if session is None:
+            return True
+        me = self._identity_me()
+        granted = me.get("permissions")
+        if isinstance(granted, list):
+            return any(permission in granted for permission in permissions)
+        # Before the identity RPC finishes, preserve the legacy owner experience.
+        return session.role == "boss"
+
+    def _management_action_allowed(self, permission):
+        if self.account_session is None:
+            return True
+        return bool(
+            self._effective_ui_mode() == "advanced"
+            and self._has_identity_permission(permission)
+        )
+
+    def _ensure_management_action(self, permission):
+        if self._management_action_allowed(permission):
+            return True
+        self.flash(
+            "当前为简单模式或没有该管理权限，操作已阻止。",
+            4200,
+        )
+        return False
+
+    def _refresh_management_actions(self):
+        for action, permission in getattr(self, "management_actions", []):
+            action.setEnabled(self._management_action_allowed(permission))
+
+    def _management_view(self):
+        return self._has_identity_permission(
+            "company.manage", "projects.view_all", "projects.manage",
+            "people.view_all", "people.manage", "reports.view",
+            "tasks.assign", "finance.view", "audit.read",
+        )
+
+    def _advanced_mode_allowed(self):
+        """Advanced controls require management, finance, audit or governance authority."""
+        if self.account_session is None:
+            return False
+        me = self._identity_me()
+        permissions = me.get("permissions")
+        if isinstance(permissions, list):
+            return can_use_advanced_mode(
+                [PermissionGrant(str(key)) for key in permissions]
+            )
+        # Preserve the legacy owner experience until the identity RPC resolves.
+        return self.account_session.role == "boss"
+
+    def _effective_ui_mode(self):
+        """Return the persisted mode, but never trust it beyond current permissions."""
+        if not self._advanced_mode_allowed():
+            return "simple"
+        preferred = str(self._identity_me().get("preferred_mode") or "simple")
+        return "advanced" if preferred == "advanced" else "simple"
+
+    def apply_identity_state(self, state):
+        self.identity_state = state if isinstance(state, dict) else {}
+        me = self._identity_me()
+        if me and self.account_session is not None:
+            self.account_session.profile["enterprise_role"] = me.get("role_key")
+            self.account_session.profile["enterprise_role_name"] = me.get("role_name")
+            self.account_session.profile["enterprise_permissions"] = me.get("permissions") or []
+        self._refresh_account_ui()
+
+    def _account_role_label(self):
+        me = self._identity_me()
+        if me.get("role_key"):
+            return role_label(me.get("role_key"))
+        if self.account_session is None:
+            return "未登录"
+        return "老板" if self.account_session.role == "boss" else "员工"
+
     def _refresh_account_ui(self):
         session = self.account_session
         logged = session is not None
         if hasattr(self, "account_button"):
             if logged:
-                role = "老板" if session.role == "boss" else "员工"
+                role = self._account_role_label()
                 self.account_button.setText(f"{session.name} · {role}")
                 self.account_button.setToolTip(
                     f"账号 {session.profile.get('code') or session.name}\n"
+                    f"企业身份：{role}\n"
                     "电脑版与手机版共用此账号"
                 )
             else:
@@ -544,21 +658,41 @@ class MainWindow(QMainWindow):
                     "使用手机版同一个老板账号或员工号登录"
                 )
         if hasattr(self, "tabs"):
-            employee = bool(session and session.role == "employee")
-            boss = bool(session and session.role == "boss")
+            mode = self._effective_ui_mode()
+            advanced = mode == "advanced"
+            management = bool(session and self._management_view())
+            employee_tasks = bool(session and not management and advanced)
+
+            self.tabs.setTabVisible(self.today_tab, not advanced)
+            self.tabs.setTabVisible(
+                self.tabs.indexOf(self.knowledge_page), logged
+            )
             for widget in (self.dashboard, self.collaboration_page,
                            self.assistant_page, self.employee_page,
                            self.staffing_page):
-                self.tabs.setTabVisible(self.tabs.indexOf(widget), boss or not logged)
+                self.tabs.setTabVisible(self.tabs.indexOf(widget), advanced)
+            if hasattr(self, "identity_page"):
+                self.tabs.setTabVisible(self.identity_tab, advanced)
+                if self.identity_page.session is not session:
+                    self.identity_page.apply_account_session(session)
             if hasattr(self, "employee_cloud_page"):
-                self.tabs.setTabVisible(self.employee_cloud_tab, employee)
+                self.tabs.setTabVisible(self.employee_cloud_tab, employee_tasks)
                 self.employee_cloud_page.apply_account_session(
-                    session if employee else None
+                    session if employee_tasks else None
                 )
-            if logged:
-                self.tabs.setCurrentWidget(
-                    self.employee_cloud_page if employee else self.dashboard
-                )
+            if advanced:
+                self.tabs.setCurrentWidget(self.dashboard)
+            else:
+                self.tabs.setCurrentWidget(self.today_page)
+            self.today_page.apply_account_session(session)
+
+        if hasattr(self, "mode_button"):
+            self.mode_button.setVisible(logged and self._advanced_mode_allowed())
+            self.mode_button.setText(
+                "切换到简单模式"
+                if self._effective_ui_mode() == "advanced"
+                else "切换到高级模式"
+            )
 
         if hasattr(self, "act_account_login"):
             self.act_account_login.setText(
@@ -566,6 +700,34 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "act_account_logout"):
             self.act_account_logout.setEnabled(logged)
+        self._refresh_management_actions()
+
+    def _toggle_ui_mode(self):
+        if self.account_session is None:
+            return
+        target = "simple" if self._effective_ui_mode() == "advanced" else "advanced"
+        if target == "advanced" and not self._advanced_mode_allowed():
+            self.flash("当前身份没有高级模式权限", 3600)
+            return
+        worker = CommunityWorker(
+            lambda: CommunityClient().set_ui_mode(self.account_session, target),
+            self,
+        )
+        self._mode_worker = worker
+
+        def done(result):
+            mode = str((result or {}).get("mode") or target)
+            self.identity_state.setdefault("me", {})["preferred_mode"] = mode
+            self._refresh_account_ui()
+            self.flash(
+                "已切换到高级模式" if mode == "advanced" else "已回到简单模式",
+                3000,
+            )
+
+        worker.done.connect(done)
+        worker.failed.connect(lambda message: self.flash(str(message), 5000))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _account_button_clicked(self):
         if self.account_session is None:
@@ -583,7 +745,7 @@ class MainWindow(QMainWindow):
         )
         if chosen is show_action:
             session = self.account_session
-            role = "老板" if session.role == "boss" else "员工"
+            role = self._account_role_label()
             QMessageBox.information(
                 self, "当前账号",
                 f"姓名：{session.name}\n"
@@ -600,10 +762,15 @@ class MainWindow(QMainWindow):
         dialog = CommunityLoginDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.session:
             self.set_account_session(dialog.session)
+            self.apply_identity_state({})
             role = "老板" if dialog.session.role == "boss" else "员工"
             self.flash(f"已连接手机版账号：{dialog.session.name}（{role}）", 4200)
 
     def set_account_session(self, session):
+        old_user = self.account_session.user_id if self.account_session else ""
+        new_user = session.user_id if session else ""
+        if old_user != new_user:
+            self.identity_state = {}
         self.account_session = session
         self.window_settings_set(
             "community_session", session.to_dict() if session else {}
@@ -613,6 +780,10 @@ class MainWindow(QMainWindow):
             self.knowledge_page.community_page.apply_account_session(session)
         if hasattr(self, "collaboration_page"):
             self.collaboration_page.apply_account_session(session)
+        if hasattr(self, "identity_page"):
+            self.identity_page.apply_account_session(session)
+        if hasattr(self, "today_page"):
+            self.today_page.apply_account_session(session)
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.apply_account_session(
                 session if session and session.role == "employee" else None
@@ -636,6 +807,7 @@ class MainWindow(QMainWindow):
 
     # ---------- 数据操作 ----------
     def refresh_all(self):
+        self.today_page.refresh()
         self.dashboard.refresh()
         self.knowledge_page.refresh()
         self.employee_page.refresh()
@@ -669,6 +841,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def new_project(self):
+        if not self._ensure_management_action("projects.manage"):
+            return
         dialog = ProjectDialog(self, None)
         if dialog.exec():
             self.refresh_all()
@@ -679,14 +853,20 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index):
         """切到知识星球时重算关联，保证别处新增项目后立即能选。"""
-        if self.tabs.widget(index) is self.knowledge_page:
+        if self.tabs.widget(index) is self.today_page:
+            self.today_page.refresh()
+        elif self.tabs.widget(index) is self.knowledge_page:
             self.knowledge_page.refresh()
         elif self.tabs.widget(index) is self.collaboration_page:
             self.collaboration_page.on_activated()
         elif self.tabs.widget(index) is self.employee_cloud_page:
             self.employee_cloud_page.refresh()
+        elif hasattr(self, "identity_page") and self.tabs.widget(index) is self.identity_page:
+            self.identity_page.on_activated()
 
     def export_data(self):
+        if not self._ensure_management_action("data.export_all"):
+            return
         import export
         path, _ = QFileDialog.getSaveFileName(
             self, "导出全部数据", "项目数据.xlsx", "Excel (*.xlsx);;CSV (*.csv)"
@@ -744,6 +924,8 @@ class MainWindow(QMainWindow):
 
     def import_submissions(self):
         """老板导入员工发来的文件，可以一次选多个。"""
+        if not self._ensure_management_action("worklogs.approve"):
+            return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "选择员工发来的工时文件", os.path.expanduser("~"),
             "工时文件 (*.json);;所有文件 (*)",
@@ -760,6 +942,8 @@ class MainWindow(QMainWindow):
         导出的是**只读镜像**——手机上做的改动通过「员工工时文件」回传，
         走的是已有的导入去重流程，不会覆盖电脑上的数据。
         """
+        if not self._ensure_management_action("data.export_all"):
+            return
         import submit
 
         if not self.store.projects():
@@ -798,6 +982,8 @@ class MainWindow(QMainWindow):
 
     def show_sessions(self):
         """看计时明细：时长和起止时间对不对得上，一眼能查。"""
+        if not self._ensure_management_action("worklogs.approve"):
+            return
         employee_id = self.timer_bar.f_employee.currentData()
         if employee_id is None:
             QMessageBox.information(self, "还没有人", "先在「员工与工时」里加一个员工。")
@@ -811,6 +997,8 @@ class MainWindow(QMainWindow):
     # ---------- 局域网服务 ----------
     def toggle_server(self):
         """开 / 关提交服务。菜单项是 checkable 的，状态跟着实际结果走。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         if self.server.running:
             self.server.stop()
             self.act_server.setChecked(False)
@@ -830,6 +1018,8 @@ class MainWindow(QMainWindow):
 
     def show_server_url(self):
         """把网址显示出来，方便复制发给员工。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         if not self.server.running:
             QMessageBox.information(
                 self, "提交服务未开启",
@@ -855,6 +1045,8 @@ class MainWindow(QMainWindow):
 
     def change_server_port(self):
         """换端口。原端口被占用时用得上。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         was_running = self.server.running
         if was_running:
             self.server.stop()
@@ -960,6 +1152,8 @@ class MainWindow(QMainWindow):
             self.knowledge_page.community_page.shutdown()
         if hasattr(self, "collaboration_page"):
             self.collaboration_page.shutdown()
+        if hasattr(self, "identity_page"):
+            self.identity_page.shutdown()
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.shutdown()
         if self.server.running:
