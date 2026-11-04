@@ -10,6 +10,7 @@
 
 1. `37f971b` `fix: resolve phase 1 final review blockers`
 2. This report commit (see `git log -1 --oneline`).
+3. `cf1a821` `fix: close phase 1 regression gaps`
 
 ## Blockers Fixed
 
@@ -68,6 +69,25 @@
   - `npx cap sync android` completed successfully
 - `git diff --check`:
   - Clean
+
+## Final Regression Follow-up
+
+Commit `cf1a821` closes four regressions found after the first final-blocker pass:
+
+1. Desktop Today now publishes `cloud_tasks_for_user()` results from `collaboration._loaded()`, so accepted tasks with task logs render as complete.
+2. Logged-out local use is no longer treated as simple mode: management actions and shortcuts are enabled when `account_session is None`; logged-in users still require advanced mode and the specific permission.
+3. `install-unified.sql` now declares `unlock_cost` and `is_required` in the table definition and adds them idempotently before the RLS policy/function references. Its community publish RPC now accepts and stores those fields.
+4. `get_point_state()` and the mobile board ledger no longer truncate authorized ledger history at 100/30 rows. The integration contract inserts more than 100 rows and verifies board, auditor, and member responses are complete.
+
+Follow-up verification:
+
+- Full unittest discovery: `134` tests, `OK`, `18` PostgreSQL integration tests skipped for missing DB URL
+- `python check.py`: passed
+- `node build-www.js`: passed
+- `node selfcheck.js`: 12 files + 182 logic checks passed
+- pglast/ASCII checks: all four SQL files passed
+- `npx cap sync android`: passed
+- `git diff --check`: clean
 
 ## Concerns
 
