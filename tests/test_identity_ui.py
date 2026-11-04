@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -7,6 +8,8 @@ from PyQt6.QtWidgets import QApplication
 
 from identity_ui import IdentityPage
 from role_templates_ui import RoleTemplatePage
+from today_ui import TodayPage
+from main import MainWindow
 
 
 class RoleTemplateUiTest(unittest.TestCase):
@@ -39,6 +42,54 @@ class RoleTemplateUiTest(unittest.TestCase):
         page = IdentityPage(None)
         labels = [page.tabs.tabText(i) for i in range(page.tabs.count())]
         self.assertIn("身份模板", labels)
+
+    def test_today_page_empty(self):
+        page = TodayPage(None)
+        page.render()
+        self.assertEqual(page.task_list.count(), 0)
+        self.assertEqual(page.card_done.value_label.text(), "0/0")
+        self.assertFalse(page.next_button.isEnabled())
+
+    def test_today_page_renders_tasks_and_points(self):
+        window = SimpleNamespace(identity_state={
+            "me": {"preferred_mode": "simple"},
+            "point_state": {"balance": 42},
+        })
+        page = TodayPage(window)
+        page.tasks = [
+            {"title": "完成验收", "due": "2026-11-04", "done": True},
+            {"title": "整理交付证据", "due": "2026-11-05", "done": False},
+        ]
+        page.render()
+        self.assertEqual(page.task_list.count(), 2)
+        self.assertIn("完成验收", page.task_list.item(0).text())
+        self.assertIn("整理交付证据", page.task_list.item(1).text())
+        self.assertEqual(page.card_done.value_label.text(), "1/2")
+        self.assertEqual(page.card_points.value_label.text(), "42")
+        self.assertTrue(page.next_button.isEnabled())
+
+    def test_today_page_refresh_rerenders(self):
+        page = TodayPage(None)
+        page.tasks = [{"title": "只做这一件事", "due": "今天"}]
+        page.refresh()
+        self.assertEqual(page.task_list.count(), 1)
+
+    def test_advanced_mode_requires_loaded_permission(self):
+        window = MainWindow.__new__(MainWindow)
+        window.account_session = SimpleNamespace(role="boss")
+        window.identity_state = {
+            "me": {"permissions": [], "preferred_mode": "advanced"}
+        }
+        self.assertEqual(window._effective_ui_mode(), "simple")
+
+    def test_advanced_mode_uses_saved_preference(self):
+        window = MainWindow.__new__(MainWindow)
+        window.account_session = SimpleNamespace(role="employee")
+        window.identity_state = {"me": {
+            "permissions": ["finance.view"],
+            "preferred_mode": "advanced",
+        }}
+        self.assertEqual(window._effective_ui_mode(), "advanced")
 
 
 if __name__ == "__main__":

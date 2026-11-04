@@ -37,6 +37,7 @@ from collaboration import CollaborationPage, EmployeeCloudPage
 from detail import ImportDialog, ProjectDialog, SubmitWindow
 from knowledge_planet import KnowledgePlanetPage
 from identity_ui import IdentityPage, role_label
+from today_ui import TodayPage
 from metrics import budget_usage, load_ratio, num, sum_hours
 from server import DEFAULT_PORT, SubmitServer
 from timer_ui import SessionListDialog, TimerBar
@@ -479,6 +480,8 @@ class MainWindow(QMainWindow):
         # ---- 主选项卡 ----
         self.tabs = QTabWidget()
         self.tabs.setObjectName("RootTabs")
+        self.today_page = TodayPage(self)
+        self.today_tab = self.tabs.addTab(self.today_page, "今日")
         self.dashboard = DashboardPage(self)
         self.tabs.addTab(self.dashboard, "驾驶舱")
         self.knowledge_page = KnowledgePlanetPage(self)
@@ -553,6 +556,32 @@ class MainWindow(QMainWindow):
             "tasks.assign", "finance.view", "audit.read",
         )
 
+    def _advanced_mode_allowed(self):
+        """Advanced controls require management, finance, audit or governance authority."""
+        if self.account_session is None:
+            return False
+        me = self._identity_me()
+        permissions = me.get("permissions")
+        if isinstance(permissions, list):
+            return any(permission in permissions for permission in (
+                "company.manage", "projects.view_all", "projects.manage",
+                "people.view_all", "people.manage", "worklogs.approve",
+                "tasks.assign", "tasks.grade", "finance.view",
+                "finance.manage", "reports.view", "audit.read",
+                "identity.view", "identity.propose", "identity.vote",
+                "identity.manage_shares", "identity.manage_templates",
+                "governance.manage", "governance.vote",
+            ))
+        # Preserve the legacy owner experience until the identity RPC resolves.
+        return self.account_session.role == "boss"
+
+    def _effective_ui_mode(self):
+        """Return the persisted mode, but never trust it beyond current permissions."""
+        if not self._advanced_mode_allowed():
+            return "simple"
+        preferred = str(self._identity_me().get("preferred_mode") or "simple")
+        return "advanced" if preferred == "advanced" else "simple"
+
     def apply_identity_state(self, state):
         self.identity_state = state if isinstance(state, dict) else {}
         me = self._identity_me()
@@ -588,14 +617,18 @@ class MainWindow(QMainWindow):
                     "使用手机版同一个老板账号或员工号登录"
                 )
         if hasattr(self, "tabs"):
+            mode = self._effective_ui_mode()
+            advanced = mode == "advanced"
             management = bool(session and self._management_view())
-            employee_tasks = bool(session and not management)
-            for widget in (self.dashboard, self.collaboration_page,
-                           self.assistant_page, self.employee_page,
-                           self.staffing_page):
-                self.tabs.setTabVisible(self.tabs.indexOf(widget), management or not logged)
+            employee_tasks = bool(session and not management and advanced)
+
+            self.tabs.setTabVisible(self.today_tab, not advanced)
+            for widget in (self.dashboard, self.knowledge_page,
+                           self.collaboration_page, self.assistant_page,
+                           self.employee_page, self.staffing_page):
+                self.tabs.setTabVisible(self.tabs.indexOf(widget), advanced)
             if hasattr(self, "identity_page"):
-                self.tabs.setTabVisible(self.identity_tab, logged)
+                self.tabs.setTabVisible(self.identity_tab, advanced)
                 if self.identity_page.session is not session:
                     self.identity_page.apply_account_session(session)
             if hasattr(self, "employee_cloud_page"):
@@ -603,13 +636,11 @@ class MainWindow(QMainWindow):
                 self.employee_cloud_page.apply_account_session(
                     session if employee_tasks else None
                 )
-            if logged:
-                self.tabs.setCurrentWidget(
-                    self.dashboard if management else (
-                        self.identity_page if hasattr(self, "identity_page")
-                        else self.employee_cloud_page
-                    )
-                )
+            if advanced:
+                self.tabs.setCurrentWidget(self.dashboard)
+            else:
+                self.tabs.setCurrentWidget(self.today_page)
+            self.today_page.apply_account_session(session)
 
         if hasattr(self, "act_account_login"):
             self.act_account_login.setText(
@@ -671,6 +702,8 @@ class MainWindow(QMainWindow):
             self.collaboration_page.apply_account_session(session)
         if hasattr(self, "identity_page"):
             self.identity_page.apply_account_session(session)
+        if hasattr(self, "today_page"):
+            self.today_page.apply_account_session(session)
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.apply_account_session(
                 session if session and session.role == "employee" else None
@@ -694,6 +727,7 @@ class MainWindow(QMainWindow):
 
     # ---------- 数据操作 ----------
     def refresh_all(self):
+        self.today_page.refresh()
         self.dashboard.refresh()
         self.knowledge_page.refresh()
         self.employee_page.refresh()
@@ -737,7 +771,9 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index):
         """切到知识星球时重算关联，保证别处新增项目后立即能选。"""
-        if self.tabs.widget(index) is self.knowledge_page:
+        if self.tabs.widget(index) is self.today_page:
+            self.today_page.refresh()
+        elif self.tabs.widget(index) is self.knowledge_page:
             self.knowledge_page.refresh()
         elif self.tabs.widget(index) is self.collaboration_page:
             self.collaboration_page.on_activated()
