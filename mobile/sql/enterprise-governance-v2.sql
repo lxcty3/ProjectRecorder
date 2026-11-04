@@ -1030,10 +1030,18 @@ declare
   v_office_key text;
   v_assignment_id uuid;
   v_template_permissions jsonb:='[]'::jsonb;
+  v_high_risk boolean:=false;
+  v_governance_sensitive boolean:=false;
   v_reason text:=btrim(coalesce(p_reason,''));
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  perform 1
+    from public.enterprises
+   where id=v_eid
+   for update;
+
   if not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
   end if;
@@ -1094,12 +1102,35 @@ begin
   from public.enterprise_role_template_permissions p
   where p.template_version_id=v_template_version_id;
 
-  if exists (
+  select exists (
     select 1
       from public.enterprise_role_template_permissions p
      where p.template_version_id=v_template_version_id
        and p.high_risk
+  ) into v_high_risk;
+
+  v_governance_sensitive:=v_office_key<>'' or v_high_risk;
+
+  -- Ordinary, non-governance assignments remain available while votes are open.
+  -- Only an assigned office or high-risk permission set freezes composition.
+  if v_governance_sensitive and (
+    exists (
+      select 1
+        from public.enterprise_role_motions
+       where enterprise_id=v_eid
+         and status='open'
+    )
+    or exists (
+      select 1
+        from public.enterprise_board_motions
+       where enterprise_id=v_eid
+         and status='open'
+    )
   ) then
+    raise exception 'cannot change voting-sensitive composition while a motion is open';
+  end if;
+
+  if v_high_risk then
     raise exception 'template contains high-risk permissions';
   end if;
 
@@ -1279,12 +1310,16 @@ create table if not exists public.enterprise_board_motions (
   title text not null,
   kind text not null check (kind in ('point_pool','governance','operations')),
   payload jsonb not null default '{}'::jsonb,
+  conflict_disclosed boolean not null default false,
   proposer_profile_id uuid not null references public.profiles(id) on delete cascade,
   status text not null default 'open'
     check (status in ('open','passed','rejected','cancelled')),
   created_at timestamptz not null default now(),
   decided_at timestamptz
 );
+
+alter table public.enterprise_board_motions
+  add column if not exists conflict_disclosed boolean not null default false;
 
 create table if not exists public.enterprise_board_votes (
   motion_id uuid not null
@@ -1364,10 +1399,13 @@ as $fn$
 $fn$;
 
 -- ------------------------------------------------------------ board RPCs
+drop function if exists public.create_board_motion(text,text,jsonb);
+
 create or replace function public.create_board_motion(
   p_title text,
   p_kind text,
-  p_payload jsonb default '{}'::jsonb
+  p_payload jsonb default '{}'::jsonb,
+  p_conflict_disclosed boolean default false
 ) returns jsonb
 language plpgsql security definer
 set search_path=public,auth,pg_temp
@@ -1378,10 +1416,17 @@ declare
   v_kind text:=lower(trim(coalesce(p_kind,'')));
   v_title text:=trim(coalesce(p_title,''));
   v_payload jsonb:=coalesce(p_payload,'{}'::jsonb);
+  v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false);
   v_motion uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  perform 1
+    from public.enterprises
+   where id=v_eid
+   for update;
+
   if not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
   end if;
@@ -1397,9 +1442,9 @@ begin
   end if;
 
   insert into public.enterprise_board_motions(
-    enterprise_id,title,kind,payload,proposer_profile_id
+    enterprise_id,title,kind,payload,conflict_disclosed,proposer_profile_id
   ) values(
-    v_eid,v_title,v_kind,v_payload,v_uid
+    v_eid,v_title,v_kind,v_payload,v_conflict_disclosed,v_uid
   )
   returning id into v_motion;
 
@@ -1408,12 +1453,14 @@ begin
   ) values(
     v_eid,v_uid,'board_motion.created',null,
     jsonb_build_object(
-      'board_motion_id',v_motion,'title',v_title,'kind',v_kind
+      'board_motion_id',v_motion,'title',v_title,'kind',v_kind,
+      'conflict_disclosed',v_conflict_disclosed
     )
   );
 
   return jsonb_build_object(
-    'ok',true,'board_motion_id',v_motion,'status','open'
+    'ok',true,'board_motion_id',v_motion,'status','open',
+    'conflict_disclosed',v_conflict_disclosed
   );
 end;
 $fn$;
@@ -1678,6 +1725,8 @@ begin
 end;
 $fn$;
 
+drop function if exists public.propose_enterprise_role(uuid,text,text,text,text,text,integer);
+
 create or replace function public.propose_enterprise_role(
   p_target uuid,
   p_kind text,
@@ -1685,7 +1734,8 @@ create or replace function public.propose_enterprise_role(
   p_department text default '',
   p_title text default '',
   p_reason text default '',
-  p_days integer default 3
+  p_days integer default 3,
+  p_conflict_disclosed boolean default false
 ) returns jsonb
 language plpgsql security definer
 set search_path=public,auth,pg_temp
@@ -1702,6 +1752,7 @@ declare
   v_motion_class text;
   v_required_bps integer;
   v_snapshot jsonb:='{}'::jsonb;
+  v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false);
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -1724,6 +1775,10 @@ begin
      and profile_id=p_target
      and status='active';
   if not found then raise exception 'target is not an active enterprise member'; end if;
+
+  if p_target=v_uid and not v_conflict_disclosed then
+    raise exception 'proposer must disclose a conflict when proposing for self';
+  end if;
 
   if v_kind='appointment' then
     if v_role is null then raise exception 'role is required'; end if;
@@ -1768,13 +1823,13 @@ begin
     enterprise_id,kind,target_profile_id,proposed_role_key,
     proposed_department,proposed_title,reason,proposer_profile_id,
     quorum_bps,approval_bps,closes_at,motion_class,share_snapshot,
-    required_bps
+    required_bps,conflict_disclosed
   ) values(
     v_eid,v_kind,p_target,v_role,trim(coalesce(p_department,'')),
     trim(coalesce(p_title,'')),trim(coalesce(p_reason,'')),v_uid,
     case when v_motion_class='major' then 0 else 5000 end,
     v_required_bps,now()+make_interval(days=>v_days),v_motion_class,
-    v_snapshot,v_required_bps
+    v_snapshot,v_required_bps,v_conflict_disclosed
   )
   returning id into v_motion;
 
@@ -1786,6 +1841,7 @@ begin
       'motion_id',v_motion,'kind',v_kind,'role',v_role,
       'effective_role',v_effective_role,
       'motion_class',v_motion_class,'required_bps',v_required_bps,
+      'conflict_disclosed',v_conflict_disclosed,
       'shareholder_count',(
         select count(*) from jsonb_object_keys(v_snapshot)
       )
@@ -1794,7 +1850,7 @@ begin
 
   return jsonb_build_object(
     'ok',true,'motion_id',v_motion,'motion_class',v_motion_class,
-    'required_bps',v_required_bps
+    'required_bps',v_required_bps,'conflict_disclosed',v_conflict_disclosed
   );
 exception when unique_violation then
   raise exception 'this member already has an open role motion';
@@ -1951,13 +2007,20 @@ begin
   if p_profile=v_owner and v_shares<=0 then
     raise exception 'enterprise owner must retain voting shares';
   end if;
+  -- New positive-share holders and share changes are governance-sensitive.
+  -- Ordinary employee additions do not pass through this RPC.
   if exists(
     select 1
       from public.enterprise_role_motions
      where enterprise_id=v_eid
        and status='open'
+  ) or exists(
+    select 1
+      from public.enterprise_board_motions
+     where enterprise_id=v_eid
+       and status='open'
   ) then
-    raise exception 'cannot change shares while a shareholder motion is open';
+    raise exception 'cannot change shares while a role or board motion is open';
   end if;
 
   insert into public.enterprise_shareholders(
@@ -1996,10 +2059,10 @@ revoke all on function public._identity_finalize_motion(uuid) from public;
 revoke all on function public._identity_finalize_motion(uuid) from anon;
 revoke all on function public._identity_finalize_motion(uuid) from authenticated;
 
-revoke all on function public.create_board_motion(text,text,jsonb) from public;
-revoke all on function public.create_board_motion(text,text,jsonb) from anon;
-revoke all on function public.create_board_motion(text,text,jsonb) from authenticated;
-grant execute on function public.create_board_motion(text,text,jsonb) to authenticated;
+revoke all on function public.create_board_motion(text,text,jsonb,boolean) from public;
+revoke all on function public.create_board_motion(text,text,jsonb,boolean) from anon;
+revoke all on function public.create_board_motion(text,text,jsonb,boolean) from authenticated;
+grant execute on function public.create_board_motion(text,text,jsonb,boolean) to authenticated;
 
 revoke all on function public.cast_board_vote(uuid,text) from public;
 revoke all on function public.cast_board_vote(uuid,text) from anon;
@@ -2011,10 +2074,10 @@ revoke all on function public.finalize_board_motion(uuid) from anon;
 revoke all on function public.finalize_board_motion(uuid) from authenticated;
 grant execute on function public.finalize_board_motion(uuid) to authenticated;
 
-revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from public;
-revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from anon;
-revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) from authenticated;
-grant execute on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) to authenticated;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from public;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from anon;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from authenticated;
+grant execute on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) to authenticated;
 
 revoke all on function public.cast_enterprise_role_vote(uuid,text) from public;
 revoke all on function public.cast_enterprise_role_vote(uuid,text) from anon;

@@ -392,7 +392,7 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             self.rpc_definition("_identity_finalize_motion"),
         )
 
-    def test_open_shareholder_motion_blocks_share_changes_and_new_holders(self):
+    def test_open_motions_block_share_changes_and_new_holders(self):
         compact = " ".join(
             self.rpc_definition("set_enterprise_shareholder").split()
         )
@@ -400,11 +400,93 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             "from public.enterprises where id=v_eid for update",
             compact,
         )
+        self.assertIn("from public.enterprise_role_motions", compact)
+        self.assertIn("from public.enterprise_board_motions", compact)
+        self.assertIn("status='open'", compact)
+        self.assertIn("cannot change shares while a role or board motion is open", compact)
+        self.assertIn("ordinary employee additions do not pass through this rpc", compact)
+
+    def test_sensitive_role_assignments_freeze_while_any_motion_is_open(self):
+        compact = " ".join(
+            self.rpc_definition("set_member_role_assignment").split()
+        )
         self.assertIn(
-            "from public.enterprise_role_motions where enterprise_id=v_eid and status='open'",
+            "from public.enterprises where id=v_eid for update",
             compact,
         )
-        self.assertIn("cannot change shares while a shareholder motion is open", compact)
+        self.assertIn("v_high_risk", compact)
+        self.assertIn(
+            "v_governance_sensitive:=v_office_key<>'' or v_high_risk",
+            compact,
+        )
+        self.assertIn("from public.enterprise_role_motions", compact)
+        self.assertIn("from public.enterprise_board_motions", compact)
+        self.assertIn(
+            "cannot change voting-sensitive composition while a motion is open",
+            compact,
+        )
+        self.assertIn(
+            "ordinary, non-governance assignments remain available while votes are open",
+            compact,
+        )
+
+    def test_role_motion_conflict_disclosure_is_required_for_self_dealing(self):
+        compact = " ".join(self.rpc_definition("propose_enterprise_role").split())
+        self.assertIn(
+            "p_conflict_disclosed boolean default false",
+            compact,
+        )
+        self.assertIn(
+            "v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false)",
+            compact,
+        )
+        self.assertIn(
+            "if p_target=v_uid and not v_conflict_disclosed then",
+            compact,
+        )
+        self.assertIn(
+            "proposer must disclose a conflict when proposing for self",
+            compact,
+        )
+        self.assertIn("conflict_disclosed", compact)
+        self.assertIn("'conflict_disclosed',v_conflict_disclosed", compact)
+
+    def test_board_motion_conflict_disclosure_is_persisted_and_audited(self):
+        compact = " ".join(self.rpc_definition("create_board_motion").split())
+        self.assertIn("p_conflict_disclosed boolean default false", compact)
+        self.assertIn(
+            "v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false)",
+            compact,
+        )
+        self.assertIn("conflict_disclosed", compact)
+        self.assertIn("'conflict_disclosed',v_conflict_disclosed", compact)
+        self.assertIn(
+            "from public.enterprises where id=v_eid for update",
+            compact,
+        )
+        self.assertIn(
+            "alter table public.enterprise_board_motions add column if not exists conflict_disclosed boolean not null default false;",
+            " ".join(self.sql.lower().split()),
+        )
+
+    def test_changed_rpc_signatures_drop_stale_overloads_and_grants(self):
+        compact = " ".join(self.sql.lower().split())
+        self.assertIn(
+            "drop function if exists public.propose_enterprise_role(uuid,text,text,text,text,text,integer);",
+            compact,
+        )
+        self.assertIn(
+            "drop function if exists public.create_board_motion(text,text,jsonb);",
+            compact,
+        )
+        self.assertNotIn(
+            "grant execute on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer) to authenticated;",
+            compact,
+        )
+        self.assertNotIn(
+            "grant execute on function public.create_board_motion(text,text,jsonb) to authenticated;",
+            compact,
+        )
 
     def test_board_tables_enforce_one_director_one_vote(self):
         compact = " ".join(self.sql.lower().split())
@@ -466,10 +548,10 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
 
     def test_board_and_shareholder_rpcs_have_least_privilege_grants(self):
         for signature in (
-            "create_board_motion(text,text,jsonb)",
+            "create_board_motion(text,text,jsonb,boolean)",
             "cast_board_vote(uuid,text)",
             "finalize_board_motion(uuid)",
-            "propose_enterprise_role(uuid,text,text,text,text,text,integer)",
+            "propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean)",
             "cast_enterprise_role_vote(uuid,text)",
             "close_enterprise_role_vote(uuid)",
             "set_enterprise_shareholder(uuid,numeric)",
