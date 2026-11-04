@@ -882,7 +882,6 @@ grant execute on function public.propose_enterprise_role(uuid,text,text,text,tex
 grant execute on function public.cast_enterprise_role_vote(uuid,text) to authenticated;
 grant execute on function public.close_enterprise_role_vote(uuid) to authenticated;
 grant execute on function public.cancel_enterprise_role_vote(uuid) to authenticated;
-grant execute on function public.set_enterprise_shareholder(uuid,numeric) to authenticated;
 
 -- Initialization is lazy: the first authenticated call provisions the
 -- enterprise from the existing boss/employee profile relationship.

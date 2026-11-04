@@ -10,12 +10,13 @@ HIGH_RISK_PERMISSIONS = {
     "governance.manage", "finance.manage", "finance.approve_company",
     "data.export_all", "data.delete_all", "company.delete",
 }
-MANAGEMENT_PERMISSIONS = {
+ADVANCED_MODE_PERMISSIONS = {
     "company.manage", "projects.view_all", "projects.manage", "people.view_all",
     "people.manage", "worklogs.approve", "tasks.assign", "tasks.grade",
     "finance.view", "finance.manage", "reports.view", "audit.read",
-    "identity.manage_templates", "governance.manage",
+    "identity.manage_templates", "governance.manage", "governance.vote",
 }
+MANAGEMENT_PERMISSIONS = ADVANCED_MODE_PERMISSIONS
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,8 @@ def can_manage_template(actor_id, target_id, grants, requested, allow_high_risk=
 
 
 def can_use_advanced_mode(grants):
-    return any(has_permission(grants, key) for key in MANAGEMENT_PERMISSIONS)
+    """Advanced mode is never granted by ordinary identity visibility alone."""
+    return any(has_permission(grants, key) for key in ADVANCED_MODE_PERMISSIONS)
 
 
 def point_balance(entries):

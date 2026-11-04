@@ -394,7 +394,7 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
 
         director_template = self._template_id(enterprise_id, "director")
         employee_template = self._template_id(enterprise_id, "project_manager")
-        ends_at = datetime.now(timezone.utc) + timedelta(days=30)
+        ends_at = datetime.now(timezone.utc) + timedelta(days=6)
         self._assert_sql_error(
             owner_id,
             "cannot change voting-sensitive composition while a motion is open",

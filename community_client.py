@@ -274,27 +274,30 @@ class CommunityClient:
         )
 
     def list_posts(self, session, limit=80):
-        rows = _request(
-            "GET", "/rest/v1/community_posts",
+        data = _request(
+            "POST", "/rest/v1/rpc/list_knowledge_posts",
             token=session.access_token,
-            params={
-                "select": "*",
-                "order": "created_at.desc",
-                "limit": max(1, min(100, int(limit))),
-            },
+            body={"p_limit": max(1, min(100, int(limit)))},
         )
-        return rows if isinstance(rows, list) else []
+        return data if isinstance(data, list) else []
 
-    def publish(self, session, content, topic="share"):
+    def publish(self, session, content, topic="share",
+                unlock_cost=0, is_required=False):
         content = str(content or "").strip()
         if not content:
             raise CommunityError("先写点内容再发送。")
         if len(content) > 2000:
             raise CommunityError("消息太长了，请控制在 2000 字以内。")
+        cost = max(0, int(unlock_cost or 0))
         return _request(
             "POST", "/rest/v1/rpc/post_community_message",
             token=session.access_token,
-            body={"p_content": content, "p_topic": str(topic or "share")},
+            body={
+                "p_content": content,
+                "p_topic": str(topic or "share"),
+                "p_unlock_cost": cost,
+                "p_is_required": bool(is_required),
+            },
         )
 
     def delete_post(self, session, post_id):
@@ -315,7 +318,7 @@ class CommunityClient:
 
     def propose_role_change(self, session, target_profile_id, kind,
                             role_key="employee", department="", title="",
-                            reason="", days=3, conflict_disclosed=False):
+                            reason="", days=None, conflict_disclosed=False):
         return _request(
             "POST", "/rest/v1/rpc/propose_enterprise_role",
             token=session.access_token,
@@ -326,7 +329,7 @@ class CommunityClient:
                 "p_department": str(department or ""),
                 "p_title": str(title or ""),
                 "p_reason": str(reason or ""),
-                "p_days": int(days or 3),
+                "p_days": int(days) if days is not None else None,
                 "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
@@ -352,7 +355,22 @@ class CommunityClient:
             body={"p_motion": str(motion_id)},
         )
 
+    def propose_share_change(self, session, profile_id, shares,
+                             reason, days=5, conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_enterprise_share_change",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_shares": float(shares or 0),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
+            },
+        )
+
     def set_shareholder(self, session, profile_id, shares):
+        """Bootstrap/internal compatibility only; UI must use a motion."""
         return _request(
             "POST", "/rest/v1/rpc/set_enterprise_shareholder",
             token=session.access_token,
@@ -389,7 +407,8 @@ class CommunityClient:
             },
         )
 
-    def set_role_assignment(self, session, profile_id, template_id, ends_at=None):
+    def set_role_assignment(self, session, profile_id, template_id,
+                            ends_at=None, reason=""):
         return _request(
             "POST", "/rest/v1/rpc/set_member_role_assignment",
             token=session.access_token,
@@ -397,11 +416,29 @@ class CommunityClient:
                 "p_profile": str(profile_id),
                 "p_template": str(template_id),
                 "p_ends_at": ends_at,
+                "p_reason": str(reason or ""),
+            },
+        )
+
+    def propose_template_change(self, session, template_id, name,
+                                permissions, reason, days=5,
+                                conflict_disclosed=False):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_template_change",
+            token=session.access_token,
+            body={
+                "p_template": str(template_id),
+                "p_name": str(name or ""),
+                "p_permissions": list(permissions or []),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
 
     # -------------------------------------------------------- board motions
-    def create_board_motion(self, session, title, kind, payload):
+    def create_board_motion(self, session, title, kind, payload,
+                            conflict_disclosed=False):
         return _request(
             "POST", "/rest/v1/rpc/create_board_motion",
             token=session.access_token,
@@ -409,6 +446,7 @@ class CommunityClient:
                 "p_title": title,
                 "p_kind": kind,
                 "p_payload": payload,
+                "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
 
@@ -417,6 +455,13 @@ class CommunityClient:
             "POST", "/rest/v1/rpc/cast_board_vote",
             token=session.access_token,
             body={"p_motion": str(motion_id), "p_choice": choice},
+        )
+
+    def finalize_board_motion(self, session, motion_id):
+        return _request(
+            "POST", "/rest/v1/rpc/finalize_board_motion",
+            token=session.access_token,
+            body={"p_motion": str(motion_id)},
         )
 
     # -------------------------------------------------------- points/modes

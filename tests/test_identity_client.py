@@ -53,7 +53,40 @@ class IdentityClientTest(unittest.TestCase):
             "POST", "/rest/v1/rpc/set_member_role_assignment", token="token",
             body={
                 "p_profile": "u2", "p_template": "t1",
-                "p_ends_at": "2027-01-01T00:00:00Z",
+                "p_ends_at": "2027-01-01T00:00:00Z", "p_reason": "",
+            },
+        )
+
+    @patch("community_client._request")
+    def test_propose_share_change(self, request):
+        request.return_value = {"ok": True}
+        self.client.propose_share_change(
+            self.session, "u2", 12.5, "股权激励", conflict_disclosed=True
+        )
+        request.assert_called_once_with(
+            "POST", "/rest/v1/rpc/propose_enterprise_share_change",
+            token="token",
+            body={
+                "p_profile": "u2", "p_shares": 12.5,
+                "p_reason": "股权激励", "p_days": 5,
+                "p_conflict_disclosed": True,
+            },
+        )
+
+    @patch("community_client._request")
+    def test_propose_template_change(self, request):
+        request.return_value = {"ok": True, "motion_required": True}
+        permissions = [{"permission_key": "finance.manage"}]
+        self.client.propose_template_change(
+            self.session, "t1", "财务", permissions, "调整职责"
+        )
+        request.assert_called_once_with(
+            "POST", "/rest/v1/rpc/propose_template_change",
+            token="token",
+            body={
+                "p_template": "t1", "p_name": "财务",
+                "p_permissions": permissions, "p_reason": "调整职责",
+                "p_days": 5, "p_conflict_disclosed": False,
             },
         )
 
@@ -64,7 +97,10 @@ class IdentityClientTest(unittest.TestCase):
         self.client.create_board_motion(self.session, "积分池", "point_pool", payload)
         request.assert_called_once_with(
             "POST", "/rest/v1/rpc/create_board_motion", token="token",
-            body={"p_title": "积分池", "p_kind": "point_pool", "p_payload": payload},
+            body={
+                "p_title": "积分池", "p_kind": "point_pool",
+                "p_payload": payload, "p_conflict_disclosed": False,
+            },
         )
 
     @patch("community_client._request")
@@ -74,6 +110,15 @@ class IdentityClientTest(unittest.TestCase):
         request.assert_called_once_with(
             "POST", "/rest/v1/rpc/cast_board_vote", token="token",
             body={"p_motion": "m1", "p_choice": "yes"},
+        )
+
+    @patch("community_client._request")
+    def test_finalize_board_motion(self, request):
+        request.return_value = {"ok": True, "status": "passed"}
+        self.client.finalize_board_motion(self.session, "m1")
+        request.assert_called_once_with(
+            "POST", "/rest/v1/rpc/finalize_board_motion", token="token",
+            body={"p_motion": "m1"},
         )
 
     @patch("community_client._request")

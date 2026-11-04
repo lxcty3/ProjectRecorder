@@ -628,6 +628,7 @@ declare
   v_name text:=btrim(coalesce(p_name,''));
   v_key text:=btrim(coalesce(p_key,''));
   v_permissions jsonb:='[]'::jsonb;
+  v_motion uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -679,7 +680,21 @@ begin
       from jsonb_array_elements(v_permissions) requested(value)
      where coalesce((requested.value->>'high_risk')::boolean,false)
   ) then
-    raise exception 'high-risk template changes require a major shareholder motion';
+    v_motion:=public._identity_create_shareholder_motion(
+      v_eid,v_uid,'template_change',null,null,'','',
+      'Clone role template '||v_key,
+      jsonb_build_object(
+        'source_template',p_source,
+        'template_key',v_key,
+        'name',v_name,
+        'permissions',v_permissions
+      ),
+      'major',5,false
+    );
+    return jsonb_build_object(
+      'ok',true,'motion_required',true,'motion_id',v_motion,
+      'motion_class','major','required_bps',6667,'status','open'
+    );
   end if;
 
   if exists (
@@ -777,6 +792,7 @@ declare
   v_permission_high_risk boolean;
   v_permissions jsonb:='[]'::jsonb;
   v_high_risk boolean:=false;
+  v_motion uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -940,7 +956,21 @@ begin
   end if;
 
   if v_high_risk then
-    raise exception 'high-risk template changes require a major shareholder motion';
+    v_motion:=public._identity_create_shareholder_motion(
+      v_eid,v_uid,'template_change',null,null,'','',
+      'Update role template '||v_template.key,
+      jsonb_build_object(
+        'template_id',v_template.id,
+        'template_key',v_template.key,
+        'name',v_name,
+        'permissions',v_permissions
+      ),
+      'major',5,false
+    );
+    return jsonb_build_object(
+      'ok',true,'motion_required',true,'motion_id',v_motion,
+      'motion_class','major','required_bps',6667,'status','open'
+    );
   end if;
 
   update public.enterprise_role_template_versions
@@ -1784,6 +1814,8 @@ declare
   v_limit integer;
   v_carry uuid;
   v_carry_pool public.enterprise_point_pools%rowtype;
+  v_carry_remaining integer:=0;
+  v_total_with_carry integer;
   v_pool uuid;
   v_existing uuid;
 begin
@@ -1853,13 +1885,15 @@ begin
     if v_carry_pool.quarter>=v_quarter then
       raise exception 'carry_from pool must be from an earlier quarter';
     end if;
+    v_carry_remaining:=v_carry_pool.remaining_amount;
   end if;
 
+  v_total_with_carry:=v_total+v_carry_remaining;
   insert into public.enterprise_point_pools(
     enterprise_id,quarter,total_amount,remaining_amount,single_award_limit,
     status,board_motion_id,approved_at
   ) values(
-    v_m.enterprise_id,v_quarter,v_total,v_total,v_limit,
+    v_m.enterprise_id,v_quarter,v_total_with_carry,v_total_with_carry,v_limit,
     'active',p_motion,now()
   ) returning id into v_pool;
 
@@ -1881,7 +1915,9 @@ begin
     v_m.enterprise_id,v_uid,'point_pool.approved',null,
     jsonb_build_object(
       'point_pool_id',v_pool,'board_motion_id',p_motion,
-      'quarter',v_quarter,'total_amount',v_total,
+      'quarter',v_quarter,'base_total',v_total,
+      'carried_remaining',v_carry_remaining,
+      'total_amount',v_total_with_carry,
       'single_award_limit',v_limit,'carry_from',v_carry
     )
   );
@@ -1986,13 +2022,38 @@ begin
              appointed_at=now(),updated_at=now(),status='active'
        where enterprise_id=v_m.enterprise_id
          and profile_id=v_m.target_profile_id;
-    else
+    elsif v_m.kind='removal' then
       update public.enterprise_members
          set role_key='employee',department='',title='',
              appointed_by=v_m.proposer_profile_id,
              appointed_at=now(),updated_at=now(),status='active'
        where enterprise_id=v_m.enterprise_id
          and profile_id=v_m.target_profile_id;
+    elsif v_m.kind='share_change' then
+      if not public._identity_is_member(
+        v_m.enterprise_id,v_m.target_profile_id
+      ) then
+        raise exception 'share target is not an active enterprise member';
+      end if;
+      if (v_m.payload->>'shares') is null then
+        raise exception 'share change payload is invalid';
+      end if;
+      update public.enterprise_shareholders
+         set shares=(v_m.payload->>'shares')::numeric,
+             updated_by=v_m.proposer_profile_id,
+             updated_at=now()
+       where enterprise_id=v_m.enterprise_id
+         and profile_id=v_m.target_profile_id;
+      if not found then
+        insert into public.enterprise_shareholders(
+          enterprise_id,profile_id,shares,updated_by
+        ) values(
+          v_m.enterprise_id,v_m.target_profile_id,
+          (v_m.payload->>'shares')::numeric,v_m.proposer_profile_id
+        );
+      end if;
+    elsif v_m.kind='template_change' then
+      perform public._identity_apply_template_change_motion(p_motion);
     end if;
   end if;
 
@@ -2003,6 +2064,8 @@ begin
     jsonb_build_object(
       'motion_id',v_m.id,'kind',v_m.kind,'role',v_m.proposed_role_key,
       'motion_class',v_m.motion_class,'required_bps',v_m.required_bps,
+      'conflict_disclosed',v_m.conflict_disclosed,
+      'payload',v_m.payload,
       'turnout_bps',v_turnout_bps,'yes_bps',v_yes_bps,'reason',v_reason
     )
   );
@@ -2781,4 +2844,962 @@ grant execute on function public.close_enterprise_role_vote(uuid) to authenticat
 revoke all on function public.set_enterprise_shareholder(uuid,numeric) from public;
 revoke all on function public.set_enterprise_shareholder(uuid,numeric) from anon;
 revoke all on function public.set_enterprise_shareholder(uuid,numeric) from authenticated;
-grant execute on function public.set_enterprise_shareholder(uuid,numeric) to authenticated;
+
+-- ============================================================
+-- Final review remediation
+-- ============================================================
+
+-- High-risk template changes require a major shareholder motion. This
+-- comment is retained as a contract marker; the implementation below
+-- creates a motion instead of rejecting the request. legacy marker:
+-- high-risk template changes require a major shareholder motion.
+-- Share and template changes are shareholder motions. The payload is
+-- kept on the motion so the exact approved change can be audited and
+-- applied only after the vote passes.
+alter table public.enterprise_role_motions
+  drop constraint if exists enterprise_role_motions_kind_check;
+alter table public.enterprise_role_motions
+  add constraint enterprise_role_motions_kind_check
+  check (kind in ('appointment','removal','share_change','template_change'));
+alter table public.enterprise_role_motions
+  add column if not exists payload jsonb not null default '{}'::jsonb;
+alter table public.enterprise_role_motions
+  alter column target_profile_id drop not null;
+
+create unique index if not exists enterprise_one_open_share_motion_idx
+  on public.enterprise_role_motions(enterprise_id,target_profile_id)
+  where status='open' and kind='share_change';
+create unique index if not exists enterprise_one_open_template_motion_idx
+  on public.enterprise_role_motions(
+    enterprise_id,(payload->>'template_id'),(payload->>'template_key')
+  )
+  where status='open' and kind='template_change';
+
+-- Owners and CEOs can administer temporary assignments. The legacy
+-- template capability remains mandatory so the permission ceiling is
+-- still evaluated by the ordinary identity-admin path.
+update public.enterprise_role_catalog
+   set permissions = permissions || '["identity.manage_templates"]'::jsonb
+ where key in ('chairperson','ceo')
+   and not (permissions ? 'identity.manage_templates');
+
+create or replace function public._identity_can_use_advanced_mode(
+  p_eid uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select coalesce(public._identity_role_permissions(p_eid,p_uid) ?| array[
+    'company.manage',
+    'projects.view_all','projects.manage',
+    'people.view_all','people.manage',
+    'worklogs.approve','tasks.assign','tasks.grade',
+    'finance.view','finance.manage','reports.view','audit.read',
+    'identity.manage_templates','governance.manage','governance.vote'
+  ],false);
+$fn$;
+
+create or replace function public.set_enterprise_ui_mode(p_mode text)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+begin
+  if v_uid is null then
+    raise exception 'not signed in';
+  end if;
+  if p_mode not in ('simple','advanced') then
+    raise exception 'invalid mode';
+  end if;
+  v_eid:=public._identity_bootstrap(
+    public._identity_owner_for_uid(v_uid)
+  );
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if p_mode='advanced'
+     and not public._identity_can_use_advanced_mode(v_eid,v_uid) then
+    raise exception 'advanced mode requires management, finance, audit or governance permission';
+  end if;
+  update public.enterprise_members
+     set preferred_mode=p_mode,
+         updated_at=now()
+   where enterprise_id=v_eid
+     and profile_id=v_uid;
+  return jsonb_build_object('ok',true,'mode',p_mode);
+end;
+$fn$;
+
+create or replace function public._identity_create_shareholder_motion(
+  p_eid uuid,
+  p_uid uuid,
+  p_kind text,
+  p_target uuid,
+  p_role_key text,
+  p_department text,
+  p_title text,
+  p_reason text,
+  p_payload jsonb,
+  p_motion_class text,
+  p_days integer,
+  p_conflict_disclosed boolean
+) returns uuid
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_motion uuid;
+  v_days integer;
+  v_required_bps integer:=case when p_motion_class='major' then 6667 else 5001 end;
+  v_snapshot jsonb:='{}'::jsonb;
+begin
+  v_days:=coalesce(
+    p_days,
+    case when p_motion_class='major' then 5 else 3 end
+  );
+  v_days:=least(greatest(v_days,1),14);
+
+  select coalesce(jsonb_object_agg(s.profile_id::text,s.shares),'{}'::jsonb)
+    into v_snapshot
+    from public.enterprise_shareholders s
+    join public.enterprise_members m
+      on m.enterprise_id=s.enterprise_id
+     and m.profile_id=s.profile_id
+   where s.enterprise_id=p_eid
+     and s.shares>0
+     and m.status='active';
+
+  insert into public.enterprise_role_motions(
+    enterprise_id,kind,target_profile_id,proposed_role_key,
+    proposed_department,proposed_title,reason,proposer_profile_id,
+    quorum_bps,approval_bps,closes_at,motion_class,share_snapshot,
+    required_bps,conflict_disclosed,payload
+  ) values(
+    p_eid,p_kind,p_target,p_role_key,
+    trim(coalesce(p_department,'')),trim(coalesce(p_title,'')),
+    trim(coalesce(p_reason,'')),p_uid,
+    case when p_motion_class='major' then 0 else 5000 end,
+    v_required_bps,now()+make_interval(days=>v_days),p_motion_class,
+    v_snapshot,v_required_bps,coalesce(p_conflict_disclosed,false),
+    coalesce(p_payload,'{}'::jsonb)
+  ) returning id into v_motion;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    p_eid,p_uid,'motion.created',p_target,
+    jsonb_build_object(
+      'motion_id',v_motion,'kind',p_kind,'motion_class',p_motion_class,
+      'required_bps',v_required_bps,'days',v_days,
+      'conflict_disclosed',coalesce(p_conflict_disclosed,false),
+      'shareholder_count',(select count(*) from jsonb_object_keys(v_snapshot))
+    )
+  );
+  return v_motion;
+end;
+$fn$;
+
+drop function if exists public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean);
+
+create or replace function public.propose_enterprise_role(
+  p_target uuid,
+  p_kind text,
+  p_role_key text default 'employee',
+  p_department text default '',
+  p_title text default '',
+  p_reason text default '',
+  p_days integer default null,
+  p_conflict_disclosed boolean default false
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_target public.enterprise_members%rowtype;
+  v_motion uuid;
+  v_kind text:=lower(trim(coalesce(p_kind,'')));
+  v_role text:=nullif(trim(coalesce(p_role_key,'')),'');
+  v_effective_role text;
+  v_motion_class text;
+  v_required_bps integer;
+  v_conflict_disclosed boolean:=coalesce(p_conflict_disclosed,false);
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  perform 1
+    from public.enterprises
+   where id=v_eid
+   for update;
+
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if public._identity_shares(v_eid,v_uid)<=0 then
+    raise exception 'only active shareholders may propose role changes';
+  end if;
+  if v_kind not in ('appointment','removal') then
+    raise exception 'invalid motion kind';
+  end if;
+
+  select * into v_target
+    from public.enterprise_members
+   where enterprise_id=v_eid
+     and profile_id=p_target
+     and status='active';
+  if not found then raise exception 'target is not an active enterprise member'; end if;
+
+  if p_target=v_uid and not v_conflict_disclosed then
+    raise exception 'proposer must disclose a conflict when proposing for self';
+  end if;
+
+  if v_kind='appointment' then
+    if v_role is null then raise exception 'role is required'; end if;
+    if not exists(
+      select 1 from public.enterprise_role_catalog where key=v_role
+    ) then
+      raise exception 'unknown role';
+    end if;
+    if v_target.role_key=v_role then
+      raise exception 'target already holds this role';
+    end if;
+  else
+    if v_target.role_key='employee' then
+      raise exception 'target already has the base employee role';
+    end if;
+    v_role:=null;
+  end if;
+
+  v_effective_role:=case
+    when v_kind='appointment' then v_role
+    else v_target.role_key
+  end;
+  v_motion_class:=case
+    when v_effective_role in (
+      'chairperson','director','supervisor','ceo','finance','identity_admin'
+    ) then 'major'
+    else 'ordinary'
+  end;
+  v_required_bps:=case when v_motion_class='major' then 6667 else 5001 end;
+
+  v_motion:=public._identity_create_shareholder_motion(
+    v_eid,v_uid,v_kind,p_target,v_role,
+    p_department,p_title,p_reason,'{}'::jsonb,
+    v_motion_class,p_days,v_conflict_disclosed
+  );
+
+  return jsonb_build_object(
+    'ok',true,'motion_id',v_motion,'motion_class',v_motion_class,
+    'required_bps',v_required_bps,'conflict_disclosed',v_conflict_disclosed
+  );
+exception when unique_violation then
+  raise exception 'this member already has an open role motion';
+end;
+$fn$;
+
+create or replace function public.propose_enterprise_share_change(
+  p_profile uuid,
+  p_shares numeric,
+  p_reason text default '',
+  p_days integer default 5,
+  p_conflict_disclosed boolean default false
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_owner uuid;
+  v_motion uuid;
+  v_shares numeric:=round(greatest(coalesce(p_shares,0),0),4);
+  v_reason text:=trim(coalesce(p_reason,''));
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if public._identity_shares(v_eid,v_uid)<=0 then
+    raise exception 'only active shareholders may propose share changes';
+  end if;
+  if not public._identity_is_member(v_eid,p_profile) then
+    raise exception 'target is not an active enterprise member';
+  end if;
+  select owner_profile_id into v_owner
+    from public.enterprises where id=v_eid for update;
+  if p_profile=v_owner and v_shares<=0 then
+    raise exception 'enterprise owner must retain voting shares';
+  end if;
+  if v_reason='' then
+    raise exception 'share change reason is required';
+  end if;
+
+  v_motion:=public._identity_create_shareholder_motion(
+    v_eid,v_uid,'share_change',p_profile,null,'','',
+    v_reason,jsonb_build_object('shares',v_shares),
+    'major',coalesce(p_days,5),coalesce(p_conflict_disclosed,false)
+  );
+
+  return jsonb_build_object(
+    'ok',true,'motion_id',v_motion,'motion_class','major',
+    'required_bps',6667,'status','open','days',coalesce(p_days,5),
+    'conflict_disclosed',coalesce(p_conflict_disclosed,false)
+  );
+end;
+$fn$;
+
+create or replace function public.propose_template_change(
+  p_template uuid,
+  p_name text,
+  p_permissions jsonb,
+  p_reason text default '',
+  p_days integer default 5,
+  p_conflict_disclosed boolean default false
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_template public.enterprise_role_templates%rowtype;
+  v_motion uuid;
+  v_reason text:=trim(coalesce(p_reason,''));
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if not (public._identity_role_permissions(v_eid,v_uid) ? 'identity.manage_templates') then
+    raise exception 'identity template management permission required';
+  end if;
+  select * into v_template
+    from public.enterprise_role_templates
+   where id=p_template and enterprise_id=v_eid and archived_at is null
+   for update;
+  if not found then raise exception 'role template not found'; end if;
+  if p_permissions is null or jsonb_typeof(p_permissions)<>'array' then
+    raise exception 'permissions must be an array';
+  end if;
+  if not public._identity_permissions_are_grantable(
+    v_eid,v_uid,p_permissions
+  ) then
+    raise exception 'cannot grant permissions you do not hold';
+  end if;
+  if v_reason='' then raise exception 'template change reason is required'; end if;
+
+  v_motion:=public._identity_create_shareholder_motion(
+    v_eid,v_uid,'template_change',null,null,'','',
+    v_reason,
+    jsonb_build_object(
+      'template_id',v_template.id,
+      'template_key',v_template.key,
+      'name',trim(coalesce(p_name,'')),
+      'permissions',p_permissions
+    ),
+    'major',coalesce(p_days,5),coalesce(p_conflict_disclosed,false)
+  );
+  return jsonb_build_object(
+    'ok',true,'motion_id',v_motion,'motion_class','major',
+    'required_bps',6667,'status','open','days',coalesce(p_days,5)
+  );
+end;
+$fn$;
+
+create or replace function public._identity_apply_template_change_motion(
+  p_motion uuid
+) returns void
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_m public.enterprise_role_motions%rowtype;
+  v_t public.enterprise_role_templates%rowtype;
+  v_current public.enterprise_role_template_versions%rowtype;
+  v_version_id uuid;
+  v_version integer;
+  v_permissions jsonb;
+begin
+  select * into v_m from public.enterprise_role_motions
+   where id=p_motion for update;
+  if not found then raise exception 'motion not found'; end if;
+  if v_m.kind<>'template_change' or v_m.status<>'passed' then
+    raise exception 'template change motion is not approved';
+  end if;
+  v_permissions:=coalesce(v_m.payload->'permissions','[]'::jsonb);
+  if jsonb_typeof(v_permissions)<>'array' then
+    raise exception 'template permissions payload is invalid';
+  end if;
+
+  select * into v_t from public.enterprise_role_templates
+   where id=(v_m.payload->>'template_id')::uuid
+     and enterprise_id=v_m.enterprise_id
+   for update;
+  if not found then raise exception 'role template not found'; end if;
+  select * into v_current from public.enterprise_role_template_versions
+   where template_id=v_t.id and status='active'
+   order by version desc limit 1 for update;
+  if not found then raise exception 'role template has no active version'; end if;
+
+  update public.enterprise_role_template_versions
+     set status='retired'
+   where id=v_current.id;
+  v_version:=v_current.version+1;
+  insert into public.enterprise_role_template_versions(
+    template_id,version,status,created_by,effective_at
+  ) values(v_t.id,v_version,'active',v_m.proposer_profile_id,now())
+  returning id into v_version_id;
+
+  insert into public.enterprise_role_template_permissions(
+    template_version_id,permission_key,resource,action,scope,conditions,high_risk
+  )
+  select v_version_id,btrim(coalesce(value->>'permission_key',value->>'key','')),
+    coalesce(nullif(btrim(coalesce(value->>'resource','')),''),
+      split_part(btrim(coalesce(value->>'permission_key',value->>'key','')),'.',1)),
+    coalesce(nullif(btrim(coalesce(value->>'action','')),''),
+      case when strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')>0
+        then substr(btrim(coalesce(value->>'permission_key',value->>'key','')),
+          strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')+1)
+        else btrim(coalesce(value->>'permission_key',value->>'key','')) end),
+    coalesce(nullif(btrim(coalesce(value->>'scope','')),''),'self'),
+    coalesce(value->'conditions','{}'::jsonb),
+    coalesce((value->>'high_risk')::boolean,
+      btrim(coalesce(value->>'permission_key',value->>'key','')) in (
+        'identity.manage_templates','identity.manage_shares',
+        'governance.vote','governance.manage','finance.manage',
+        'finance.approve_company','data.export_all','data.delete_all',
+        'company.delete'
+      ))
+  from jsonb_array_elements(v_permissions) value
+  where btrim(coalesce(value->>'permission_key',value->>'key',''))<>'';
+
+  update public.enterprise_role_templates
+     set name=coalesce(nullif(btrim(v_m.payload->>'name'),''),name)
+   where id=v_t.id;
+end;
+$fn$;
+
+drop function if exists public.set_member_role_assignment(uuid,uuid,timestamptz,text);
+
+create or replace function public.set_member_role_assignment(
+  p_profile uuid,
+  p_template uuid,
+  p_ends_at timestamptz,
+  p_reason text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_owner uuid;
+  v_is_owner boolean:=false;
+  v_is_ceo boolean:=false;
+  v_template_id uuid;
+  v_template_version_id uuid;
+  v_office_key text;
+  v_assignment_id uuid;
+  v_template_permissions jsonb:='[]'::jsonb;
+  v_high_risk boolean:=false;
+  v_governance_sensitive boolean:=false;
+  v_reason text:=btrim(coalesce(p_reason,''));
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+
+  perform 1 from public.enterprises where id=v_eid for update;
+  select owner_profile_id into v_owner from public.enterprises where id=v_eid;
+  v_is_owner:=v_owner=v_uid;
+  v_is_ceo:=exists(
+    select 1 from public.enterprise_members m
+     where m.enterprise_id=v_eid and m.profile_id=v_uid
+       and m.status='active' and m.role_key='ceo'
+    union all
+    select 1 from public.enterprise_role_assignments a
+     where a.enterprise_id=v_eid and a.profile_id=v_uid
+       and a.status='active' and a.starts_at<=now()
+       and (a.ends_at is null or a.ends_at>now())
+       and a.office_key='ceo'
+  );
+
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  if not (public._identity_role_permissions(v_eid,v_uid) ? 'identity.manage_templates') then
+    raise exception 'identity template management permission required';
+  end if;
+  if not (v_is_owner or v_is_ceo) then
+    raise exception 'only the CEO or enterprise owner may set temporary assignments';
+  end if;
+
+  if p_profile=auth.uid() then
+    raise exception 'cannot assign a role to yourself';
+  end if;
+  if v_reason='' then
+    raise exception 'temporary assignment reason is required';
+  end if;
+  if p_ends_at is null then
+    raise exception 'secondary assignments must expire';
+  end if;
+  if p_ends_at<=now() then
+    raise exception 'assignment end must be in the future';
+  end if;
+  if p_ends_at>now()+interval '7 days' then
+    raise exception 'temporary assignment cannot exceed 7 days';
+  end if;
+
+  if not exists (
+    select 1 from public.enterprise_members m
+     where m.enterprise_id=v_eid and m.profile_id=p_profile
+       and m.status='active'
+  ) then
+    raise exception 'profile is not an active enterprise member';
+  end if;
+
+  select t.id,t.office_key into v_template_id,v_office_key
+    from public.enterprise_role_templates t
+   where t.id=p_template and t.enterprise_id=v_eid
+     and t.archived_at is null
+   for update;
+  if not found then raise exception 'role template not found'; end if;
+
+  select v.id into v_template_version_id
+    from public.enterprise_role_template_versions v
+   where v.template_id=v_template_id and v.status='active'
+   order by v.version desc limit 1 for share;
+  if v_template_version_id is null then
+    raise exception 'role template has no active version';
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'permission_key',p.permission_key,'resource',p.resource,
+    'action',p.action,'scope',p.scope,'conditions',p.conditions,
+    'high_risk',p.high_risk
+  ) order by p.permission_key),'[]'::jsonb)
+  into v_template_permissions
+  from public.enterprise_role_template_permissions p
+  where p.template_version_id=v_template_version_id;
+
+  select exists (
+    select 1 from public.enterprise_role_template_permissions p
+     where p.template_version_id=v_template_version_id and p.high_risk
+  ) into v_high_risk;
+  v_governance_sensitive:=v_office_key<>'' or v_high_risk;
+
+  if v_governance_sensitive and (
+    exists(select 1 from public.enterprise_role_motions
+            where enterprise_id=v_eid and status='open')
+    or exists(select 1 from public.enterprise_board_motions
+              where enterprise_id=v_eid and status='open')
+  ) then
+    raise exception 'cannot change voting-sensitive composition while a motion is open';
+  end if;
+
+  if v_high_risk then
+    raise exception 'template contains high-risk permissions';
+  end if;
+  if not v_is_owner and not public._identity_permissions_are_grantable(
+    v_eid,v_uid,v_template_permissions
+  ) then
+    raise exception 'cannot grant permissions you do not hold';
+  end if;
+
+  select a.id into v_assignment_id
+    from public.enterprise_role_assignments a
+    join public.enterprise_role_template_versions av
+      on av.id=a.template_version_id
+   where a.enterprise_id=v_eid and a.profile_id=p_profile
+     and av.template_id=v_template_id and a.status='active'
+     and a.is_primary=false
+   order by a.created_at desc limit 1 for update of a;
+
+  if v_assignment_id is null then
+    insert into public.enterprise_role_assignments(
+      enterprise_id,profile_id,template_version_id,office_key,is_primary,
+      status,starts_at,ends_at,appointed_by
+    ) values(
+      v_eid,p_profile,v_template_version_id,v_office_key,false,
+      'active',now(),p_ends_at,v_uid
+    ) returning id into v_assignment_id;
+  else
+    update public.enterprise_role_assignments
+       set template_version_id=v_template_version_id,
+           office_key=v_office_key,is_primary=false,status='active',
+           starts_at=now(),ends_at=p_ends_at,appointed_by=v_uid
+     where id=v_assignment_id;
+  end if;
+
+  insert into public.enterprise_identity_audit(
+    enterprise_id,actor_profile_id,action,target_profile_id,details
+  ) values(
+    v_eid,v_uid,'role_assignment.set',p_profile,
+    jsonb_build_object(
+      'assignment_id',v_assignment_id,'template_id',v_template_id,
+      'template_version_id',v_template_version_id,'office_key',v_office_key,
+      'starts_at',now(),'ends_at',p_ends_at,'reason',v_reason
+    )
+  );
+
+  return jsonb_build_object(
+    'ok',true,'assignment_id',v_assignment_id,'enterprise_id',v_eid,
+    'profile_id',p_profile,'template_id',v_template_id,
+    'template_version_id',v_template_version_id,'office_key',v_office_key,
+    'ends_at',p_ends_at,'reason',v_reason
+  );
+end;
+$fn$;
+
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from public;
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from anon;
+revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from authenticated;
+grant execute on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) to authenticated;
+
+create or replace function public.get_enterprise_identity_state()
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_total numeric:=0;
+  v_permissions jsonb:='[]'::jsonb;
+  v_is_owner boolean:=false;
+  v_is_shareholder boolean:=false;
+  v_is_board boolean:=false;
+  v_is_auditor boolean:=false;
+  v_is_governance boolean:=false;
+  v_is_chairperson boolean:=false;
+  v_is_ceo boolean:=false;
+  v_can_read_governance boolean:=false;
+  v_advanced boolean:=false;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+
+  v_permissions:=public._identity_role_permissions(v_eid,v_uid);
+  v_total:=public._identity_total_shares(v_eid);
+  v_is_shareholder:=public._identity_shares(v_eid,v_uid)>0;
+  v_is_board:=public._identity_is_board_director(v_eid,v_uid);
+  v_is_auditor:=v_permissions ? 'audit.read';
+  v_is_governance:=v_permissions ? 'governance.manage'
+    or v_permissions ? 'governance.vote'
+    or v_permissions ? 'identity.manage_templates'
+    or v_permissions ? 'identity.manage_shares';
+  v_is_chairperson:=public._identity_is_chairperson(v_eid,v_uid);
+  select e.owner_profile_id=v_uid into v_is_owner
+    from public.enterprises e where e.id=v_eid;
+  v_is_ceo:=exists(
+    select 1 from public.enterprise_members m
+     where m.enterprise_id=v_eid and m.profile_id=v_uid
+       and m.status='active' and m.role_key='ceo'
+    union all
+    select 1 from public.enterprise_role_assignments a
+     where a.enterprise_id=v_eid and a.profile_id=v_uid
+       and a.status='active' and a.starts_at<=now()
+       and (a.ends_at is null or a.ends_at>now())
+       and a.office_key='ceo'
+  );
+  v_can_read_governance:=v_is_shareholder or v_is_board
+    or v_is_auditor or v_is_governance;
+  v_advanced:=public._identity_can_use_advanced_mode(v_eid,v_uid);
+
+  return jsonb_build_object(
+    'enterprise',(
+      select jsonb_build_object(
+        'id',e.id,'name',e.name
+      ) || case when v_can_read_governance then jsonb_build_object(
+        'owner_profile_id',e.owner_profile_id,
+        'quorum_bps',e.quorum_bps,'approval_bps',e.approval_bps
+      ) else '{}'::jsonb end
+      from public.enterprises e where e.id=v_eid
+    ),
+    'me',(
+      select jsonb_build_object(
+        'profile_id',m.profile_id,'name',p.name,'code',p.code,
+        'role_key',m.role_key,'role_name',r.name,
+        'department',m.department,'title',m.title,
+        'is_owner',v_is_owner,
+        'is_ceo',v_is_ceo,
+        'is_chairperson',v_is_chairperson,
+        'is_board_director',v_is_board,
+        'can_manage_assignments',v_is_owner or v_is_ceo,
+        'preferred_mode',case
+          when m.preferred_mode='advanced' and not v_advanced then 'simple'
+          else m.preferred_mode
+        end,
+        'permissions',v_permissions
+      )
+      || case when v_can_read_governance then jsonb_build_object(
+        'is_shareholder',v_is_shareholder,
+        'shares',coalesce((
+          select s.shares from public.enterprise_shareholders s
+           where s.enterprise_id=v_eid and s.profile_id=v_uid
+        ),0),
+        'share_percent',case when v_total>0 then round(coalesce((
+          select s.shares from public.enterprise_shareholders s
+           where s.enterprise_id=v_eid and s.profile_id=v_uid
+        ),0)/v_total*100,2) else 0 end
+      ) else '{}'::jsonb end
+      from public.enterprise_members m
+      join public.profiles p on p.id=m.profile_id
+      join public.enterprise_role_catalog r on r.key=m.role_key
+      where m.enterprise_id=v_eid and m.profile_id=v_uid
+    ),
+    'point_state',public.get_point_state(),
+    'roles',case when v_can_read_governance then (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'key',r.key,'name',r.name,'description',r.description,
+        'permissions',r.permissions,'rank',r.rank
+      ) order by r.rank desc),'[]'::jsonb)
+      from public.enterprise_role_catalog r
+    ) else '[]'::jsonb end,
+    'members',case when v_can_read_governance then (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'profile_id',m.profile_id,'name',p.name,'code',p.code,
+        'role_key',m.role_key,'role_name',r.name,
+        'department',m.department,'title',m.title,'status',m.status,
+        'is_owner',(e.owner_profile_id=m.profile_id),
+        'is_shareholder',(coalesce(s.shares,0)>0),
+        'shares',coalesce(s.shares,0),
+        'share_percent',case when v_total>0 then round(coalesce(s.shares,0)/v_total*100,2) else 0 end
+      ) order by r.rank desc,p.name),'[]'::jsonb)
+      from public.enterprise_members m
+      join public.profiles p on p.id=m.profile_id
+      join public.enterprise_role_catalog r on r.key=m.role_key
+      join public.enterprises e on e.id=m.enterprise_id
+      left join public.enterprise_shareholders s
+        on s.enterprise_id=m.enterprise_id and s.profile_id=m.profile_id
+      where m.enterprise_id=v_eid
+    ) else '[]'::jsonb end,
+    'motions',case when v_can_read_governance then (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id',x.id,'kind',x.kind,'status',x.status,
+        'target_profile_id',x.target_profile_id,'target_name',tp.name,
+        'proposed_role_key',x.proposed_role_key,
+        'proposed_role_name',coalesce(rr.name,''),
+        'proposed_department',x.proposed_department,
+        'proposed_title',x.proposed_title,'reason',x.reason,
+        'proposer_profile_id',x.proposer_profile_id,'proposer_name',pp.name,
+        'quorum_bps',x.quorum_bps,'approval_bps',x.approval_bps,
+        'motion_class',x.motion_class,'required_bps',x.required_bps,
+        'conflict_disclosed',x.conflict_disclosed,'payload',x.payload,
+        'opens_at',x.opens_at,'closes_at',x.closes_at,
+        'eligible_shares',v_total,
+        'cast_shares',coalesce(v.cast_shares,0),
+        'yes_shares',coalesce(v.yes_shares,0),
+        'no_shares',coalesce(v.no_shares,0),
+        'abstain_shares',coalesce(v.abstain_shares,0),
+        'turnout_percent',case when v_total>0 then round(coalesce(v.cast_shares,0)/v_total*100,2) else 0 end,
+        'yes_percent',case when (coalesce(v.yes_shares,0)+coalesce(v.no_shares,0))>0
+          then round(coalesce(v.yes_shares,0)/(coalesce(v.yes_shares,0)+coalesce(v.no_shares,0))*100,2)
+          else 0 end,
+        'my_choice',coalesce((select mv.choice from public.enterprise_role_votes mv
+          where mv.motion_id=x.id and mv.voter_profile_id=v_uid),''),
+        'can_vote',(
+          x.status='open' and v_is_shareholder and now()<x.closes_at
+          and (x.share_snapshot ? v_uid::text)
+        ),
+        'decision_reason',x.decision_reason,'decided_at',x.decided_at,
+        'created_at',x.created_at
+      ) order by case when x.status='open' then 0 else 1 end,x.created_at desc),'[]'::jsonb)
+      from public.enterprise_role_motions x
+      left join public.profiles tp on tp.id=x.target_profile_id
+      join public.profiles pp on pp.id=x.proposer_profile_id
+      left join public.enterprise_role_catalog rr on rr.key=x.proposed_role_key
+      left join lateral (
+        select
+          sum(z.shares_at_vote) as cast_shares,
+          sum(z.shares_at_vote) filter(where z.choice='yes') as yes_shares,
+          sum(z.shares_at_vote) filter(where z.choice='no') as no_shares,
+          sum(z.shares_at_vote) filter(where z.choice='abstain') as abstain_shares
+        from public.enterprise_role_votes z where z.motion_id=x.id
+      ) v on true
+      where x.enterprise_id=v_eid
+    ) else '[]'::jsonb end,
+    'board_motions',case when v_can_read_governance then (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id',bm.id,'title',bm.title,'kind',bm.kind,'status',bm.status,
+        'payload',bm.payload,'conflict_disclosed',bm.conflict_disclosed,
+        'proposer_profile_id',bm.proposer_profile_id,
+        'proposer_name',pp.name,'created_at',bm.created_at,
+        'decided_at',bm.decided_at,
+        'cast_count',coalesce(v.cast_count,0),
+        'yes_count',coalesce(v.yes_count,0),
+        'no_count',coalesce(v.no_count,0),
+        'abstain_count',coalesce(v.abstain_count,0),
+        'my_choice',coalesce((
+          select bv.choice from public.enterprise_board_votes bv
+           where bv.motion_id=bm.id and bv.director_profile_id=v_uid
+        ),''),
+        'can_vote',bm.status='open' and v_is_board,
+        'can_finalize',bm.status='open' and v_is_board
+      ) order by case when bm.status='open' then 0 else 1 end,bm.created_at desc),'[]'::jsonb)
+      from public.enterprise_board_motions bm
+      join public.profiles pp on pp.id=bm.proposer_profile_id
+      left join lateral (
+        select
+          count(*) as cast_count,
+          count(*) filter(where choice='yes') as yes_count,
+          count(*) filter(where choice='no') as no_count,
+          count(*) filter(where choice='abstain') as abstain_count
+        from public.enterprise_board_votes z where z.motion_id=bm.id
+      ) v on true
+      where bm.enterprise_id=v_eid
+    ) else '[]'::jsonb end
+  );
+end;
+$fn$;
+
+revoke all on function public.get_enterprise_identity_state() from public;
+revoke all on function public.get_enterprise_identity_state() from anon;
+revoke all on function public.get_enterprise_identity_state() from authenticated;
+grant execute on function public.get_enterprise_identity_state() to authenticated;
+
+drop function if exists public.post_community_message(text,text);
+
+create or replace function public.post_community_message(
+  p_content text,
+  p_topic text default 'share',
+  p_unlock_cost integer default 0,
+  p_is_required boolean default false
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_name text;
+  v_role text;
+  v_topic text:=lower(trim(coalesce(p_topic,'share')));
+  v_content text:=trim(coalesce(p_content,''));
+  v_cost integer:=greatest(coalesce(p_unlock_cost,0),0);
+  v_required boolean:=coalesce(p_is_required,false);
+  v_id uuid;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  select name,role into v_name,v_role
+    from public.profiles
+   where id=v_uid and coalesce(active,true)=true;
+  if v_name is null then raise exception 'profile not found'; end if;
+  if char_length(v_content)<1 then raise exception 'message is empty'; end if;
+  if char_length(v_content)>2000 then raise exception 'message is too long'; end if;
+  if char_length(v_topic)<1 or char_length(v_topic)>24 then
+    v_topic:='share';
+  end if;
+  insert into public.community_posts(
+    author_id,author_name,author_role,topic,content,
+    unlock_cost,is_required
+  ) values(
+    v_uid,v_name,coalesce(v_role,'employee'),v_topic,v_content,
+    v_cost,v_required
+  ) returning id into v_id;
+  return jsonb_build_object('ok',true,'id',v_id);
+end;
+$fn$;
+
+create or replace function public.list_knowledge_posts(p_limit integer default 80)
+returns jsonb
+language plpgsql
+stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_limit integer:=least(greatest(coalesce(p_limit,80),1),100);
+  v_result jsonb;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  select coalesce(jsonb_agg(item order by created_at desc),'[]'::jsonb)
+    into v_result
+    from (
+      select p.created_at,jsonb_build_object(
+        'id',p.id,'author_id',p.author_id,'author_name',p.author_name,
+        'author_role',p.author_role,'topic',p.topic,
+        'content',case
+          when p.author_id=v_uid or p.is_required or p.unlock_cost=0
+            or exists(select 1 from public.enterprise_knowledge_unlocks u
+                       where u.profile_id=v_uid and u.post_id=p.id)
+          then p.content else '' end,
+        'preview',left(p.content,180),
+        'unlock_cost',p.unlock_cost,'is_required',p.is_required,
+        'locked',not (
+          p.author_id=v_uid or p.is_required or p.unlock_cost=0
+          or exists(select 1 from public.enterprise_knowledge_unlocks u
+                     where u.profile_id=v_uid and u.post_id=p.id)
+        ),
+        'created_at',p.created_at
+      ) item
+      from public.community_posts p
+      order by p.created_at desc
+      limit v_limit
+    ) posts;
+  return v_result;
+end;
+$fn$;
+
+revoke all on function public.post_community_message(text,text,integer,boolean) from public;
+revoke all on function public.post_community_message(text,text,integer,boolean) from anon;
+revoke all on function public.post_community_message(text,text,integer,boolean) from authenticated;
+grant execute on function public.post_community_message(text,text,integer,boolean) to authenticated;
+
+revoke all on function public.list_knowledge_posts(integer) from public;
+revoke all on function public.list_knowledge_posts(integer) from anon;
+revoke all on function public.list_knowledge_posts(integer) from authenticated;
+grant execute on function public.list_knowledge_posts(integer) to authenticated;
+
+-- Internal helpers remain non-callable through REST.
+revoke all on function public._identity_create_shareholder_motion(uuid,uuid,text,uuid,text,text,text,text,jsonb,text,integer,boolean) from public;
+revoke all on function public._identity_create_shareholder_motion(uuid,uuid,text,uuid,text,text,text,text,jsonb,text,integer,boolean) from anon;
+revoke all on function public._identity_create_shareholder_motion(uuid,uuid,text,uuid,text,text,text,text,jsonb,text,integer,boolean) from authenticated;
+
+revoke all on function public._identity_apply_template_change_motion(uuid) from public;
+revoke all on function public._identity_apply_template_change_motion(uuid) from anon;
+revoke all on function public._identity_apply_template_change_motion(uuid) from authenticated;
+
+revoke all on function public._identity_can_use_advanced_mode(uuid,uuid) from public;
+revoke all on function public._identity_can_use_advanced_mode(uuid,uuid) from anon;
+revoke all on function public._identity_can_use_advanced_mode(uuid,uuid) from authenticated;
+
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from public;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from anon;
+revoke all on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) from authenticated;
+grant execute on function public.propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean) to authenticated;
+
+revoke all on function public.propose_enterprise_share_change(uuid,numeric,text,integer,boolean) from public;
+revoke all on function public.propose_enterprise_share_change(uuid,numeric,text,integer,boolean) from anon;
+revoke all on function public.propose_enterprise_share_change(uuid,numeric,text,integer,boolean) from authenticated;
+grant execute on function public.propose_enterprise_share_change(uuid,numeric,text,integer,boolean) to authenticated;
+
+revoke all on function public.propose_template_change(uuid,text,jsonb,text,integer,boolean) from public;
+revoke all on function public.propose_template_change(uuid,text,jsonb,text,integer,boolean) from anon;
+revoke all on function public.propose_template_change(uuid,text,jsonb,text,integer,boolean) from authenticated;
+grant execute on function public.propose_template_change(uuid,text,jsonb,text,integer,boolean) to authenticated;
+
+-- Direct share mutation is bootstrap/internal only. Clients must use a
+-- major shareholder motion and finalization applies it transactionally.
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from public;
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from anon;
+revoke all on function public.set_enterprise_shareholder(uuid,numeric) from authenticated;

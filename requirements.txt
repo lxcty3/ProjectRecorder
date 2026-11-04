@@ -9,3 +9,6 @@ openpyxl>=3.1
 
 # SQL contract tests
 pglast>=8.7
+
+# Optional PostgreSQL integration-test driver (opt-in tests only)
+psycopg2-binary>=2.9

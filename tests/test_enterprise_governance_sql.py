@@ -554,7 +554,6 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             "propose_enterprise_role(uuid,text,text,text,text,text,integer,boolean)",
             "cast_enterprise_role_vote(uuid,text)",
             "close_enterprise_role_vote(uuid)",
-            "set_enterprise_shareholder(uuid,numeric)",
         ):
             for role in ("public", "anon", "authenticated"):
                 self.assertIn(
@@ -569,6 +568,7 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             "_identity_finalize_motion(uuid)",
             "_identity_is_board_director(uuid,uuid)",
             "_identity_board_director_count(uuid)",
+            "set_enterprise_shareholder(uuid,numeric)",
         ):
             for role in ("public", "anon", "authenticated"):
                 self.assertIn(
