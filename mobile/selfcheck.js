@@ -28,7 +28,8 @@ const HERE = __dirname;
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "identity.js", "today.js",
-               "decision.js", "account.js", "community.js", "app.js"];
+               "decision.js", "operations.js", "account.js", "community.js",
+               "app.js"];
 
 let failed = 0;
 function fail(label, detail) {
@@ -166,7 +167,7 @@ function matchAll(text, pattern, group) {
      改成 vm.Script 预编译后，每个用例只付"执行"的代价。
 */
 const COMPILED = ["store.js", "calc.js", "assist.js", "charts.js", "merit.js",
-                  "sync.js", "notify.js"]
+                  "sync.js", "notify.js", "operations.js"]
   .map(name => ({
   name,
   script: new vm.Script(fs.readFileSync(path.join(HERE, name), "utf8"),
@@ -284,6 +285,39 @@ test("记一条工时", () => {
   if (run("DB.worklogs[0].step_id") !== run("window.__s.id")) {
     throw new Error("步骤没关联上");
   }
+});
+
+test("工时经营标签有兼容默认值并可在修改时更新", () => {
+  fresh();
+  run(`window.__e = addEmployee({name: "王强"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 8, content: "默认标签"});`);
+  if (run("DB.worklogs[0].billable") !== true) throw new Error("默认可计费丢失");
+  if (run("DB.worklogs[0].work_kind") !== "project") throw new Error("默认项目类型丢失");
+  if (run("DB.worklogs[0].overtime || DB.worklogs[0].rework")) {
+    throw new Error("加班/返工默认应为否");
+  }
+  run(`updateWorklog(window.__w.id, {billable: false, overtime: true,
+    work_kind: "presales", rework: true, waiting: true, travel: true});`);
+  if (run("DB.worklogs[0].work_kind") !== "presales") throw new Error("类型没更新");
+  if (run("DB.worklogs[0].billable") !== false) throw new Error("可计费没更新");
+  if (run("DB.worklogs[0].travel") !== true) throw new Error("出差没更新");
+});
+
+test("工时经营标签排队后只保留一条并可撤销", () => {
+  fresh();
+  run(`DB.profile = {id: "profile-uuid"};
+    queueWorklogDimensions("11111111-1111-4111-8111-111111111111",
+      {billable: true, work_kind: "project"});
+    queueWorklogDimensions("11111111-1111-4111-8111-111111111111",
+      {billable: false, work_kind: "internal", overtime: true});`);
+  if (run("DB.dimensionQueue.length") !== 1) throw new Error("同一工时重复排队");
+  if (run("DB.dimensionQueue[0].data.work_kind") !== "internal") {
+    throw new Error("后一次标签没覆盖前一次");
+  }
+  if (run("pendingCount()") !== 1) throw new Error("待上传数量没算标签");
+  run('removeQueuedWorklogDimensions("11111111-1111-4111-8111-111111111111");');
+  if (run("DB.dimensionQueue.length") !== 0) throw new Error("撤销后标签仍在队列");
 });
 
 test("工时为 0 要报错", () => {
@@ -4883,6 +4917,61 @@ test("决策中心：手机管理审批页完整接线", () => {
   ]) {
     if (decision.indexOf(text) === -1) {
       throw new Error(`decision.js 缺少 ${text}`);
+    }
+  }
+});
+test("经营摘要：管理页、能力缺口和个人绩效依据完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-operations", "operations-projects", "operations-capacity",
+    "operations-performance", "operations-worklog", "btn-operations-refresh",
+    "nav-operations", "btn-my-performance", "my-performance",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="operations"') === -1) {
+    throw new Error("高级导航缺少经营摘要入口");
+  }
+  if (html.indexOf('src="operations.js"') === -1) {
+    throw new Error("index.html 没有加载 operations.js");
+  }
+
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (!/const PAGES = \[[\s\S]*?"operations"/.test(app)) {
+    throw new Error("PAGES 没有登记 operations");
+  }
+  for (const text of [
+    'target === "operations"', "renderOperations()", "loadOperations(true)",
+    "w-billable", "w-overtime", "w-kind", "w-rework", "w-waiting",
+    "w-travel", "syncWorklogDimensions",
+  ]) {
+    if (app.indexOf(text) === -1) throw new Error(`app.js 缺少 ${text}`);
+  }
+
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  for (const text of ["operations", "nav-operations", "loadOperations"]) {
+    if (account.indexOf(text) === -1) {
+      throw new Error(`account.js 缺少 ${text}`);
+    }
+  }
+
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"operations\.js"/.test(build)) {
+    throw new Error("build-www.js 没有打包 operations.js");
+  }
+
+  const operations = fs.readFileSync(
+    path.join(HERE, "operations.js"), "utf8");
+  for (const text of [
+    "renderOperations", "loadOperations", "bindOperations",
+    "get_operations_dashboard", "capacity_gaps", "projected_margin",
+    "collection_gap", "worklog_summary", "performance",
+    "renderMyPerformance", "loadMyPerformanceEvidence",
+    "get_my_performance_evidence", "submit_performance_statement",
+    "upsert_worklog_dimensions", "queueWorklogDimensions",
+  ]) {
+    if (operations.indexOf(text) === -1) {
+      throw new Error(`operations.js 缺少 ${text}`);
     }
   }
 });

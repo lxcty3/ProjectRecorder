@@ -35,6 +35,7 @@ const FILES = [
   "identity.js",
   "today.js",
   "decision.js",
+  "operations.js",
   "account.js",
   "community.js",
   "app.js",

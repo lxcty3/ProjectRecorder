@@ -1441,6 +1441,38 @@ async function verifyNotifyTable() {
   }
 }
 
+async function pushDimensionQueue() {
+  if (!cloudClient || !DB.profile) return { pushed: 0, failed: [] };
+  if (!Array.isArray(DB.dimensionQueue)) DB.dimensionQueue = [];
+  if (!DB.dimensionQueue.length) return { pushed: 0, failed: [] };
+  const batch = DB.dimensionQueue.slice(0, QUEUE_BATCH);
+  const done = [];
+  const failed = [];
+  for (let i = 0; i < batch.length; i += 1) {
+    const item = batch[i];
+    try {
+      const { error } = await cloudClient.rpc("upsert_worklog_dimensions", {
+        p_worklog: String(item.worklog_id),
+        p_data: item.data || {},
+      });
+      if (error) throw new Error(error.message || String(error));
+      done.push(item.worklog_id);
+      delete item.lastError;
+      delete item.lastErrorAt;
+    } catch (error) {
+      item.lastError = String(error.message || error);
+      item.lastErrorAt = nowISO();
+      failed.push({
+        table: "worklog_dimensions", op: "rpc",
+        message: item.lastError,
+      });
+    }
+  }
+  if (done.length) clearDimensionQueue(done);
+  _save();
+  return { pushed: done.length, failed: failed };
+}
+
 async function syncNow(reason) {
   /* 已经有同步在跑：等它，而不是返回中间状态 */
   if (syncInFlight) {
@@ -1470,6 +1502,7 @@ async function syncNow(reason) {
     try {
       syncBusy = 2;
       const pushed = await pushQueue();
+      const dimensionsPushed = await pushDimensionQueue();
 
       /* **表建好了就把"没装好"的提示撤掉。**
 
@@ -1512,13 +1545,16 @@ async function syncNow(reason) {
          之前有个 bug 就是这样漏掉的：tasks 表缺一列，
          upsert 一直被拒，而界面显示"已同步"——
          用户以为报上去了，老板那边什么都没有。 */
-      if (pushed && pushed.failed && pushed.failed.length) {
+      const uploadFailures = (pushed && pushed.failed ? pushed.failed : [])
+        .concat(dimensionsPushed && dimensionsPushed.failed
+          ? dimensionsPushed.failed : []);
+      if (uploadFailures.length) {
         DB.lastSync = {
           at: nowISO(),
           ok: false,
           pending: pendingCount(),
-          message: `${pushed.failed.length} 条没传上去：`
-            + pushed.failed[0].message,
+          message: `${uploadFailures.length} 条没传上去：`
+            + uploadFailures[0].message,
         };
       } else {
         DB.lastSync = {
@@ -1854,10 +1890,19 @@ function completeTask(task, hours) {
     content: task.title,
     project_name: task.project_name || "",
     source: "task",
+    billable: true,
+    overtime: false,
+    work_kind: "project",
+    rework: false,
+    waiting: false,
+    travel: false,
   };
 
   queueChange("task_logs", "insert", log.id, log);
   queueChange("worklogs", "insert", worklog.id, worklog);
+  if (typeof queueWorklogDimensions === "function") {
+    queueWorklogDimensions(worklog.id, worklog);
+  }
 
   /* 记一条"完成"事件。
 
@@ -1905,6 +1950,9 @@ function uncompleteTask(taskId) {
   queueChange("task_logs", "delete", log.id, {});
   if (worklog && worklog.id) {
     queueChange("worklogs", "delete", worklog.id, {});
+    if (typeof removeQueuedWorklogDimensions === "function") {
+      removeQueuedWorklogDimensions(worklog.id);
+    }
   }
 
   /* 记一条"取消完成"事件。

@@ -156,17 +156,18 @@ function setBanner(element, text, kind) {
 /* 底部导航要占位置，所以这些页面的 body 要留出底部空间。
    登录页和派任务页没有导航，不用留。 */
 function makeNavScrollable() {
-  ["page-today", "page-decisions", "page-dash", "page-team", "page-assist",
-   "page-identity", "page-tasks", "page-community", "page-me"].forEach(id => {
+  ["page-today", "page-decisions", "page-operations", "page-dash", "page-team",
+   "page-assist", "page-identity", "page-tasks", "page-community",
+   "page-me"].forEach(id => {
     $(id).classList.add("has-nav");
   });
 }
 
 /*: 所有页面。加新页面必须登记在这里——
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
-const PAGES = ["login", "today", "decisions", "dash", "project", "tasks",
-               "team", "assist", "identity", "community", "assign", "staff",
-               "me"];
+const PAGES = ["login", "today", "decisions", "operations", "dash",
+               "project", "tasks", "team", "assist", "identity",
+               "community", "assign", "staff", "me"];
 
 function showPage(name) {
   const target = PAGES.indexOf(name) === -1 ? "dash" : name;
@@ -196,6 +197,10 @@ function showPage(name) {
   if (target === "decisions") {
     renderDecisionCenter();
     loadDecisionCenter(true);
+  }
+  if (target === "operations") {
+    renderOperations();
+    loadOperations(true);
   }
   if (target === "dash") renderDash();
   if (target === "team") renderTeam();
@@ -322,6 +327,7 @@ function renderMe() {
   }
 
   $("me-boss-extras").classList.toggle("hidden", !isBoss);
+  if (typeof renderMyPerformance === "function") renderMyPerformance();
 
   /* 通知相关的提示。
      两种情况要说清楚，不然用户只会觉得"怎么没通知"：
@@ -503,6 +509,22 @@ function bindGlobalEvents() {
   $("btn-identity-refresh").onclick = () => refreshIdentity(true);
   $("btn-decisions-refresh").onclick = () => loadDecisionCenter(true);
   if (typeof bindDecisionCenter === "function") bindDecisionCenter();
+  if ($("btn-operations-refresh")) {
+    $("btn-operations-refresh").onclick = () => loadOperations(true);
+  }
+  if ($("btn-my-performance")) {
+    $("btn-my-performance").onclick = async () => {
+      const box = $("my-performance");
+      if (!box) return;
+      const opening = box.classList.contains("hidden");
+      box.classList.toggle("hidden", !opening);
+      if (opening) {
+        box.innerHTML = '<div class="meta">正在读取绩效依据…</div>';
+        await loadMyPerformanceEvidence(true);
+      }
+    };
+  }
+  if (typeof bindOperations === "function") bindOperations();
   $("btn-community-send").onclick = () => submitCommunityPost();
 
   /* **按下任何按钮都轻震一下。**
@@ -2085,6 +2107,26 @@ function editWorklog(id) {
     </div>
     <label for="w-content">做了什么</label>
     <textarea id="w-content">${escapeHtml(draft.content || "")}</textarea>
+    <div class="section-head" style="margin-top:14px"><span>经营标签</span>
+      <span class="meta">默认已选好，按实际情况调整</span></div>
+    <div class="check-grid">
+      <label class="check"><input type="checkbox" id="w-billable"
+        ${draft.billable === false ? "" : "checked"}>可计费</label>
+      <label class="check"><input type="checkbox" id="w-overtime"
+        ${draft.overtime ? "checked" : ""}>加班</label>
+      <label class="check"><input type="checkbox" id="w-rework"
+        ${draft.rework ? "checked" : ""}>返工</label>
+      <label class="check"><input type="checkbox" id="w-waiting"
+        ${draft.waiting ? "checked" : ""}>等待</label>
+      <label class="check"><input type="checkbox" id="w-travel"
+        ${draft.travel ? "checked" : ""}>出差</label>
+    </div>
+    <label for="w-kind">工作类型</label>
+    <select id="w-kind">
+      <option value="project"${draft.work_kind === "project" || !draft.work_kind ? " selected" : ""}>项目</option>
+      <option value="presales"${draft.work_kind === "presales" ? " selected" : ""}>售前</option>
+      <option value="internal"${draft.work_kind === "internal" ? " selected" : ""}>内部</option>
+    </select>
     ${log && log.source === "timer"
       ? '<div class="hint">这条是计时器记的。改小时数等于推翻了计时结论，'
         + "改之前先想一下是不是该重新解释。</div>" : ""}
@@ -2118,14 +2160,22 @@ function saveWorklog(id) {
     work_date: $("w-date").value,
     hours: $("w-hours").value,
     content: $("w-content").value,
+    billable: $("w-billable").checked,
+    overtime: $("w-overtime").checked,
+    work_kind: $("w-kind").value,
+    rework: $("w-rework").checked,
+    waiting: $("w-waiting").checked,
+    travel: $("w-travel").checked,
   };
   try {
     if (id) {
-      updateWorklog(id, data);
+      const saved = updateWorklog(id, data);
+      syncWorklogDimensions(saved);
       closeSheet(); renderTeam(); toast("已保存");
       return;
     }
-    addWorklog(data, { allowDuplicate: false });
+    const saved = addWorklog(data, { allowDuplicate: false });
+    syncWorklogDimensions(saved);
     closeSheet(); renderTeam(); toast("已记录");
   } catch (error) {
     /* 重复的提示带前缀，单独处理——要问用户是否继续 */
@@ -2134,7 +2184,8 @@ function saveWorklog(id) {
       if (confirm(`已经有一样的记录了：\n${detail}\n\n`
           + "如果确实是两段分开的工作，就继续记。")) {
         try {
-          addWorklog(data, { allowDuplicate: true });
+          const saved = addWorklog(data, { allowDuplicate: true });
+          syncWorklogDimensions(saved);
           closeSheet(); renderTeam(); toast("已记录");
         } catch (second) { toast(second.message); }
       }

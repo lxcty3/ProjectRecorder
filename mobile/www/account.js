@@ -386,6 +386,7 @@ function finishLogin() {
   if (typeof refreshIdentity === "function") refreshIdentity(true);
   if (typeof refreshPointState === "function") refreshPointState(true);
   if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
+  if (typeof loadOperations === "function") loadOperations(false);
   showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
 }
@@ -396,6 +397,7 @@ function resumeSession() {
   startSyncLoop();
   if (typeof refreshPointState === "function") refreshPointState(false);
   if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
+  if (typeof loadOperations === "function") loadOperations(false);
   refreshNotifyPermission().then(() => renderMe());
   if (typeof ensureGetuiPushConsent === "function") {
     ensureGetuiPushConsent();
@@ -447,10 +449,16 @@ function applyRoleUI() {
     toggleMe.textContent = advanced ? "回到简单模式" : "切换到高级模式";
   }
 
-  const advancedPages = ["decisions", "dash", "project", "team", "assist",
-                         "identity", "assign", "staff"];
+  const advancedPages = ["decisions", "operations", "dash", "project",
+                         "team", "assist", "identity", "assign", "staff"];
   if (profile && !advanced && advancedPages.indexOf(currentPageName()) !== -1) {
     showPage("today");
+  }
+  if ($("nav-operations")) {
+    $("nav-operations").classList.toggle("hidden", !management);
+  }
+  if (profile && currentPageName() === "operations" && !management) {
+    showPage(advanced ? "dash" : "today");
   }
 
   /* 「我要请假」只给普通员工看。 */

@@ -141,6 +141,9 @@ function emptyDatabase() {
     /* 待上传的变更队列。没网时攒着，联网后按顺序补传。 */
     syncQueue: [],
 
+    /* 工时经营标签走独立 RPC；等对应 worklogs 行上传成功后再提交。 */
+    dimensionQueue: [],
+
     /* 各表最后一次成功拉取的时间，用来做增量拉取。
        没有它就只能每次全量拉，数据一多就慢。 */
     syncCursor: {},
@@ -161,6 +164,12 @@ function emptyDatabase() {
     /* 经营决策中心最近一次服务端快照。没有数据时保持空数组，
        绝不在客户端伪造决策或审批。 */
     decisionCenter: { decisions: [], approvals: [], members: [], at: 0 },
+
+    /* 管理经营摘要与员工自己的绩效依据。敏感数据只保存在本机缓存，
+       仍由服务端 RPC 决定是否能读取。 */
+    operations: { projects: [], capacity_gaps: [], performance: [],
+                  worklog_summary: {}, at: 0 },
+    myPerformance: { items: [], at: 0 },
 
     /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
        才能切到 advanced。服务端仍会独立校验。 */
@@ -284,6 +293,14 @@ function migrate(data) {
     { decisions: [], approvals: [], members: [], at: 0 },
     merged.decisionCenter || {}
   );
+  merged.operations = Object.assign(
+    { projects: [], capacity_gaps: [], performance: [],
+      worklog_summary: {}, at: 0 },
+    merged.operations || {}
+  );
+  merged.myPerformance = Object.assign(
+    { items: [], at: 0 }, merged.myPerformance || {}
+  );
   ["decisions", "approvals", "members"].forEach(key => {
     if (!Array.isArray(merged.decisionCenter[key])) {
       merged.decisionCenter[key] = [];
@@ -293,7 +310,7 @@ function migrate(data) {
   ["projects", "steps", "employees", "worklogs", "assignments",
    "assessments", "metrics", "sessions", "habits", "habitLogs",
    "tasks", "taskLogs", "remoteWorklogs", "staffAccounts", "syncQueue",
-   "notifications", "meritLedger",
+   "dimensionQueue", "notifications", "meritLedger",
    "workSessions", "rewards", "redemptions", "leaves"]
     .forEach(key => {
       if (!Array.isArray(merged[key])) merged[key] = [];
@@ -592,6 +609,13 @@ function addWorklog(data, options) {
     content: String(data.content || ""),
     // timer / manual：电脑端靠这个区分「真实计时」和「手工补录」
     source: data.source === "timer" ? "timer" : "manual",
+    billable: data.billable !== false,
+    overtime: !!data.overtime,
+    work_kind: ["project", "presales", "internal"].indexOf(data.work_kind) !== -1
+      ? data.work_kind : "project",
+    rework: !!data.rework,
+    waiting: !!data.waiting,
+    travel: !!data.travel,
     created_at: nowISO(),
   };
   DB.worklogs.push(log);
@@ -635,6 +659,15 @@ function updateWorklog(id, data) {
     log.employee_id = employee.id;
   }
   if (data.content !== undefined) log.content = String(data.content);
+  if (data.billable !== undefined) log.billable = data.billable !== false;
+  if (data.overtime !== undefined) log.overtime = !!data.overtime;
+  if (data.work_kind !== undefined) {
+    log.work_kind = ["project", "presales", "internal"].indexOf(data.work_kind) !== -1
+      ? data.work_kind : "project";
+  }
+  if (data.rework !== undefined) log.rework = !!data.rework;
+  if (data.waiting !== undefined) log.waiting = !!data.waiting;
+  if (data.travel !== undefined) log.travel = !!data.travel;
   log.updated_at = nowISO();
   _save();
   return log;
@@ -860,7 +893,8 @@ function queueChange(table, op, key, payload) {
 
 /* 队列里还有多少条待上传 */
 function pendingCount() {
-  return Array.isArray(DB.syncQueue) ? DB.syncQueue.length : 0;
+  return (Array.isArray(DB.syncQueue) ? DB.syncQueue.length : 0)
+    + (Array.isArray(DB.dimensionQueue) ? DB.dimensionQueue.length : 0);
 }
 
 /* 上传成功后清掉那些项。只删成功的，失败的留着下次重试。 */
@@ -868,6 +902,14 @@ function clearQueueItems(ids) {
   if (!Array.isArray(DB.syncQueue)) return;
   const remove = ids.map(Number);
   DB.syncQueue = DB.syncQueue.filter(item => remove.indexOf(item.id) === -1);
+  _save();
+}
+
+function clearDimensionQueue(ids) {
+  if (!Array.isArray(DB.dimensionQueue)) return;
+  const remove = ids.map(String);
+  DB.dimensionQueue = DB.dimensionQueue.filter(
+    item => remove.indexOf(String(item.worklog_id)) === -1);
   _save();
 }
 
@@ -882,6 +924,10 @@ function clearQueueItems(ids) {
    新账号的事件时间戳比旧 cursor 早的会被当成"已经看过"而漏掉通知。 */
 function resetSyncState() {
   DB.syncQueue = [];
+  DB.dimensionQueue = [];
+  DB.operations = { projects: [], capacity_gaps: [], performance: [],
+                    worklog_summary: {}, at: 0 };
+  DB.myPerformance = { items: [], at: 0 };
   DB.syncCursor = {};
   DB.notifyCursor = {};
   DB.lastSync = { at: "", ok: true, pending: 0, message: "" };
