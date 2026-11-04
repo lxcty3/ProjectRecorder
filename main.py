@@ -355,6 +355,7 @@ class MainWindow(QMainWindow):
         act_new.setShortcut("Ctrl+N")
         act_new.triggered.connect(self.new_project)
         file_menu.addAction(act_new)
+        self.act_new = act_new
         act_knowledge = QAction("记录一条知识", self)
         act_knowledge.setShortcut("Ctrl+K")
         act_knowledge.triggered.connect(self.new_knowledge)
@@ -364,6 +365,7 @@ class MainWindow(QMainWindow):
         act_export.setShortcut("Ctrl+E")
         act_export.triggered.connect(self.export_data)
         file_menu.addAction(act_export)
+        self.act_export = act_export
         file_menu.addSeparator()
         act_quit = QAction("退出", self)
         act_quit.setShortcut(QKeySequence.StandardKey.Quit)
@@ -379,12 +381,14 @@ class MainWindow(QMainWindow):
         act_import.setShortcut("Ctrl+I")
         act_import.triggered.connect(self.import_submissions)
         self.menu_submit.addAction(act_import)
+        self.act_import = act_import
         act_snapshot = QAction("导出手机快照…", self)
         act_snapshot.setToolTip(
             "导出一份完整数据，发到手机上用「手机版」打开查看"
         )
         act_snapshot.triggered.connect(self.export_mobile_snapshot)
         self.menu_submit.addAction(act_snapshot)
+        self.act_snapshot = act_snapshot
         self.menu_submit.addSeparator()
         act_server = QAction("开启局域网服务", self)
         act_server.setCheckable(True)
@@ -394,13 +398,26 @@ class MainWindow(QMainWindow):
         act_show_url = QAction("显示服务地址…", self)
         act_show_url.triggered.connect(self.show_server_url)
         self.menu_submit.addAction(act_show_url)
+        self.act_show_url = act_show_url
         act_port = QAction("设置服务端口…", self)
         act_port.triggered.connect(self.change_server_port)
         self.menu_submit.addAction(act_port)
+        self.act_port = act_port
         self.menu_submit.addSeparator()
         act_sessions = QAction("查看计时明细…", self)
         act_sessions.triggered.connect(self.show_sessions)
         self.menu_submit.addAction(act_sessions)
+        self.act_sessions = act_sessions
+        self.management_actions = [
+            (self.act_new, "projects.manage"),
+            (self.act_export, "data.export_all"),
+            (self.act_import, "worklogs.approve"),
+            (self.act_snapshot, "data.export_all"),
+            (self.act_server, "company.manage"),
+            (self.act_show_url, "company.manage"),
+            (self.act_port, "company.manage"),
+            (self.act_sessions, "worklogs.approve"),
+        ]
 
         account_menu = bar.addMenu("账号(&A)")
         self.act_account_login = QAction("登录手机版账号…", self)
@@ -482,6 +499,8 @@ class MainWindow(QMainWindow):
         new_button.setObjectName("PrimaryButton")
         new_button.clicked.connect(self.new_project)
         top.addWidget(new_button)
+        self.new_project_button = new_button
+        self.management_actions.append((new_button, "projects.manage"))
         outer.addWidget(toolbar)
 
         # ---- 主选项卡 ----
@@ -545,16 +564,35 @@ class MainWindow(QMainWindow):
         return (self.identity_state or {}).get("me") or {}
 
     def _has_identity_permission(self, *permissions):
-        """Use fine-grained enterprise capabilities when they are loaded."""
+        """Use fine-grained enterprise capabilities once identity state loads."""
         session = self.account_session
         if session is None:
-            return True
+            return False
         me = self._identity_me()
         granted = me.get("permissions")
-        if isinstance(granted, list) and granted:
+        if isinstance(granted, list):
             return any(permission in granted for permission in permissions)
-        # Before the identity RPC finishes, preserve the old login-level behavior.
+        # Before the identity RPC finishes, preserve the legacy owner experience.
         return session.role == "boss"
+
+    def _management_action_allowed(self, permission):
+        return bool(
+            self._effective_ui_mode() == "advanced"
+            and self._has_identity_permission(permission)
+        )
+
+    def _ensure_management_action(self, permission):
+        if self._management_action_allowed(permission):
+            return True
+        self.flash(
+            "当前为简单模式或没有该管理权限，操作已阻止。",
+            4200,
+        )
+        return False
+
+    def _refresh_management_actions(self):
+        for action, permission in getattr(self, "management_actions", []):
+            action.setEnabled(self._management_action_allowed(permission))
 
     def _management_view(self):
         return self._has_identity_permission(
@@ -660,6 +698,7 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self, "act_account_logout"):
             self.act_account_logout.setEnabled(logged)
+        self._refresh_management_actions()
 
     def _toggle_ui_mode(self):
         if self.account_session is None:
@@ -800,6 +839,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def new_project(self):
+        if not self._ensure_management_action("projects.manage"):
+            return
         dialog = ProjectDialog(self, None)
         if dialog.exec():
             self.refresh_all()
@@ -822,6 +863,8 @@ class MainWindow(QMainWindow):
             self.identity_page.on_activated()
 
     def export_data(self):
+        if not self._ensure_management_action("data.export_all"):
+            return
         import export
         path, _ = QFileDialog.getSaveFileName(
             self, "导出全部数据", "项目数据.xlsx", "Excel (*.xlsx);;CSV (*.csv)"
@@ -879,6 +922,8 @@ class MainWindow(QMainWindow):
 
     def import_submissions(self):
         """老板导入员工发来的文件，可以一次选多个。"""
+        if not self._ensure_management_action("worklogs.approve"):
+            return
         paths, _ = QFileDialog.getOpenFileNames(
             self, "选择员工发来的工时文件", os.path.expanduser("~"),
             "工时文件 (*.json);;所有文件 (*)",
@@ -895,6 +940,8 @@ class MainWindow(QMainWindow):
         导出的是**只读镜像**——手机上做的改动通过「员工工时文件」回传，
         走的是已有的导入去重流程，不会覆盖电脑上的数据。
         """
+        if not self._ensure_management_action("data.export_all"):
+            return
         import submit
 
         if not self.store.projects():
@@ -933,6 +980,8 @@ class MainWindow(QMainWindow):
 
     def show_sessions(self):
         """看计时明细：时长和起止时间对不对得上，一眼能查。"""
+        if not self._ensure_management_action("worklogs.approve"):
+            return
         employee_id = self.timer_bar.f_employee.currentData()
         if employee_id is None:
             QMessageBox.information(self, "还没有人", "先在「员工与工时」里加一个员工。")
@@ -946,6 +995,8 @@ class MainWindow(QMainWindow):
     # ---------- 局域网服务 ----------
     def toggle_server(self):
         """开 / 关提交服务。菜单项是 checkable 的，状态跟着实际结果走。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         if self.server.running:
             self.server.stop()
             self.act_server.setChecked(False)
@@ -965,6 +1016,8 @@ class MainWindow(QMainWindow):
 
     def show_server_url(self):
         """把网址显示出来，方便复制发给员工。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         if not self.server.running:
             QMessageBox.information(
                 self, "提交服务未开启",
@@ -990,6 +1043,8 @@ class MainWindow(QMainWindow):
 
     def change_server_port(self):
         """换端口。原端口被占用时用得上。"""
+        if not self._ensure_management_action("company.manage"):
+            return
         was_running = self.server.running
         if was_running:
             self.server.stop()

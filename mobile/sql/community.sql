@@ -28,13 +28,41 @@ create index if not exists idx_community_posts_author
 
 alter table public.community_posts enable row level security;
 
--- All signed-in members share one planet.
+-- Direct reads are safe at the table boundary. Paid posts are visible only
+-- to their author, required posts, and free posts here. The later governance
+-- migration replaces this policy with an unlock-aware SECURITY DEFINER check.
+create or replace function public._community_post_readable(
+  p_post uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path = public, auth, pg_temp
+as $community_readable$
+  select p_uid is not null
+    and not (p_uid is distinct from auth.uid())
+    and exists(
+      select 1
+        from public.community_posts p
+       where p.id = p_post
+         and (
+           p.is_required
+           or p.unlock_cost = 0
+           or p.author_id = p_uid
+         )
+    );
+$community_readable$;
+
+revoke all on function public._community_post_readable(uuid, uuid) from public;
+revoke all on function public._community_post_readable(uuid, uuid) from anon;
+revoke all on function public._community_post_readable(uuid, uuid) from authenticated;
+grant execute on function public._community_post_readable(uuid, uuid)
+  to authenticated;
+
 drop policy if exists "community posts readable by members"
   on public.community_posts;
 create policy "community posts readable by members"
   on public.community_posts for select to authenticated
-  using (true);
-
+  using (public._community_post_readable(id,auth.uid()));
 -- Direct writes are not allowed. Use the RPC below so author
 -- fields come from the account profile rather than the client.
 revoke insert, update, delete on public.community_posts from anon, authenticated;

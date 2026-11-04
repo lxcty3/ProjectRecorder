@@ -35,7 +35,7 @@ drop policy if exists "community posts readable by members"
   on public.community_posts;
 create policy "community posts readable by members"
   on public.community_posts for select to authenticated
-  using (true);
+  using (author_id = auth.uid() or is_required or unlock_cost = 0);
 
 -- Direct writes are not allowed. Use the RPC below so author
 -- fields come from the account profile rather than the client.

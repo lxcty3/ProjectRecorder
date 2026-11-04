@@ -385,7 +385,8 @@ class CommunityClient:
         )
         return data if isinstance(data, list) else []
 
-    def clone_role_template(self, session, source_id, key, name):
+    def clone_role_template(self, session, source_id, key, name,
+                            reason="", days=5, conflict_disclosed=False):
         return _request(
             "POST", "/rest/v1/rpc/clone_role_template",
             token=session.access_token,
@@ -393,10 +394,14 @@ class CommunityClient:
                 "p_source_template": str(source_id),
                 "p_key": str(key or ""),
                 "p_name": str(name or ""),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
 
-    def update_role_template(self, session, template_id, name, permissions):
+    def update_role_template(self, session, template_id, name, permissions,
+                             reason="", days=5, conflict_disclosed=False):
         return _request(
             "POST", "/rest/v1/rpc/update_role_template",
             token=session.access_token,
@@ -404,9 +409,11 @@ class CommunityClient:
                 "p_template": str(template_id),
                 "p_name": str(name or ""),
                 "p_permissions": list(permissions or []),
+                "p_reason": str(reason or ""),
+                "p_days": int(days or 5),
+                "p_conflict_disclosed": bool(conflict_disclosed),
             },
         )
-
     def set_role_assignment(self, session, profile_id, template_id,
                             ends_at=None, reason=""):
         return _request(

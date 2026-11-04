@@ -608,10 +608,15 @@ begin
 end;
 $fn$;
 -- ------------------------------------------------------------ template writes
+drop function if exists public.clone_role_template(uuid,text,text);
+
 create or replace function public.clone_role_template(
-  p_source uuid,
+  p_source_template uuid,
   p_name text,
-  p_key text
+  p_key text,
+  p_reason text default '',
+  p_days integer default 5,
+  p_conflict_disclosed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -628,6 +633,7 @@ declare
   v_name text:=btrim(coalesce(p_name,''));
   v_key text:=btrim(coalesce(p_key,''));
   v_permissions jsonb:='[]'::jsonb;
+  v_reason text:=btrim(coalesce(p_reason,''));
   v_motion uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
@@ -641,10 +647,11 @@ begin
 
   if v_name='' then raise exception 'template name required'; end if;
   if v_key='' then raise exception 'template key required'; end if;
+  if v_reason='' then raise exception 'template change reason is required'; end if;
 
   select t.* into v_source
     from public.enterprise_role_templates t
-   where t.id=p_source
+   where t.id=p_source_template
      and t.enterprise_id=v_eid
      and t.archived_at is null
    for update;
@@ -682,14 +689,16 @@ begin
   ) then
     v_motion:=public._identity_create_shareholder_motion(
       v_eid,v_uid,'template_change',null,null,'','',
-      'Clone role template '||v_key,
+      v_reason,
       jsonb_build_object(
-        'source_template',p_source,
+        'operation','clone',
+        'source_template_id',p_source_template,
         'template_key',v_key,
         'name',v_name,
-        'permissions',v_permissions
+        'permissions',v_permissions,
+        'reason',v_reason
       ),
-      'major',5,false
+      'major',coalesce(p_days,5),coalesce(p_conflict_disclosed,false)
     );
     return jsonb_build_object(
       'ok',true,'motion_required',true,'motion_id',v_motion,
@@ -744,12 +753,14 @@ begin
   ) values(
     v_eid,v_uid,'role_template.cloned',null,
     jsonb_build_object(
-      'source_template_id',p_source,
+      'source_template_id',p_source_template,
       'source_version_id',v_source_version_id,
       'template_id',v_template_id,
       'key',v_key,
       'name',v_name,
       'version',1,
+      'reason',v_reason,
+      'conflict_disclosed',coalesce(p_conflict_disclosed,false),
       'permission_count',jsonb_array_length(v_permissions)
     )
   );
@@ -765,12 +776,16 @@ begin
 end;
 $fn$;
 
+drop function if exists public.update_role_template(uuid,text,jsonb);
+
 create or replace function public.update_role_template(
   p_template uuid,
   p_name text,
-  p_permissions jsonb
-)
-returns jsonb
+  p_permissions jsonb,
+  p_reason text default '',
+  p_days integer default 5,
+  p_conflict_disclosed boolean default false
+) returns jsonb
 language plpgsql
 security definer
 set search_path=public,auth,pg_temp
@@ -792,9 +807,11 @@ declare
   v_permission_high_risk boolean;
   v_permissions jsonb:='[]'::jsonb;
   v_high_risk boolean:=false;
+  v_reason text:=btrim(coalesce(p_reason,''));
   v_motion uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
+  if v_reason='' then raise exception 'template change reason is required'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
   if not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
@@ -958,14 +975,16 @@ begin
   if v_high_risk then
     v_motion:=public._identity_create_shareholder_motion(
       v_eid,v_uid,'template_change',null,null,'','',
-      'Update role template '||v_template.key,
+      v_reason,
       jsonb_build_object(
+        'operation','update',
         'template_id',v_template.id,
         'template_key',v_template.key,
         'name',v_name,
-        'permissions',v_permissions
+        'permissions',v_permissions,
+        'reason',v_reason
       ),
-      'major',5,false
+      'major',coalesce(p_days,5),coalesce(p_conflict_disclosed,false)
     );
     return jsonb_build_object(
       'ok',true,'motion_required',true,'motion_id',v_motion,
@@ -1304,15 +1323,15 @@ revoke all on function public._identity_role_permissions(uuid,uuid) from public;
 revoke all on function public._identity_role_permissions(uuid,uuid) from anon;
 revoke all on function public._identity_role_permissions(uuid,uuid) from authenticated;
 
-revoke all on function public.clone_role_template(uuid,text,text) from public;
-revoke all on function public.clone_role_template(uuid,text,text) from anon;
-revoke all on function public.clone_role_template(uuid,text,text) from authenticated;
-grant execute on function public.clone_role_template(uuid,text,text) to authenticated;
+revoke all on function public.clone_role_template(uuid,text,text,text,integer,boolean) from public;
+revoke all on function public.clone_role_template(uuid,text,text,text,integer,boolean) from anon;
+revoke all on function public.clone_role_template(uuid,text,text,text,integer,boolean) from authenticated;
+grant execute on function public.clone_role_template(uuid,text,text,text,integer,boolean) to authenticated;
 
-revoke all on function public.update_role_template(uuid,text,jsonb) from public;
-revoke all on function public.update_role_template(uuid,text,jsonb) from anon;
-revoke all on function public.update_role_template(uuid,text,jsonb) from authenticated;
-grant execute on function public.update_role_template(uuid,text,jsonb) to authenticated;
+revoke all on function public.update_role_template(uuid,text,jsonb,text,integer,boolean) from public;
+revoke all on function public.update_role_template(uuid,text,jsonb,text,integer,boolean) from anon;
+revoke all on function public.update_role_template(uuid,text,jsonb,text,integer,boolean) from authenticated;
+grant execute on function public.update_role_template(uuid,text,jsonb,text,integer,boolean) to authenticated;
 
 revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from public;
 revoke all on function public.set_member_role_assignment(uuid,uuid,timestamptz,text) from anon;
@@ -1494,6 +1513,10 @@ drop policy if exists "community posts readable by members"
 create policy "community posts readable by members"
   on public.community_posts for select to authenticated
   using (public._identity_can_read_community_post(id,auth.uid()));
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from public;
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from anon;
+revoke all on function public._identity_can_read_community_post(uuid,uuid) from authenticated;
+grant execute on function public._identity_can_read_community_post(uuid,uuid) to authenticated;
 
 -- ------------------------------------------------------------ board helpers
 create or replace function public._identity_is_board_director(
@@ -2401,6 +2424,76 @@ begin
 end;
 $fn$;
 
+create or replace function public._identity_can_read_full_point_ledger(
+  p_eid uuid,
+  p_uid uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select public._identity_is_board_director(p_eid,p_uid)
+    or exists(
+      select 1
+        from public.enterprise_members m
+       where m.enterprise_id=p_eid
+         and m.profile_id=p_uid
+         and m.status='active'
+         and m.role_key='auditor'
+    )
+    or public._identity_role_permissions(p_eid,p_uid) ? 'audit.read';
+$fn$;
+create or replace function public._identity_award_evidence_is_valid(
+  p_eid uuid,
+  p_profile uuid,
+  p_evidence_type text,
+  p_evidence_id uuid
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_owner uuid;
+  v_type text:=lower(trim(coalesce(p_evidence_type,'')));
+begin
+  if p_evidence_id is null then return false; end if;
+  select owner_profile_id into v_owner
+    from public.enterprises where id=p_eid;
+
+  if v_type='acceptance' then
+    return exists(
+      select 1
+        from public.task_logs l
+        join public.tasks t on t.id=l.task_id
+       where l.id=p_evidence_id
+         and l.employee_id=p_profile
+         and t.employee_id=p_profile
+         and t.boss_id=v_owner
+    );
+  elsif v_type='collaboration' then
+    return exists(
+      select 1
+        from public.worklogs w
+       where w.id=p_evidence_id
+         and w.employee_id=p_profile
+         and w.boss_id=v_owner
+    );
+  elsif v_type='knowledge' then
+    return exists(
+      select 1
+        from public.knowledge_items k
+       where k.id=p_evidence_id
+         and k.owner_id=p_profile
+         and (k.boss_id is null or k.boss_id=v_owner)
+    ) or exists(
+      select 1
+        from public.community_posts p
+       where p.id=p_evidence_id
+         and p.author_id=p_profile
+    );
+  end if;
+  return false;
+end;
+$fn$;
 -- ------------------------------------------------------------ chairperson points
 create or replace function public._identity_is_chairperson(
   p_eid uuid,
@@ -2475,6 +2568,11 @@ begin
   end if;
   if v_evidence_type='' or p_evidence_id is null then
     raise exception 'evidence is required for point awards';
+  end if;
+  if not public._identity_award_evidence_is_valid(
+    v_eid,p_profile,v_evidence_type,p_evidence_id
+  ) then
+    raise exception 'evidence record is not allowed';
   end if;
   if v_reason='' then
     raise exception 'reason is required for point awards';
@@ -2570,12 +2668,16 @@ declare
   v_pool public.enterprise_point_pools%rowtype;
   v_balance integer;
   v_ledger jsonb;
+  v_can_read_full_ledger boolean:=false;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
   if not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
   end if;
+  v_can_read_full_ledger:=public._identity_can_read_full_point_ledger(
+    v_eid,v_uid
+  );
 
   v_quarter:=to_char(now() at time zone 'UTC','YYYY')
     ||'-Q'||to_char(now() at time zone 'UTC','Q');
@@ -2596,6 +2698,8 @@ begin
     jsonb_agg(
       jsonb_build_object(
         'id',l.id,
+        'profile_id',l.profile_id,
+        'profile_name',recipient.name,
         'amount',l.amount,
         'entry_type',l.entry_type,
         'evidence_type',l.evidence_type,
@@ -2611,15 +2715,18 @@ begin
     select l.*
       from public.enterprise_point_ledger l
      where l.enterprise_id=v_eid
-       and l.profile_id=v_uid
+       and (v_can_read_full_ledger or l.profile_id=v_uid)
      order by l.created_at desc
      limit 100
   ) l
+  left join public.profiles recipient on recipient.id=l.profile_id
   left join public.profiles a on a.id=l.actor_profile_id;
 
   return jsonb_build_object(
     'ok',true,
     'balance',v_balance,
+    'can_read_full_ledger',v_can_read_full_ledger,
+    'ledger_scope',case when v_can_read_full_ledger then 'enterprise' else 'self' end,
     'pool',case
       when v_pool.id is null then 'null'::jsonb
       else jsonb_build_object(
@@ -2794,6 +2901,12 @@ revoke all on function public.get_point_state() from public;
 revoke all on function public.get_point_state() from anon;
 revoke all on function public.get_point_state() from authenticated;
 grant execute on function public.get_point_state() to authenticated;
+revoke all on function public._identity_can_read_full_point_ledger(uuid,uuid) from public;
+revoke all on function public._identity_can_read_full_point_ledger(uuid,uuid) from anon;
+revoke all on function public._identity_can_read_full_point_ledger(uuid,uuid) from authenticated;
+revoke all on function public._identity_award_evidence_is_valid(uuid,uuid,text,uuid) from public;
+revoke all on function public._identity_award_evidence_is_valid(uuid,uuid,text,uuid) from anon;
+revoke all on function public._identity_award_evidence_is_valid(uuid,uuid,text,uuid) from authenticated;
 
 revoke all on function public.unlock_knowledge_content(uuid) from public;
 revoke all on function public.unlock_knowledge_content(uuid) from anon;
@@ -3229,6 +3342,11 @@ declare
   v_version_id uuid;
   v_version integer;
   v_permissions jsonb;
+  v_operation text;
+  v_source_template_id uuid;
+  v_template_id uuid;
+  v_key text;
+  v_name text;
 begin
   select * into v_m from public.enterprise_role_motions
    where id=p_motion for update;
@@ -3236,14 +3354,86 @@ begin
   if v_m.kind<>'template_change' or v_m.status<>'passed' then
     raise exception 'template change motion is not approved';
   end if;
+  v_operation:=lower(coalesce(v_m.payload->>'operation','update'));
   v_permissions:=coalesce(v_m.payload->'permissions','[]'::jsonb);
   if jsonb_typeof(v_permissions)<>'array' then
     raise exception 'template permissions payload is invalid';
   end if;
 
+  if v_operation='clone' then
+    v_source_template_id:=nullif(v_m.payload->>'source_template_id','')::uuid;
+    v_key:=btrim(coalesce(v_m.payload->>'template_key',''));
+    v_name:=btrim(coalesce(v_m.payload->>'name',''));
+    if v_source_template_id is null or v_key='' or v_name='' then
+      raise exception 'clone template payload is invalid';
+    end if;
+    perform 1 from public.enterprise_role_templates
+     where id=v_source_template_id
+       and enterprise_id=v_m.enterprise_id
+       and archived_at is null
+     for update;
+    if not found then raise exception 'source template not found'; end if;
+    if exists(
+      select 1 from public.enterprise_role_templates
+       where enterprise_id=v_m.enterprise_id and key=v_key
+    ) then
+      raise exception 'template key already exists';
+    end if;
+
+    insert into public.enterprise_role_templates(
+      enterprise_id,key,name,office_key,is_system
+    ) values(v_m.enterprise_id,v_key,v_name,'',false)
+    returning id into v_template_id;
+
+    insert into public.enterprise_role_template_versions(
+      template_id,version,status,created_by,effective_at
+    ) values(v_template_id,1,'active',v_m.proposer_profile_id,now())
+    returning id into v_version_id;
+
+    insert into public.enterprise_role_template_permissions(
+      template_version_id,permission_key,resource,action,scope,conditions,high_risk
+    )
+    select v_version_id,btrim(coalesce(value->>'permission_key',value->>'key','')),
+      coalesce(nullif(btrim(coalesce(value->>'resource','')),''),
+        split_part(btrim(coalesce(value->>'permission_key',value->>'key','')),'.',1)),
+      coalesce(nullif(btrim(coalesce(value->>'action','')),''),
+        case when strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')>0
+          then substr(btrim(coalesce(value->>'permission_key',value->>'key','')),strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')+1)
+          else btrim(coalesce(value->>'permission_key',value->>'key','')) end),
+      coalesce(nullif(btrim(coalesce(value->>'scope','')),''),'self'),
+      coalesce(value->'conditions','{}'::jsonb),
+      coalesce((value->>'high_risk')::boolean,
+        btrim(coalesce(value->>'permission_key',value->>'key','')) in (
+          'identity.manage_templates','identity.manage_shares',
+          'governance.vote','governance.manage','finance.manage',
+          'finance.approve_company','data.export_all','data.delete_all',
+          'company.delete'
+        ))
+    from jsonb_array_elements(v_permissions) value
+    where btrim(coalesce(value->>'permission_key',value->>'key',''))<>'';
+
+    insert into public.enterprise_identity_audit(
+      enterprise_id,actor_profile_id,action,target_profile_id,details
+    ) values(
+      v_m.enterprise_id,v_m.proposer_profile_id,'role_template.clone_applied',null,
+      jsonb_build_object(
+        'motion_id',v_m.id,
+        'source_template_id',v_source_template_id,
+        'template_id',v_template_id,
+        'key',v_key,
+        'name',v_name,
+        'version',1
+      )
+    );
+    return;
+  elsif v_operation<>'update' then
+    raise exception 'template change operation is invalid';
+  end if;
+
+  v_template_id:=nullif(v_m.payload->>'template_id','')::uuid;
+  if v_template_id is null then raise exception 'template id is required'; end if;
   select * into v_t from public.enterprise_role_templates
-   where id=(v_m.payload->>'template_id')::uuid
-     and enterprise_id=v_m.enterprise_id
+   where id=v_template_id and enterprise_id=v_m.enterprise_id
    for update;
   if not found then raise exception 'role template not found'; end if;
   select * into v_current from public.enterprise_role_template_versions
@@ -3268,8 +3458,7 @@ begin
       split_part(btrim(coalesce(value->>'permission_key',value->>'key','')),'.',1)),
     coalesce(nullif(btrim(coalesce(value->>'action','')),''),
       case when strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')>0
-        then substr(btrim(coalesce(value->>'permission_key',value->>'key','')),
-          strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')+1)
+        then substr(btrim(coalesce(value->>'permission_key',value->>'key','')),strpos(btrim(coalesce(value->>'permission_key',value->>'key','')),'.')+1)
         else btrim(coalesce(value->>'permission_key',value->>'key','')) end),
     coalesce(nullif(btrim(coalesce(value->>'scope','')),''),'self'),
     coalesce(value->'conditions','{}'::jsonb),

@@ -355,6 +355,32 @@ Compress-Archive -Path dist\项目记录器.exe `
 
 对方第一次运行会看到 Windows SmartScreen 警告，点「更多信息」→「仍要运行」（程序没买代码签名证书，不是病毒）。
 
+## PostgreSQL 集成测试（opt-in）
+
+普通单元测试不会连接数据库。需要验证 RLS、RPC、股份投票、积分和知识解锁时，使用一次性 PostgreSQL/Supabase 测试库：
+
+```powershell
+python -m pip install -r requirements-test.txt
+$env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/project_recorder_test'
+python -m unittest tests.test_enterprise_governance_integration -v
+```
+
+运行前按以下顺序在测试库执行：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+```
+
+注意：
+
+- `PROJECT_RECORDER_TEST_DATABASE_URL` 未设置或未安装 `psycopg2-binary` 时，集成测试会自动跳过，不影响普通 `unittest`。
+- CI 中把该变量保存为受保护的 secret，指向临时数据库；不要让测试连接生产库。
+- 集成测试需要 `authenticated`、`anon`、`auth.uid()` 和 Supabase RLS 环境；普通本地 PostgreSQL 需先模拟这些角色和 JWT claim 设置。
+- 测试大多在事务中回滚；并发发分测试会提交隔离夹具并在 `finally` 中清理，因此必须使用一次性数据库。
+- 发布前除集成测试外，还应执行 `python check.py`、`node build-www.js`、`node selfcheck.js`、SQL `pglast` 解析和 `npx cap sync android`。
+
 ## 自检
 
 ```powershell

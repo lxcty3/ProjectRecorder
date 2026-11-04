@@ -4,7 +4,7 @@ import json
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDateTimeEdit, QDialog,
-    QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog, QLineEdit,
+    QDialogButtonBox, QFormLayout, QHBoxLayout, QLineEdit,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
     QVBoxLayout, QWidget,
 )
@@ -180,6 +180,63 @@ class PermissionEditorDialog(QDialog):
         self.data = {
             "name": name,
             "permissions": permissions,
+            "reason": reason,
+            "conflict_disclosed": self.conflict_box.isChecked(),
+        }
+        self.accept()
+
+
+class TemplateCloneDialog(QDialog):
+    """Collect clone identity fields and the motion disclosure."""
+
+    def __init__(self, parent=None, template=None):
+        super().__init__(parent)
+        template = dict(template or {})
+        self.data = None
+        self.setWindowTitle("复制身份模板")
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(10)
+        root.addWidget(label("复制身份模板", "DialogTitle"))
+        root.addWidget(muted(
+            "高权限模板复制会提交重大股东会表决；原因和利益冲突披露会原样展示给投票人。"
+        ))
+        form = QFormLayout()
+        self.name_edit = QLineEdit("{} 副本".format(template.get("name") or "身份"))
+        self.key_edit = QLineEdit("{}_copy".format(template.get("key") or "role"))
+        form.addRow("模板名称", self.name_edit)
+        form.addRow("唯一 key", self.key_edit)
+        root.addLayout(form)
+        self.reason_edit = QTextEdit()
+        self.reason_edit.setMaximumHeight(90)
+        self.reason_edit.setPlaceholderText("说明为什么需要复制这个身份模板")
+        root.addWidget(self.reason_edit)
+        self.conflict_box = QCheckBox("如存在利益冲突，我已主动披露")
+        root.addWidget(self.conflict_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("提交")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _save(self):
+        name = self.name_edit.text().strip()
+        key = self.key_edit.text().strip()
+        reason = self.reason_edit.toPlainText().strip()
+        if not name or not key:
+            QMessageBox.warning(self, "缺少信息", "模板名称和唯一 key 都不能为空。")
+            return
+        if not reason:
+            QMessageBox.warning(self, "缺少原因", "请填写本次模板复制的原因。")
+            return
+        self.data = {
+            "name": name,
+            "key": key,
             "reason": reason,
             "conflict_disclosed": self.conflict_box.isChecked(),
         }
@@ -389,33 +446,26 @@ class RoleTemplatePage(QWidget):
         template = self._selected_template()
         if not template or self.session is None:
             return
-        default_name = "{}副本".format(template.get("name") or "身份")
-        name, accepted = QInputDialog.getText(
-            self, "复制身份模板", "新身份名称：", text=default_name
-        )
-        if not accepted or not name.strip():
+        dialog = TemplateCloneDialog(self, template)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.data:
             return
-        key, accepted = QInputDialog.getText(
-            self, "复制身份模板", "新身份标识（唯一英文 key）：",
-            text="{}_copy".format(template.get("key") or "role"),
-        )
-        if not accepted or not key.strip():
-            return
+        data = dialog.data
         try:
             result = CommunityClient().clone_role_template(
-                self.session, template.get("id"), key.strip(), name.strip()
+                self.session, template.get("id"), data["key"], data["name"],
+                data["reason"], conflict_disclosed=data["conflict_disclosed"],
             )
         except CommunityError as error:
-            QMessageBox.warning(self, "复制身份失败", str(error))
+            QMessageBox.warning(self, "复制模板失败", str(error))
             return
         if result.get("motion_required"):
             QMessageBox.information(
-                self, "已提交股东表决",
-                f"高风险身份已提交重大股东表决（提案 {result.get('motion_id')}）。",
+                self, "已提交股东会",
+                f"高权限模板复制已提交重大股东会表决，议案 {result.get('motion_id')}。",
             )
         self.refresh()
         if self.window is not None and hasattr(self.window, "flash"):
-            self.window.flash("身份模板已提交", 3600)
+            self.window.flash("复制模板已提交", 3600)
 
     def _edit_selected(self):
         template = self._selected_template()
@@ -428,7 +478,8 @@ class RoleTemplatePage(QWidget):
         try:
             result = CommunityClient().update_role_template(
                 self.session, template.get("id"), data["name"],
-                data["permissions"],
+                data["permissions"], data["reason"],
+                conflict_disclosed=data["conflict_disclosed"],
             )
         except CommunityError as error:
             QMessageBox.warning(self, "保存身份失败", str(error))

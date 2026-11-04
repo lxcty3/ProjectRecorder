@@ -12,6 +12,7 @@ class TodayPage(QWidget):
         super().__init__()
         self.window = window
         self.tasks = []
+        self.account_user_id = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 18)
@@ -47,9 +48,12 @@ class TodayPage(QWidget):
         self.render()
 
     def apply_account_session(self, session):
-        if session is None:
+        next_user = str(session.user_id if session else "")
+        if session is None or next_user != self.account_user_id:
+            self.account_user_id = next_user
             self.tasks = []
             self.render()
+        if session is None:
             return
         page = getattr(self.window, "employee_cloud_page", None)
         if page is not None and getattr(page, "session", None) is not session:
@@ -69,8 +73,8 @@ class TodayPage(QWidget):
     def _is_done(task):
         if task.get("done") is True or task.get("completed") is True:
             return True
-        status = str(task.get("accept_status") or task.get("status") or "").lower()
-        return status in {"done", "completed", "accepted", "已完成"}
+        status = str(task.get("status") or "").lower()
+        return status in {"done", "completed", "已完成"}
 
     def render(self):
         self.task_list.clear()

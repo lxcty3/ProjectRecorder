@@ -285,8 +285,8 @@ class EnterpriseGovernanceSqlTest(unittest.TestCase):
             )
     def test_new_rpcs_are_authenticated_only(self):
         for signature in (
-            "clone_role_template(uuid,text,text)",
-            "update_role_template(uuid,text,jsonb)",
+            "clone_role_template(uuid,text,text,text,integer,boolean)",
+            "update_role_template(uuid,text,jsonb,text,integer,boolean)",
             "set_member_role_assignment(uuid,uuid,timestamptz,text)",
             "expire_role_assignments()",
         ):

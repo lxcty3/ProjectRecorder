@@ -1005,9 +1005,9 @@ class BoardPointPage(QWidget):
         self.award_button.clicked.connect(self._award)
         award_row.addWidget(self.award_button)
         root.addLayout(award_row)
-        self.ledger_table = QTableWidget(0, 5)
+        self.ledger_table = QTableWidget(0, 6)
         self.ledger_table.setHorizontalHeaderLabels(
-            ["时间", "变动", "类型", "原因", "操作者"]
+            ["时间", "成员", "变动", "类型", "原因", "操作人"]
         )
         self._style_table(self.ledger_table)
         root.addWidget(self.ledger_table, 2)
@@ -1084,18 +1084,19 @@ class BoardPointPage(QWidget):
             self.ledger_table.insertRow(row)
             values = [
                 str(entry.get("created_at") or "")[:16].replace("T", " "),
+                entry.get("profile_name") or "成员",
                 ("+" if int(entry.get("amount") or 0) > 0 else "") + str(entry.get("amount") or 0),
                 entry.get("entry_type") or "",
                 entry.get("reason") or "",
-                entry.get("actor_name") or "—",
+                entry.get("actor_name") or "系统",
             ]
             for column, text in enumerate(values):
                 self.ledger_table.setItem(row, column, QTableWidgetItem(str(text)))
         self.ledger_table.resizeColumnsToContents()
-        self.status.setText(
-            "董事会成员可建案表决；董事长可按已批准额度发放。"
-            if me.get("is_board_director") else "当前身份只可查看自己的积分台账。"
-        )
+        if points.get("can_read_full_ledger"):
+            self.status.setText("董事会、审计和董事长可查看完整企业积分台账。")
+        else:
+            self.status.setText("当前身份只可查看自己的积分台账。")
         self._update_actions()
 
     def _update_actions(self):

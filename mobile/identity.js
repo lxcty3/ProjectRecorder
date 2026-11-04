@@ -653,17 +653,29 @@ function renderIdentityBoard(state) {
   const pointState = state.point_state || {};
   const pool = pointState.pool || {};
   pointCount.textContent = `${num(pointState.balance)} 积分`;
+  const ledger = Array.isArray(pointState.ledger) ? pointState.ledger : [];
+  const ledgerRows = ledger.slice(0, 30).map(entry => `
+    <div class="identity-vote-line">
+      <span>${escapeHtml(entry.profile_name || "成员")}</span>
+      <span>${num(entry.amount) > 0 ? "+" : ""}${num(entry.amount)}</span>
+      <span>${escapeHtml(entry.reason || entry.entry_type || "积分变动")}</span>
+      <span>${identityDate(entry.created_at)}</span>
+    </div>`).join("");
+  const ledgerScope = pointState.can_read_full_ledger ? "完整企业台账" : "本人台账";
   pointBox.innerHTML = `<div class="identity-motion open">
     <div class="identity-motion-head"><div>
-      <div class="identity-eyebrow">本期积分池</div>
+      <div class="identity-eyebrow">当前积分池</div>
       <b>${escapeHtml(pool.quarter || "暂无积分池")}</b>
-    </div><span class="identity-status open">永久积分</span></div>
+    </div><span class="identity-status open">永久有效</span></div>
     <div class="identity-vote-line">
       <span>余额 ${num(pointState.balance)}</span>
       <span>剩余 ${num(pool.remaining)} / ${num(pool.total)}</span>
       <span>单次上限 ${num(pool.single_award_limit)}</span>
-    </div></div>`;
-  const newButton = $("btn-board-point-motion");
+    </div></div>
+    <div class="identity-motion open">
+      <div class="identity-eyebrow">${ledgerScope}</div>
+      ${ledgerRows || '<div class="identity-empty"><span>暂无积分记录</span></div>'}
+    </div>`;  const newButton = $("btn-board-point-motion");
   if (newButton) newButton.onclick = openBoardPointMotion;
   const awardButton = $("btn-chair-award");
   if (awardButton) awardButton.onclick = openChairAward;

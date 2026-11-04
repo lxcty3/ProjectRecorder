@@ -29,7 +29,10 @@ class IdentityClientTest(unittest.TestCase):
         self.client.clone_role_template(self.session, "src", "sales", "销售")
         request.assert_called_once_with(
             "POST", "/rest/v1/rpc/clone_role_template", token="token",
-            body={"p_source_template": "src", "p_key": "sales", "p_name": "销售"},
+            body={
+                "p_source_template": "src", "p_key": "sales", "p_name": "销售",
+                "p_reason": "", "p_days": 5, "p_conflict_disclosed": False,
+            },
         )
 
     @patch("community_client._request")
@@ -41,7 +44,8 @@ class IdentityClientTest(unittest.TestCase):
             "POST", "/rest/v1/rpc/update_role_template", token="token",
             body={
                 "p_template": "t1", "p_name": "项目经理",
-                "p_permissions": permissions,
+                "p_permissions": permissions, "p_reason": "",
+                "p_days": 5, "p_conflict_disclosed": False,
             },
         )
 

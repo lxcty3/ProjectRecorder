@@ -202,6 +202,24 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             (author_id, content, unlock_cost, is_required),
         )[0]
 
+    def _create_acceptance_evidence(self, owner_id, employee_id, label):
+        task_id = uuid.uuid4()
+        log_id = uuid.uuid4()
+        self._as(
+            None,
+            "insert into public.tasks("
+            "id,boss_id,employee_id,title,detail,plan_date,est_hours"
+            ") values(%s,%s,%s,%s,'',current_date,1)",
+            (task_id, owner_id, employee_id, label),
+        )
+        self._as(
+            None,
+            "insert into public.task_logs("
+            "id,task_id,employee_id,finished_at,finish_date"
+            ") values(%s,%s,%s,now(),current_date)",
+            (log_id, task_id, employee_id),
+        )
+        return log_id
     def _provision_templates(self, enterprise_id):
         self._as(
             None,
@@ -630,10 +648,22 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             (owner_id, uuid.uuid4()),
         )
 
+    def test_award_points_rejects_arbitrary_evidence_uuid(self):
+        _, owner_id, employee_id = self._create_enterprise_fixture()
+        self._create_point_pool(owner_id, 100, 50)
+        self._assert_sql_error(
+            owner_id,
+            "evidence record is not allowed",
+            "select public.award_points(%s,10,'acceptance',%s,'forged')",
+            (employee_id, uuid.uuid4()),
+        )
+
     def test_award_points_enforces_pool_and_duplicate_evidence(self):
         _, owner_id, employee_id = self._create_enterprise_fixture()
         pool_id = self._create_point_pool(owner_id, 100, 80)[0]
-        first_evidence = uuid.uuid4()
+        first_evidence = self._create_acceptance_evidence(
+            owner_id, employee_id, "first acceptance"
+        )
         first = self._as(
             owner_id,
             "select public.award_points(%s,80,'acceptance',%s,'first award')",
@@ -645,7 +675,9 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             owner_id,
             "point pool exceeded",
             "select public.award_points(%s,30,'acceptance',%s,'too much')",
-            (employee_id, uuid.uuid4()),
+            (employee_id, self._create_acceptance_evidence(
+                owner_id, employee_id, "oversized acceptance"
+            )),
         )
         self._assert_sql_error(
             owner_id,
@@ -656,14 +688,18 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         remaining = self._as(
             owner_id,
             "select public.award_points(%s,20,'acceptance',%s,'remaining award')",
-            (employee_id, uuid.uuid4()),
+            (employee_id, self._create_acceptance_evidence(
+                owner_id, employee_id, "remaining acceptance"
+            )),
         )[0]
         self.assertEqual(0, remaining["pool_remaining"])
         self._assert_sql_error(
             owner_id,
             "point pool exceeded",
             "select public.award_points(%s,1,'acceptance',%s,'exhausted')",
-            (employee_id, uuid.uuid4()),
+            (employee_id, self._create_acceptance_evidence(
+                owner_id, employee_id, "exhausted acceptance"
+            )),
         )
         state = self._as(
             None,
@@ -679,7 +715,6 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
             (str(pool_id),),
         )[0]
         self.assertEqual(2, audit_count)
-
     def test_concurrent_awards_cannot_overspend_pool(self):
         enterprise_id, owner_id, employee_id = (
             self._create_enterprise_fixture()
@@ -711,7 +746,7 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
                         barrier.wait(timeout=10)
                         cur.execute(
                             "select public.award_points("
-                            "%s,60,'concurrent',%s,'concurrent award')",
+                            "%s,60,'acceptance',%s,'concurrent award')",
                             (employee_id, evidence_id),
                         )
                         result = cur.fetchone()[0]
@@ -725,9 +760,15 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
                 finally:
                     conn.close()
 
+            evidence_ids = [
+                self._create_acceptance_evidence(
+                    owner_id, employee_id, f"concurrent acceptance {index}"
+                )
+                for index in range(2)
+            ]
             threads = [
-                threading.Thread(target=award, args=(uuid.uuid4(),))
-                for _ in range(2)
+                threading.Thread(target=award, args=(evidence_id,))
+                for evidence_id in evidence_ids
             ]
             for thread in threads:
                 thread.start()
@@ -793,7 +834,9 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         self._as(
             owner_id,
             "select public.award_points(%s,100,'acceptance',%s,'unlock budget')",
-            (employee_id, uuid.uuid4()),
+            (employee_id, self._create_acceptance_evidence(
+                owner_id, employee_id, "unlock budget"
+            )),
         )
         required_id = self._create_community_post(
             owner_id, "required content", unlock_cost=50, is_required=True
@@ -884,7 +927,9 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         self._as(
             owner_id,
             "select public.award_points(%s,100,'acceptance',%s,'rls budget')",
-            (employee_id, uuid.uuid4()),
+            (employee_id, self._create_acceptance_evidence(
+                owner_id, employee_id, "rls budget"
+            )),
         )
         required_id = self._create_community_post(
             owner_id, "rls required", unlock_cost=25, is_required=True
@@ -929,6 +974,77 @@ class EnterpriseGovernanceIntegrationTest(unittest.TestCase):
         )[0]
         self.assertFalse(locked_self)
 
+    def test_full_point_ledger_visible_to_board_and_auditor(self):
+        enterprise_id, owner_id, employee_id = self._create_enterprise_fixture()
+        other_id = uuid.uuid4()
+        self._as(
+            None,
+            "insert into auth.users(id,email) values(%s,%s)",
+            (other_id, "other-" + other_id.hex + "@example.test"),
+        )
+        self._as(
+            None,
+            "insert into public.profiles(id,code,name,role,boss_id) "
+            "values(%s,%s,'Other','employee',%s)",
+            (other_id, "other-" + other_id.hex, owner_id),
+        )
+        self._as(
+            None,
+            "insert into public.enterprise_members("
+            "enterprise_id,profile_id,role_key,status"
+            ") values(%s,%s,'employee','active')",
+            (enterprise_id, other_id),
+        )
+        self._create_point_pool(owner_id, 200, 100)
+        for profile_id, label in (
+            (employee_id, "employee ledger"),
+            (other_id, "other ledger"),
+        ):
+            self._as(
+                owner_id,
+                "select public.award_points(%s,10,'acceptance',%s,%s)",
+                (
+                    profile_id,
+                    self._create_acceptance_evidence(
+                        owner_id, profile_id, label
+                    ),
+                    label,
+                ),
+            )
+
+        owner_state = self._as(
+            owner_id, "select public.get_point_state()"
+        )[0]
+        self.assertTrue(owner_state["can_read_full_ledger"])
+        self.assertEqual("enterprise", owner_state["ledger_scope"])
+        self.assertEqual(
+            {employee_id, other_id},
+            {uuid.UUID(entry["profile_id"]) for entry in owner_state["ledger"]},
+        )
+
+        employee_state = self._as(
+            employee_id, "select public.get_point_state()"
+        )[0]
+        self.assertFalse(employee_state["can_read_full_ledger"])
+        self.assertEqual(
+            {employee_id},
+            {uuid.UUID(entry["profile_id"]) for entry in employee_state["ledger"]},
+        )
+
+        self._as(
+            None,
+            "update public.enterprise_members set role_key='auditor' "
+            "where enterprise_id=%s and profile_id=%s",
+            (enterprise_id, employee_id),
+        )
+        auditor_state = self._as(
+            employee_id, "select public.get_point_state()"
+        )[0]
+        self.assertTrue(auditor_state["can_read_full_ledger"])
+        self.assertEqual(
+            {employee_id, other_id},
+            {uuid.UUID(entry["profile_id"]) for entry in auditor_state["ledger"]},
+        )
     def test_point_function_and_table_grants_are_least_privilege(self):
         user_id = uuid.uuid4()
         expected_function_grants = (
