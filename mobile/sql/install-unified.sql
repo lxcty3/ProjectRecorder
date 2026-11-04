@@ -980,3 +980,7 @@ revoke all on function public.settle_due_grades() from public;
 revoke all on function public.approve_worklog(uuid) from public;
 grant execute on function public.settle_due_grades() to authenticated;
 grant execute on function public.approve_worklog(uuid) to authenticated;
+
+-- Phase 1 governance is not included in this unified installer.
+-- Run mobile/sql/enterprise-identity.sql first, then run
+-- mobile/sql/enterprise-governance-v2.sql separately.
