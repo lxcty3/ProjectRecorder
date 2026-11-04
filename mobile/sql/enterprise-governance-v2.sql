@@ -2671,7 +2671,44 @@ begin
 end;
 $fn$;
 
+create or replace function public.set_enterprise_ui_mode(p_mode text)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+begin
+  if v_uid is null then
+    raise exception 'not signed in';
+  end if;
+  if p_mode not in ('simple','advanced') then
+    raise exception 'invalid mode';
+  end if;
+  v_eid:=public._identity_bootstrap(
+    public._identity_owner_for_uid(v_uid)
+  );
+  if not public._identity_is_member(v_eid,v_uid) then
+    raise exception 'not an enterprise member';
+  end if;
+  update public.enterprise_members
+     set preferred_mode=p_mode,
+         updated_at=now()
+   where enterprise_id=v_eid
+     and profile_id=v_uid;
+  return jsonb_build_object('ok',true,'mode',p_mode);
+end;
+$fn$;
+
 -- ------------------------------------------------------------ task 5 grants
+revoke all on function public.set_enterprise_ui_mode(text) from public;
+revoke all on function public.set_enterprise_ui_mode(text) from anon;
+revoke all on function public.set_enterprise_ui_mode(text) from authenticated;
+grant execute on function public.set_enterprise_ui_mode(text) to authenticated;
+
+
 revoke all on function public._identity_is_chairperson(uuid,uuid) from public;
 revoke all on function public._identity_is_chairperson(uuid,uuid) from anon;
 revoke all on function public._identity_is_chairperson(uuid,uuid) from authenticated;

@@ -358,3 +358,101 @@ class CommunityClient:
             token=session.access_token,
             body={"p_profile": str(profile_id), "p_shares": float(shares or 0)},
         )
+
+    # ------------------------------------------------------- role templates
+    def role_templates(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_enterprise_role_templates",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, list) else []
+
+    def clone_role_template(self, session, source_id, key, name):
+        return _request(
+            "POST", "/rest/v1/rpc/clone_role_template",
+            token=session.access_token,
+            body={
+                "p_source_template": str(source_id),
+                "p_key": str(key or ""),
+                "p_name": str(name or ""),
+            },
+        )
+
+    def update_role_template(self, session, template_id, name, permissions):
+        return _request(
+            "POST", "/rest/v1/rpc/update_role_template",
+            token=session.access_token,
+            body={
+                "p_template": str(template_id),
+                "p_name": str(name or ""),
+                "p_permissions": list(permissions or []),
+            },
+        )
+
+    def set_role_assignment(self, session, profile_id, template_id, ends_at=None):
+        return _request(
+            "POST", "/rest/v1/rpc/set_member_role_assignment",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_template": str(template_id),
+                "p_ends_at": ends_at,
+            },
+        )
+
+    # -------------------------------------------------------- board motions
+    def create_board_motion(self, session, title, kind, payload):
+        return _request(
+            "POST", "/rest/v1/rpc/create_board_motion",
+            token=session.access_token,
+            body={
+                "p_title": title,
+                "p_kind": kind,
+                "p_payload": payload,
+            },
+        )
+
+    def cast_board_vote(self, session, motion_id, choice):
+        return _request(
+            "POST", "/rest/v1/rpc/cast_board_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_choice": choice},
+        )
+
+    # -------------------------------------------------------- points/modes
+    def point_state(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_point_state",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def award_points(self, session, profile_id, amount, evidence_type,
+                     evidence_id, reason):
+        return _request(
+            "POST", "/rest/v1/rpc/award_points",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_amount": int(amount),
+                "p_evidence_type": evidence_type,
+                "p_evidence_id": str(evidence_id),
+                "p_reason": reason,
+            },
+        )
+
+    def unlock_knowledge(self, session, post_id):
+        return _request(
+            "POST", "/rest/v1/rpc/unlock_knowledge_content",
+            token=session.access_token,
+            body={"p_post": str(post_id)},
+        )
+
+    def set_ui_mode(self, session, mode):
+        if mode not in ("simple", "advanced"):
+            raise ValueError("mode must be simple or advanced")
+        return _request(
+            "POST", "/rest/v1/rpc/set_enterprise_ui_mode",
+            token=session.access_token,
+            body={"p_mode": mode},
+        )
