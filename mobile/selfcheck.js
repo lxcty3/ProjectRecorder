@@ -28,7 +28,8 @@ const HERE = __dirname;
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "identity.js", "today.js",
-               "account.js", "community.js", "app.js"];
+               "decision.js", "operations.js", "account.js", "community.js",
+               "app.js"];
 
 let failed = 0;
 function fail(label, detail) {
@@ -166,7 +167,7 @@ function matchAll(text, pattern, group) {
      改成 vm.Script 预编译后，每个用例只付"执行"的代价。
 */
 const COMPILED = ["store.js", "calc.js", "assist.js", "charts.js", "merit.js",
-                  "sync.js", "notify.js"]
+                  "sync.js", "notify.js", "operations.js"]
   .map(name => ({
   name,
   script: new vm.Script(fs.readFileSync(path.join(HERE, name), "utf8"),
@@ -283,6 +284,194 @@ test("记一条工时", () => {
   if (run("DB.worklogs.length") !== 1) throw new Error("没进库");
   if (run("DB.worklogs[0].step_id") !== run("window.__s.id")) {
     throw new Error("步骤没关联上");
+  }
+});
+
+test("工时经营标签有兼容默认值并可在修改时更新", () => {
+  fresh();
+  run(`window.__e = addEmployee({name: "王强"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 8, content: "默认标签"});`);
+  if (run("DB.worklogs[0].billable") !== true) throw new Error("默认可计费丢失");
+  if (run("DB.worklogs[0].work_kind") !== "project") throw new Error("默认项目类型丢失");
+  if (run("DB.worklogs[0].overtime || DB.worklogs[0].rework")) {
+    throw new Error("加班/返工默认应为否");
+  }
+  run(`updateWorklog(window.__w.id, {billable: false, overtime: true,
+    work_kind: "presales", rework: true, waiting: true, travel: true});`);
+  if (run("DB.worklogs[0].work_kind") !== "presales") throw new Error("类型没更新");
+  if (run("DB.worklogs[0].billable") !== false) throw new Error("可计费没更新");
+  if (run("DB.worklogs[0].travel") !== true) throw new Error("出差没更新");
+});
+
+test("工时经营标签排队后只保留一条并可撤销", () => {
+  fresh();
+  run(`DB.profile = {id: "profile-uuid"};
+    queueWorklogDimensions("11111111-1111-4111-8111-111111111111",
+      {billable: true, work_kind: "project"});
+    queueWorklogDimensions("11111111-1111-4111-8111-111111111111",
+      {billable: false, work_kind: "internal", overtime: true});`);
+  if (run("DB.dimensionQueue.length") !== 1) throw new Error("同一工时重复排队");
+  if (run("DB.dimensionQueue[0].data.work_kind") !== "internal") {
+    throw new Error("后一次标签没覆盖前一次");
+  }
+  if (run("pendingCount()") !== 1) throw new Error("待上传数量没算标签");
+  run('removeQueuedWorklogDimensions("11111111-1111-4111-8111-111111111111");');
+  if (run("DB.dimensionQueue.length") !== 0) throw new Error("撤销后标签仍在队列");
+});
+
+test("本地工时维度保留到拿到云 UUID 后再同步", () => {
+  fresh();
+  run(`DB.profile = {id: "profile-uuid"};
+    queueWorklogDimensions(42, {billable: false, overtime: true,
+      work_kind: "presales", rework: true, waiting: true, travel: true});`);
+  if (run("DB.dimensionQueue.length") !== 1) throw new Error("本地维度没进队列");
+  const reserved = run("DB.dimensionQueue[0].worklog_id");
+  if (!run(`operationsUuid(${JSON.stringify(reserved)})`)) {
+    throw new Error("本地数字 id 没有换成预留云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("维度不应继续永久等待本地 id");
+  }
+  if (run("DB.worklogMigrationQueue[0].local_id") !== "42") {
+    throw new Error("迁移队列没保留本地工时 id");
+  }
+  if (run("DB.dimensionQueue[0].worklog_id") !== reserved) {
+    throw new Error("预留云 UUID 后被意外改写");
+  }
+  if (run("DB.dimensionQueue[0].data.work_kind") !== "presales") {
+    throw new Error("等待同步时维度被丢掉");
+  }
+});
+
+test("本地手工工时排队迁移为云 UUID 并同步维度", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "王强"});
+    window.__p = addProject({name: "本地项目"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      project_id: window.__p.id, work_date: "2026-01-05",
+      hours: 8, content: "本地手工工时"});
+    DB.employees[0].cloud_id =
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    syncWorklogDimensions(window.__w);`);
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("本地工时没有进入迁移队列");
+  }
+  const cloudId = run("DB.worklogMigrationQueue[0].cloud_id");
+  if (!run(`operationsUuid(${JSON.stringify(cloudId)})`)) {
+    throw new Error("迁移队列没有分配云 UUID");
+  }
+  if (run("DB.dimensionQueue.length") !== 1) {
+    throw new Error("维度没有继续排队");
+  }
+  if (run("DB.dimensionQueue[0].worklog_id") !== cloudId) {
+    throw new Error("维度没有绑定预留的云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("维度仍在等待非 UUID");
+  }
+  const built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (!built.ready) throw new Error("可映射工时却没有迁移载荷");
+  if (built.payload.employee_id
+      !== "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") {
+    throw new Error("迁移载荷没有使用云端员工 UUID");
+  }
+  if (built.payload.project_name !== "本地项目") {
+    throw new Error("迁移后丢失本地项目名称");
+  }
+  run("completeWorklogMigration(DB.worklogMigrationQueue[0]);");
+  if (run("DB.worklogMigrationQueue.length") !== 0) {
+    throw new Error("迁移成功后队列没有清掉");
+  }
+  if (run("DB.worklogs[0].cloud_id") !== cloudId) {
+    throw new Error("本地工时没有记录云 UUID");
+  }
+});
+
+test("本地工时缺员工云映射时等待而不是永久拒绝", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "待建号员工"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 4, content: "等待建号"});
+    syncWorklogDimensions(window.__w);`);
+  let built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (built.ready) throw new Error("没有员工云映射却可以迁移");
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("等待状态不应丢失迁移项");
+  }
+  run(`DB.employees[0].cloud_id =
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc";`);
+  built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (!built.ready) throw new Error("员工拿到云 UUID 后仍未恢复迁移");
+});
+
+test("历史非 UUID 维度队列会补建本地工时迁移", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "王强"});
+    DB.employees[0].cloud_id =
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 2, content: "历史本地工时"});
+    DB.dimensionQueue = [{worklog_id: null, local_id: String(window.__w.id),
+      data: {work_kind: "internal", billable: false}}];
+    ensureLocalWorklogMigrationQueues();`);
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("历史等待项没有补建迁移队列");
+  }
+  const cloudId = run("DB.worklogMigrationQueue[0].cloud_id");
+  if (run("DB.dimensionQueue[0].worklog_id") !== cloudId) {
+    throw new Error("历史维度项没有改绑云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("历史维度项仍在永久等待");
+  }
+});
+
+test("对象形式的绩效证据也能渲染来源 ID", () => {
+  fresh();
+  const html = run(`(function () {
+    var box = { innerHTML: "", querySelectorAll: function () { return []; } };
+    document.getElementById = function (id) {
+      return id === "my-performance" ? box : null;
+    };
+    window.$ = function (id) { return document.getElementById(id); };
+    window.escapeHtml = function (value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    };
+    DB.myPerformance = {items: [{
+      id: "e1", period: "2026-11", status: "submitted", score: 81,
+      evidence: {type: "worklog", source_id: "w1", label: "客户交付"},
+      employee_statement: "", reviewer_note: ""
+    }]};
+    renderMyPerformance();
+    return box.innerHTML;
+  })();`);
+  if (html.indexOf("worklog w1") === -1) {
+    throw new Error("对象证据没有显示 source_id");
+  }
+});
+
+test("简单模式和权限丢失会清掉经营缓存", () => {
+  fresh();
+  run(`window.$ = function (id) { return document.getElementById(id); };
+    DB.profile = {id: "u1"};
+    DB.uiMode = "simple";
+    DB.operations = {projects: [{name: "secret"}],
+      capacity_gaps: [], performance: [], worklog_summary: {}, at: 1};`);
+  if (run("operationsAllowedInCurrentMode()") !== false) {
+    throw new Error("简单模式被误判为允许经营数据");
+  }
+  run("clearOperationsCache()");
+  if (run("DB.operations.projects.length") !== 0) {
+    throw new Error("权限/模式变化后经营缓存没清空");
   }
 });
 
@@ -520,7 +709,7 @@ test("洞察能抓出顺序矛盾", () => {
     addStep(window.__p.id, {name: "第二步", status: "已完成"});`);
   const found = plain(run("insights()"));
   const hit = found.some(item => item.title.indexOf("顺序矛盾") !== -1);
-  if (!hit) throw new Error("顺序矛盾没被抓出来：" 
+  if (!hit) throw new Error("顺序矛盾没被抓出来："
     + found.map(item => item.title).join("；"));
 });
 
@@ -1202,6 +1391,39 @@ test("工时汇总既包含本地也包含员工报的", () => {
   const sources = all.map(item => item.__source).sort();
   if (sources.join(",") !== "cloud,local") {
     throw new Error("来源标记不对：" + sources.join(","));
+  }
+});
+
+test("同步流程先迁移本地工时再上传维度", () => {
+  const source = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  const migrate = source.indexOf(
+    "const migrationsPushed = await pushWorklogMigrationQueue();");
+  const dimensions = source.indexOf(
+    "const dimensionsPushed = await pushDimensionQueue();");
+  if (migrate < 0 || dimensions < 0 || migrate > dimensions) {
+    throw new Error("工时迁移必须先于维度上传");
+  }
+  if (source.indexOf("pendingMigrations") < 0) {
+    throw new Error("等待迁移的工时不能被维度上传误判为失败");
+  }
+});
+
+test("迁移后的本地工时和云端回流不会重复计数", () => {
+  fresh();
+  run(`window.__e = addEmployee({name: "我"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 3, content: "迁移工时"});
+    DB.worklogs[0].cloud_id =
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    mergeRemoteWorklogs([{id: DB.worklogs[0].cloud_id,
+      employee_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      work_date: "2026-01-05", hours: 3, content: "迁移工时",
+      project_name: "", source: "manual", approval_status: "pending"}]);`);
+  if (run("DB.remoteWorklogs.length") !== 0) {
+    throw new Error("云端回流被重复放入 remoteWorklogs");
+  }
+  if (run("allWorklogs().length") !== 1) {
+    throw new Error("迁移工时被统计了两遍");
   }
 });
 
@@ -2576,7 +2798,8 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js", "today.js"]
+  const sources = ["app.js", "account.js", "community.js", "today.js",
+                   "operations.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
 
@@ -4831,6 +5054,122 @@ test("企业治理：积分与模式有本地缓存", () => {
   }
 });
 
+test("决策中心：手机管理审批页完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-decisions", "decision-list", "approval-list",
+    "decision-summary", "btn-decisions-refresh",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="decisions"') === -1) {
+    throw new Error("高级导航缺少经营决策入口");
+  }
+  if (html.indexOf('src="decision.js"') === -1) {
+    throw new Error("index.html 没有加载 decision.js");
+  }
+
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (!/const PAGES = \[[\s\S]*?"decisions"/.test(app)) {
+    throw new Error("PAGES 没有登记 decisions");
+  }
+  if (app.indexOf('target === "decisions"') === -1
+      || app.indexOf("loadDecisionCenter(true);") === -1) {
+    throw new Error("showPage() 没有加载决策中心");
+  }
+  if (app.indexOf("bindDecisionCenter()") === -1) {
+    throw new Error("app.js 没有绑定决策中心事件");
+  }
+
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
+  if (today.indexOf('return management ? "decisions" : "dash";') === -1) {
+    throw new Error("高级管理模式没有默认进入决策中心");
+  }
+
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  if (account.indexOf('"decisions"') === -1
+      || account.indexOf("loadDecisionCenter") === -1) {
+    throw new Error("账号登录/同步没有刷新决策中心");
+  }
+
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"decision\.js"/.test(build)) {
+    throw new Error("build-www.js 没有打包 decision.js");
+  }
+
+  const decision = fs.readFileSync(path.join(HERE, "decision.js"), "utf8");
+  for (const text of [
+    "renderDecisionCenter", "loadDecisionCenter", "bindDecisionCenter",
+    "act_on_decision", "act_on_approval", "data-decision-action",
+    "data-approval-action", "evidence", "impact_days", "impact_amount",
+    "owner_name", "due_at", "actions", "idempotency",
+  ]) {
+    if (decision.indexOf(text) === -1) {
+      throw new Error(`decision.js 缺少 ${text}`);
+    }
+  }
+});
+test("经营摘要：管理页、能力缺口和个人绩效依据完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-operations", "operations-projects", "operations-capacity",
+    "operations-performance", "operations-worklog", "btn-operations-refresh",
+    "nav-operations", "btn-my-performance", "my-performance",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="operations"') === -1) {
+    throw new Error("高级导航缺少经营摘要入口");
+  }
+  if (html.indexOf('src="operations.js"') === -1) {
+    throw new Error("index.html 没有加载 operations.js");
+  }
+
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (!/const PAGES = \[[\s\S]*?"operations"/.test(app)) {
+    throw new Error("PAGES 没有登记 operations");
+  }
+  for (const text of [
+    'target === "operations"', "renderOperations()", "loadOperations(true)",
+    "w-billable", "w-overtime", "w-kind", "w-rework", "w-waiting",
+    "w-travel", "syncWorklogDimensions",
+  ]) {
+    if (app.indexOf(text) === -1) throw new Error(`app.js 缺少 ${text}`);
+  }
+
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  for (const text of ["operations", "nav-operations", "loadOperations"]) {
+    if (account.indexOf(text) === -1) {
+      throw new Error(`account.js 缺少 ${text}`);
+    }
+  }
+
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"operations\.js"/.test(build)) {
+    throw new Error("build-www.js 没有打包 operations.js");
+  }
+
+  const operations = fs.readFileSync(
+    path.join(HERE, "operations.js"), "utf8");
+  for (const text of [
+    "renderOperations", "loadOperations", "bindOperations",
+    "get_operations_dashboard", "capacity_gaps", "projected_margin",
+    "collection_gap", "worklog_summary", "performance",
+    "renderMyPerformance", "loadMyPerformanceEvidence",
+    "get_my_performance_evidence", "submit_performance_statement",
+    "upsert_worklog_dimensions", "queueWorklogDimensions",
+    "resolveQueuedWorklogDimensions", "operationsAllowedInCurrentMode",
+    "queueLocalWorklogMigration", "ensureLocalWorklogMigrationQueues",
+    "worklogMigrationPayload", "completeWorklogMigration",
+    "clearOperationsCache", "get_worklog_dimensions",
+    "upsert_profile_skill", "upsert_capacity_demand",
+    "upsert_performance_evidence", "operationsRpc",
+  ]) {
+    if (operations.indexOf(text) === -1) {
+      throw new Error(`operations.js 缺少 ${text}`);
+    }
+  }
+});
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

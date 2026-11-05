@@ -27,7 +27,7 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 - 没登录时仍可使用本地项目、工时、预测和知识库；登录后社区自动同步。
 - 退出账号不会删除任何本地项目数据。
 
-## 八个页签
+## 九个页签
 
 ### 驾驶舱
 所有项目一览。顶部四张指标卡（在管项目 / 需要处理 / 在岗员工 / 本周工时），下面一张表按风险排序。
@@ -71,6 +71,19 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 
 员工账号登录桌面端默认使用简单模式，只显示“今日”和知识星球，不显示预算、团队风险和老板数据；具备管理、财务、审计或治理权限后可在桌面顶部切换高级模式。
 
+### 经营决策中心
+
+高级模式默认进入“经营决策中心”，把跨项目、跨模块的影响集中成一条处理队列：
+
+- **入口权限**：只有具备管理、财务、审计或治理能力的身份可进入高级模式和决策中心；简单模式员工看不到入口。
+- **决策队列**：按交付影响天数、涉及金额、风险等级和等待时间排序；每条决策展示来源证据、负责人、截止时间和处理状态。
+- **统一审批**：请假、工时、费用、采购、奖励、任务延期和身份事项进入同一个审批收件箱。
+- **证据下钻**：决策和审批带有结构化来源记录，可追到任务、工时、审批、任务延期或身份治理事项。
+- **幂等与审计**：批准、拒绝、退回补充、取消、确认、分派、延期和关闭都要求幂等键，并由服务端写入审批事件和企业审计。
+- **授权边界**：不同审批类型校验不同权限；严重/高风险或金额达到 5 万元的审批要求高管身份。身份事项沿用股东权重投票，不由普通审批绕过。
+- **真实动作**：桌面和手机按钮只在服务端返回对应 `actions` 能力时显示；没有数据时显示空状态，不用假数据填充。
+- **数据库边界**：决策和审批表启用 RLS，直接表权限收回，客户端只可调用 `get_decision_center`、`act_on_decision` 和 `act_on_approval` 三个 SECURITY DEFINER RPC。
+
 ### 企业身份与股东投票
 
 电脑端「企业身份」页和手机端「治理」页读取同一套 Supabase 企业数据。当前已实现：
@@ -103,6 +116,50 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 `community.sql` 必须先于治理扩展，因为付费知识字段、列表 RPC 和解锁 RLS 依赖社区表。`install-unified.sql` 不包含阶段一治理扩展，`enterprise-governance-v2.sql` 必须单独执行。
 
 桌面端和手机端共享同一套治理数据。直接修改股份的旧 RPC 已只保留为内部/初始化权限，普通客户端不能再调用；股份和模板高风险改动必须经过股东表决。
+
+阶段 2A 部署顺序：
+
+在阶段一治理扩展和任务延期脚本之后运行决策中心迁移：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+```
+
+`decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
+
+`install-unified.sql` 末尾包含一个受前置条件保护的 Phase 2A 区块：基础统一安装时如果阶段一或任务延期表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 为准。
+
+### 经营分析、工时经营标签、能力与绩效证据
+
+Phase 2B 在经营决策中心之后增加管理经营分析，并把执行记录与经营结果对齐：
+
+- **入口权限**：桌面端「经营分析」和手机端「经营摘要」只在高级模式且具备管理身份时显示；简单模式不拉取也不缓存经营数据，权限撤销时客户端立即清空 `DB.operations`。
+- **四维权限**：Phase 2B RPC 继续使用身份模板的 scope 与 conditions。`project_ids` 限制项目经理只能读写指定项目，`profile_ids` / `department` 限制人员与绩效范围，`amount_limit` 逐个校验合同、开票、回款和各类成本字段；看板会按财务、人员、绩效和工时权限过滤字段。跨企业项目写入会先写入安全审计再返回拒绝。技能编辑即使修改自己，也必须具备显式 `people.manage` 与对应人员范围。
+- **项目经营口径**：合同额、已开票、已回款、应付/已付外包、人力成本、其他成本、预计完工成本、预计毛利、毛利率、开票到期日、付款条款和回款缺口均由服务端聚合。逾期未收会自动生成回款预警并写入 Phase 2A 决策队列。
+- **工时经营标签**：工时支持可计费、加班、项目/售前/内部、返工、等待和出差。新增字段都有兼容默认值；本地手工工时通过独立迁移队列预留云 UUID、上传工时并消除数字 ID 的永久等待，随后再同步经营维度。手机团队页可直接编辑云端工时的经营标签。
+- **能力缺口**：技能记录包含等级、证书、可用时间和有效期；未来 2-4 周需求与可用时间形成可下钻的能力缺口。能力缺口要求人员查看范围；只有项目权限的管理者会看到权限说明，而不是把全部需求误报为短缺。桌面和手机管理视图提供真实的技能维护与能力需求维护入口，并显示来源 ID。
+- **绩效证据**：准时率、一次通过率、返工、协作、复杂度、经营贡献和结构化客户评价组成证据记录。来源必须是属于该员工的任务、工时或审批记录；绩效分包含复杂度与经营贡献。员工可以查看自己的依据并提交说明，有权限的管理者才能复核。
+- **绩效边界**：绩效分数只依据交付和质量证据计算，不直接决定工资或晋升；简单模式不会展示跨人员经营或绩效对比，知识星球也不承载这些敏感数据。
+- **数据库边界**：经营、技能、需求、绩效和工时标签表启用 RLS，直接表权限收回；成功写入进入企业审计，越权尝试进入独立的 `operations_security_audit`，避免异常回滚吞掉安全事件。工时汇总只统计已批准工时。
+
+阶段 2B 部署顺序：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+mobile/sql/operations-economics-v1.sql
+```
+
+`decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
+
+`install-unified.sql` 末尾包含受前置条件保护的 Phase 2A 和 Phase 2B 区块：基础统一安装时如果阶段一、任务延期或决策中心表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 和 `mobile/sql/operations-economics-v1.sql` 为准。
 
 ### 统一云端部署
 
@@ -363,15 +420,24 @@ Compress-Archive -Path dist\项目记录器.exe `
 python -m pip install -r requirements-test.txt
 $env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/project_recorder_test'
 python -m unittest tests.test_enterprise_governance_integration -v
+python -m unittest tests.test_decision_integration -v
+python -m unittest tests.test_operations_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
 
 ```text
+mobile/sql/unified-platform.sql
 mobile/sql/enterprise-identity.sql
 mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+mobile/sql/operations-economics-v1.sql
 ```
+
+决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。
+经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、逐字段金额上限、跨企业项目拒绝审计、技能自助编辑权限、项目-only 能力权限、工时标签、员工证据说明、经理复核和审计。
 
 注意：
 

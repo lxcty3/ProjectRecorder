@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 __all__ = ["CommunityClient", "CommunityError", "CommunitySession",
            "CLOUD_URL"]
@@ -117,6 +118,11 @@ def _translate_error(message):
         return ("企业身份服务还没有安装。\n\n"
                 "请让管理员在 Supabase 的 SQL Editor 运行：\n"
                 "mobile/sql/enterprise-identity.sql")
+    if (("decision" in lower or "approval_requests" in lower)
+            and ("does not exist" in lower or "could not find" in lower)):
+        return ("经营决策中心还没有安装。\n\n"
+                "请让管理员在 Supabase 的 SQL Editor 运行：\n"
+                "mobile/sql/decision-approvals-v1.sql")
     if "only shareholders may vote" in lower:
         return "只有持股股东可以投票。"
     if "only shareholders may propose" in lower:
@@ -194,9 +200,13 @@ def _request(method, path, *, body=None, token="", params=None,
     if not raw.strip():
         return None
     try:
-        return json.loads(raw)
+        payload = json.loads(raw)
     except ValueError as error:
         raise CommunityError("社区服务器返回了无法识别的数据。") from error
+    if (isinstance(payload, dict) and payload.get("ok") is False
+            and payload.get("code") == "permission_denied"):
+        raise CommunityError(_translate_error(_error_message(payload)))
+    return payload
 
 
 class CommunityClient:
@@ -500,6 +510,57 @@ class CommunityClient:
             body={"p_post": str(post_id)},
         )
 
+    # ---------------------------------------------------------- decisions
+    @staticmethod
+    def new_idempotency_key(prefix="decision"):
+        return f"{prefix}:{uuid.uuid4()}"
+
+    def decision_center(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_decision_center",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def act_on_decision(self, session, decision_id, action, owner_id=None,
+                        note="", idempotency_key=""):
+        action = str(action or "").strip().lower()
+        if action not in {
+            "acknowledged", "assigned", "deferred", "resolved", "dismissed",
+        }:
+            raise ValueError("invalid decision action")
+        key = idempotency_key or self.new_idempotency_key("decision")
+        return _request(
+            "POST", "/rest/v1/rpc/act_on_decision",
+            token=session.access_token,
+            body={
+                "p_decision": str(decision_id),
+                "p_action": action,
+                "p_owner": str(owner_id) if owner_id else None,
+                "p_note": note,
+                "p_idempotency_key": key,
+            },
+        )
+
+    def act_on_approval(self, session, approval_id, action, note="",
+                        idempotency_key=""):
+        from decision_rules import normalize_approval_action
+
+        normalized = normalize_approval_action(action)
+        if not normalized:
+            raise ValueError("invalid approval action")
+        key = idempotency_key or self.new_idempotency_key("approval")
+        return _request(
+            "POST", "/rest/v1/rpc/act_on_approval",
+            token=session.access_token,
+            body={
+                "p_approval": str(approval_id),
+                "p_action": normalized,
+                "p_note": note,
+                "p_idempotency_key": key,
+            },
+        )
+
     def set_ui_mode(self, session, mode):
         if mode not in ("simple", "advanced"):
             raise ValueError("mode must be simple or advanced")
@@ -507,4 +568,104 @@ class CommunityClient:
             "POST", "/rest/v1/rpc/set_enterprise_ui_mode",
             token=session.access_token,
             body={"p_mode": mode},
+        )
+
+    # ---------------------------------------------------------- operations
+    def operations_dashboard(self, session, weeks=None):
+        body = {}
+        if weeks is not None:
+            body["p_weeks"] = int(weeks)
+        data = _request(
+            "POST", "/rest/v1/rpc/get_operations_dashboard",
+            token=session.access_token, body=body,
+        )
+        return data if isinstance(data, dict) else {}
+
+    def upsert_project_economics(self, session, project_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_project_economics",
+            token=session.access_token,
+            body={
+                "p_project": str(project_id),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def upsert_profile_skill(self, session, profile_id, skill, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_profile_skill",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_skill": str(skill or ""),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def upsert_capacity_demand(self, session, demand_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_capacity_demand",
+            token=session.access_token,
+            body={
+                "p_demand": str(demand_id) if demand_id else None,
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def get_worklog_dimensions(self, session, worklog_id):
+        return _request(
+            "POST", "/rest/v1/rpc/get_worklog_dimensions",
+            token=session.access_token,
+            body={"p_worklog": str(worklog_id)},
+        )
+
+    def upsert_worklog_dimensions(self, session, worklog_id, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_worklog_dimensions",
+            token=session.access_token,
+            body={
+                "p_worklog": str(worklog_id),
+                "p_data": dict(data or {}),
+            },
+        )
+
+    def worklog_dimensions(self, session, worklog_id, data):
+        return self.upsert_worklog_dimensions(session, worklog_id, data)
+
+    def my_performance_evidence(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_my_performance_evidence",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {"items": []}
+
+    def submit_performance_statement(self, session, evidence_id, statement):
+        return _request(
+            "POST", "/rest/v1/rpc/submit_performance_statement",
+            token=session.access_token,
+            body={
+                "p_evidence": str(evidence_id),
+                "p_statement": str(statement or ""),
+            },
+        )
+
+    def review_performance_evidence(self, session, evidence_id, note):
+        return _request(
+            "POST", "/rest/v1/rpc/review_performance_evidence",
+            token=session.access_token,
+            body={
+                "p_evidence": str(evidence_id),
+                "p_note": str(note or ""),
+            },
+        )
+
+    def upsert_performance_evidence(self, session, profile_id, period, data):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_performance_evidence",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_period": str(period or ""),
+                "p_data": dict(data or {}),
+            },
         )

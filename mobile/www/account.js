@@ -385,6 +385,8 @@ function finishLogin() {
   syncNow("login");
   if (typeof refreshIdentity === "function") refreshIdentity(true);
   if (typeof refreshPointState === "function") refreshPointState(true);
+  if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
+  if (typeof loadOperations === "function") loadOperations(false);
   showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
 }
@@ -394,6 +396,8 @@ function resumeSession() {
   applyRoleUI();
   startSyncLoop();
   if (typeof refreshPointState === "function") refreshPointState(false);
+  if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
+  if (typeof loadOperations === "function") loadOperations(false);
   refreshNotifyPermission().then(() => renderMe());
   if (typeof ensureGetuiPushConsent === "function") {
     ensureGetuiPushConsent();
@@ -432,6 +436,9 @@ function applyRoleUI() {
   const isStaff = !!(profile && !management);
   if (!advancedAllowed) DB.uiMode = "simple";
   const advanced = !!(profile && advancedAllowed && DB.uiMode === "advanced");
+  if ((!advanced || !management) && typeof clearOperationsCache === "function") {
+    clearOperationsCache();
+  }
 
   /* 简单模式只保留今天、知识星球和我的；高级模式才展开经营与治理页。 */
   if ($("nav-simple")) $("nav-simple").classList.toggle("hidden", !profile || advanced);
@@ -445,10 +452,16 @@ function applyRoleUI() {
     toggleMe.textContent = advanced ? "回到简单模式" : "切换到高级模式";
   }
 
-  const advancedPages = ["dash", "project", "team", "assist", "identity",
-                         "assign", "staff"];
+  const advancedPages = ["decisions", "operations", "dash", "project",
+                         "team", "assist", "identity", "assign", "staff"];
   if (profile && !advanced && advancedPages.indexOf(currentPageName()) !== -1) {
     showPage("today");
+  }
+  if ($("nav-operations")) {
+    $("nav-operations").classList.toggle("hidden", !advanced || !management);
+  }
+  if (profile && currentPageName() === "operations" && !management) {
+    showPage(advanced ? "dash" : "today");
   }
 
   /* 「我要请假」只给普通员工看。 */

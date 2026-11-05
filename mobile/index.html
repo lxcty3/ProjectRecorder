@@ -391,6 +391,57 @@
   </div>
 </section>
 
+<!-- ====================== 经营决策（高级管理） ====================== -->
+<section id="page-decisions" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>经营决策</h1>
+      <div class="sub">先处理影响交付和金额最大的事项</div>
+    </div>
+    <button class="icon-btn" id="btn-decisions-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="decision-summary" class="decision-summary"></div>
+    <div class="section-head"><span>决策队列</span>
+      <span class="meta">证据 · 影响 · 责任人 · 截止</span></div>
+    <div id="decision-list"></div>
+    <div class="section-head"><span>我的审批</span>
+      <span class="meta">统一收件箱</span></div>
+    <div id="approval-list"></div>
+  </div>
+</section>
+
+<!-- ====================== 经营摘要（高级管理） ====================== -->
+<section id="page-operations" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>经营摘要</h1>
+      <div class="sub">合同、回款、毛利与未来能力缺口</div>
+    </div>
+    <button class="icon-btn" id="btn-operations-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="operations-summary" class="decision-summary"></div>
+    <div id="operations-admin-actions" class="btn-row hidden">
+      <button class="btn ghost" id="btn-ops-skill">维护技能</button>
+      <button class="btn ghost" id="btn-ops-capacity">新增能力需求</button>
+      <button class="btn ghost" id="btn-ops-evidence">新建绩效证据</button>
+    </div>
+    <div class="section-head"><span>项目经营</span>
+      <span class="meta">合同 · 成本 · 毛利 · 回款</span></div>
+    <div id="operations-projects"></div>
+    <div class="section-head"><span>能力缺口</span>
+      <span class="meta">未来 2-4 周</span></div>
+    <div id="operations-capacity"></div>
+    <div class="section-head"><span>绩效证据</span>
+      <span class="meta">可追溯 · 不直接决定工资或晋升</span></div>
+    <div id="operations-performance"></div>
+    <div class="section-head"><span>工时经营维度</span>
+      <span class="meta">本期汇总</span></div>
+    <div id="operations-worklog"></div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -515,6 +566,11 @@
     <button class="btn ghost" id="btn-me-leave"
             style="width:100%;margin-top:8px">我要请假</button>
 
+    <!-- 自己的绩效依据只在用户主动点开时加载，避免把敏感内容塞进简单模式首屏。 -->
+    <button class="btn ghost" id="btn-my-performance"
+            style="width:100%;margin-top:8px">查看我的绩效依据</button>
+    <div id="my-performance" class="hidden"></div>
+
     <button class="btn danger" id="btn-me-logout"
             style="width:100%;margin-top:16px">退出登录</button>
 
@@ -537,6 +593,8 @@
     <button data-page="me"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
+    <button data-page="decisions"><b>决策</b></button>
+    <button data-page="operations" id="nav-operations"><b>经营</b></button>
     <button data-page="dash"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
     <button data-page="assist"><b>助手</b></button>
@@ -600,6 +658,8 @@
 <script src="notify.js"></script>
 <script src="identity.js"></script>
 <script src="today.js"></script>
+<script src="decision.js"></script>
+<script src="operations.js"></script>
 <script src="account.js"></script>
 <script src="community.js"></script>
 <script src="app.js"></script>

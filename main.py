@@ -39,6 +39,8 @@ from detail import ImportDialog, ProjectDialog, SubmitWindow
 from knowledge_planet import KnowledgePlanetPage
 from identity_ui import IdentityPage, role_label
 from today_ui import TodayPage
+from decision_ui import DecisionCenterPage
+from operations_ui import OperationsPage
 from metrics import budget_usage, load_ratio, num, sum_hours
 from server import DEFAULT_PORT, SubmitServer
 from timer_ui import SessionListDialog, TimerBar
@@ -508,6 +510,10 @@ class MainWindow(QMainWindow):
         self.tabs.setObjectName("RootTabs")
         self.today_page = TodayPage(self)
         self.today_tab = self.tabs.addTab(self.today_page, "今日")
+        self.decision_page = DecisionCenterPage(self)
+        self.decision_tab = self.tabs.addTab(self.decision_page, "经营决策")
+        self.operations_page = OperationsPage(self)
+        self.operations_tab = self.tabs.addTab(self.operations_page, "经营分析")
         self.dashboard = DashboardPage(self)
         self.tabs.addTab(self.dashboard, "驾驶舱")
         self.knowledge_page = KnowledgePlanetPage(self)
@@ -631,6 +637,9 @@ class MainWindow(QMainWindow):
             self.account_session.profile["enterprise_role_name"] = me.get("role_name")
             self.account_session.profile["enterprise_permissions"] = me.get("permissions") or []
         self._refresh_account_ui()
+        if (hasattr(self, "operations_page")
+                and (self._effective_ui_mode() != "advanced" or not self._management_view())):
+            self.operations_page.refresh()
 
     def _account_role_label(self):
         me = self._identity_me()
@@ -664,6 +673,12 @@ class MainWindow(QMainWindow):
             employee_tasks = bool(session and not management and advanced)
 
             self.tabs.setTabVisible(self.today_tab, not advanced)
+            self.tabs.setTabVisible(self.decision_tab, advanced and management)
+            self.tabs.setTabVisible(self.operations_tab, advanced and management)
+            if self.decision_page.session is not session:
+                self.decision_page.apply_account_session(session)
+            if self.operations_page.session is not session:
+                self.operations_page.apply_account_session(session)
             self.tabs.setTabVisible(
                 self.tabs.indexOf(self.knowledge_page), logged
             )
@@ -680,7 +695,9 @@ class MainWindow(QMainWindow):
                 self.employee_cloud_page.apply_account_session(
                     session if employee_tasks else None
                 )
-            if advanced:
+            if advanced and management:
+                self.tabs.setCurrentWidget(self.decision_page)
+            elif advanced:
                 self.tabs.setCurrentWidget(self.dashboard)
             else:
                 self.tabs.setCurrentWidget(self.today_page)
@@ -782,6 +799,10 @@ class MainWindow(QMainWindow):
             self.collaboration_page.apply_account_session(session)
         if hasattr(self, "identity_page"):
             self.identity_page.apply_account_session(session)
+        if hasattr(self, "decision_page"):
+            self.decision_page.apply_account_session(session)
+        if hasattr(self, "operations_page"):
+            self.operations_page.apply_account_session(session)
         if hasattr(self, "today_page"):
             self.today_page.apply_account_session(session)
         if hasattr(self, "employee_cloud_page"):
@@ -808,6 +829,8 @@ class MainWindow(QMainWindow):
     # ---------- 数据操作 ----------
     def refresh_all(self):
         self.today_page.refresh()
+        self.decision_page.refresh()
+        self.operations_page.refresh()
         self.dashboard.refresh()
         self.knowledge_page.refresh()
         self.employee_page.refresh()
@@ -863,6 +886,10 @@ class MainWindow(QMainWindow):
             self.employee_cloud_page.refresh()
         elif hasattr(self, "identity_page") and self.tabs.widget(index) is self.identity_page:
             self.identity_page.on_activated()
+        elif hasattr(self, "decision_page") and self.tabs.widget(index) is self.decision_page:
+            self.decision_page.on_activated()
+        elif hasattr(self, "operations_page") and self.tabs.widget(index) is self.operations_page:
+            self.operations_page.on_activated()
 
     def export_data(self):
         if not self._ensure_management_action("data.export_all"):
@@ -1156,6 +1183,8 @@ class MainWindow(QMainWindow):
             self.identity_page.shutdown()
         if hasattr(self, "employee_cloud_page"):
             self.employee_cloud_page.shutdown()
+        if hasattr(self, "operations_page"):
+            self.operations_page.shutdown()
         if self.server.running:
             self.server.stop()
         self.store.close()

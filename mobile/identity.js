@@ -198,6 +198,12 @@ async function refreshIdentity(force) {
     if (typeof renderMe === "function") renderMe();
     if (typeof renderToday === "function") renderToday();
     renderIdentity();
+    if (typeof refreshDecisionCenterIfActive === "function") {
+      refreshDecisionCenterIfActive();
+    }
+    if (typeof refreshOperationsIfActive === "function") {
+      refreshOperationsIfActive();
+    }
   } catch (error) {
     DB.identityError = identityErrorText(error);
     renderIdentity();
