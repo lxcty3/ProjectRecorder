@@ -901,6 +901,9 @@ declare
   v_dependencies jsonb:='[]'::jsonb;
   v_handoffs jsonb:='[]'::jsonb;
   v_changes jsonb:='[]'::jsonb;
+  v_tasks jsonb:='[]'::jsonb;
+  v_projects jsonb:='[]'::jsonb;
+  v_members jsonb:='[]'::jsonb;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   if v_eid is null then
@@ -1073,6 +1076,41 @@ begin
   order by x.delayed_days desc,d.task_id
   limit 200;
 
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id',t.id,'title',t.title,'project_id',t.project_id,
+    'employee_id',t.employee_id,'employee_name',ep.name,
+    'plan_date',t.plan_date,'acceptance_status',coalesce(a.status,'not_submitted'),
+    'criteria',a.criteria,'evidence',a.evidence,
+    'reviewer_id',a.reviewer_id
+  ) order by t.plan_date,t.title),'[]'::jsonb)
+  into v_tasks
+  from public.tasks t
+  left join public.profiles ep on ep.id=t.employee_id
+  left join public.task_acceptance a on a.task_id=t.id
+  where public._execution_task_enterprise(t.id)=v_eid
+    and (v_management or t.boss_id=v_uid or t.employee_id=v_uid);
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id',pr.id,'name',pr.name,'due_date',pr.due_date,
+    'status',pr.status
+  ) order by pr.name),'[]'::jsonb)
+  into v_projects
+  from public.projects pr
+  where exists(
+    select 1 from public.enterprise_members m
+     where m.enterprise_id=v_eid and m.profile_id=pr.boss_id
+       and m.status='active'
+  ) and (v_management or pr.boss_id=v_uid);
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id',m.profile_id,'name',p.name,'department',m.department,
+    'role_key',m.role_key
+  ) order by p.name),'[]'::jsonb)
+  into v_members
+  from public.enterprise_members m
+  join public.profiles p on p.id=m.profile_id
+  where m.enterprise_id=v_eid and m.status='active';
+
   return jsonb_build_object(
     'ok',true,
     'enterprise_id',v_eid,
@@ -1080,6 +1118,9 @@ begin
     'dependencies',v_dependencies,
     'handoffs',v_handoffs,
     'changes',v_changes,
+    'tasks',v_tasks,
+    'projects',v_projects,
+    'members',v_members,
     'access',jsonb_build_object(
       'management',v_management,
       'can_review_acceptance',v_can_accept,

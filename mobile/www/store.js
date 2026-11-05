@@ -176,6 +176,9 @@ function emptyDatabase() {
                   collection_alerts: [], members: [], security_audit: [],
                   access: {}, at: 0 },
     myPerformance: { items: [], at: 0 },
+    execution: { acceptance: [], dependencies: [], handoffs: [],
+                  changes: [], tasks: [], projects: [], members: [],
+                  access: {}, at: 0 },
 
     /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
        才能切到 advanced。服务端仍会独立校验。 */
@@ -308,6 +311,11 @@ function migrate(data) {
   );
   merged.myPerformance = Object.assign(
     { items: [], at: 0 }, merged.myPerformance || {}
+  );
+  merged.execution = Object.assign(
+    { acceptance: [], dependencies: [], handoffs: [], changes: [],
+      tasks: [], projects: [], members: [], access: {}, at: 0 },
+    merged.execution || {}
   );
   ["decisions", "approvals", "members"].forEach(key => {
     if (!Array.isArray(merged.decisionCenter[key])) {
@@ -954,6 +962,9 @@ function resetSyncState() {
                     collection_alerts: [], members: [], security_audit: [],
                     access: {}, at: 0 };
   DB.myPerformance = { items: [], at: 0 };
+  DB.execution = { acceptance: [], dependencies: [], handoffs: [],
+                   changes: [], tasks: [], projects: [], members: [],
+                   access: {}, at: 0 };
   DB.syncCursor = {};
   DB.notifyCursor = {};
   DB.lastSync = { at: "", ok: true, pending: 0, message: "" };

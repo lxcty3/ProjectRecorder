@@ -442,6 +442,37 @@
   </div>
 </section>
 
+<!-- ====================== 执行追踪 ====================== -->
+<section id="page-execution" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>执行追踪</h1>
+      <div class="sub">验收、依赖、交接和变更</div>
+    </div>
+    <button class="icon-btn" id="btn-execution-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="execution-summary" class="decision-summary"></div>
+    <div id="execution-tools" class="btn-row">
+      <button class="btn ghost" id="btn-execution-submit">提交验收</button>
+      <button class="btn ghost" id="btn-execution-handoff">发起交接</button>
+      <button class="btn ghost" id="btn-execution-change">发起变更</button>
+    </div>
+    <div class="section-head"><span>验收</span>
+      <span class="meta">标准 · 证据 · 独立验收</span></div>
+    <div id="execution-acceptance"></div>
+    <div class="section-head"><span>依赖影响</span>
+      <span class="meta">阻塞与下游日期</span></div>
+    <div id="execution-dependencies"></div>
+    <div class="section-head"><span>交接</span>
+      <span class="meta">接收方确认后才生效</span></div>
+    <div id="execution-handoffs"></div>
+    <div class="section-head"><span>变更</span>
+      <span class="meta">未批准不改原计划</span></div>
+    <div id="execution-changes"></div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -589,12 +620,14 @@
 <nav id="nav">
   <span id="nav-simple" class="nav-group">
     <button data-page="today" class="on"><b>今天</b></button>
+    <button data-page="execution" id="nav-execution-simple"><b>执行</b></button>
     <button data-page="community"><b>星球</b></button>
     <button data-page="me"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
     <button data-page="decisions"><b>决策</b></button>
     <button data-page="operations" id="nav-operations"><b>经营</b></button>
+    <button data-page="execution" id="nav-execution"><b>执行</b></button>
     <button data-page="dash"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
     <button data-page="assist"><b>助手</b></button>
@@ -660,6 +693,7 @@
 <script src="today.js"></script>
 <script src="decision.js"></script>
 <script src="operations.js"></script>
+<script src="execution.js"></script>
 <script src="account.js"></script>
 <script src="community.js"></script>
 <script src="app.js"></script>

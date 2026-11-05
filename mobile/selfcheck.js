@@ -28,7 +28,7 @@ const HERE = __dirname;
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "identity.js", "today.js",
-               "decision.js", "operations.js", "account.js", "community.js",
+               "decision.js", "operations.js", "execution.js", "account.js", "community.js",
                "app.js"];
 
 let failed = 0;
@@ -167,7 +167,7 @@ function matchAll(text, pattern, group) {
      改成 vm.Script 预编译后，每个用例只付"执行"的代价。
 */
 const COMPILED = ["store.js", "calc.js", "assist.js", "charts.js", "merit.js",
-                  "sync.js", "notify.js", "operations.js"]
+                  "sync.js", "notify.js", "operations.js", "execution.js"]
   .map(name => ({
   name,
   script: new vm.Script(fs.readFileSync(path.join(HERE, name), "utf8"),
@@ -2799,7 +2799,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
   const sources = ["app.js", "account.js", "community.js", "today.js",
-                   "operations.js"]
+                   "operations.js", "execution.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
 
@@ -3714,7 +3714,7 @@ test("界面上绑定的每个处理函数都真的有定义", () => {
      那个名字必须在某个文件里被定义过。 */
   const FILES = ["app.js", "account.js", "sync.js", "notify.js",
     "assist.js", "charts.js", "store.js", "identity.js", "today.js",
-    "community.js"];
+    "community.js", "execution.js"];
 
   const defined = new Set();
   FILES.forEach(file => {
@@ -4657,7 +4657,7 @@ test("没有重名声明会撞掉库暴露的全局量", () => {
   ];
   const files = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                  "sync.js", "notify.js", "identity.js", "today.js",
-                 "account.js", "community.js", "app.js"];
+                 "execution.js", "account.js", "community.js", "app.js"];
   const problems = [];
 
   files.forEach(name => {
@@ -4687,7 +4687,7 @@ test("每个源文件都能单独执行且不重复声明", () => {
   const context = makeContext();
   const files = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                  "sync.js", "notify.js", "identity.js", "today.js",
-                 "account.js", "community.js"];
+                 "execution.js", "account.js", "community.js"];
   files.forEach(name => {
     const source = fs.readFileSync(path.join(HERE, name), "utf8");
     try {
@@ -4713,6 +4713,8 @@ test("每个源文件都能单独执行且不重复声明", () => {
                    "openStaffMenu", "syncStaffAccounts", "applyRoleUI"],
     "community.js": ["renderCommunity", "loadCommunityPosts",
                      "submitCommunityPost", "deleteCommunityPost"],
+    "execution.js": ["renderExecution", "loadExecution", "bindExecution",
+                     "executionRpc"],
   };
   Object.keys(expect).forEach(file => {
     expect[file].forEach(fn => {
@@ -5170,6 +5172,57 @@ test("经营摘要：管理页、能力缺口和个人绩效依据完整接线",
     }
   }
 });
+test("执行追踪：手机验收、交接、变更完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-execution", "execution-acceptance", "execution-handoffs",
+    "execution-changes", "btn-execution-refresh", "nav-execution",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="execution"') === -1) {
+    throw new Error("导航缺少执行追踪入口");
+  }
+  if (html.indexOf('src="execution.js"') === -1) {
+    throw new Error("index.html 没有加载 execution.js");
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of [
+    '"execution"', 'target === "execution"', "renderExecution()",
+    "loadExecution(true)", "bindExecution()",
+  ]) {
+    if (app.indexOf(text) === -1) throw new Error(`app.js 缺少 ${text}`);
+  }
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  for (const text of ["execution", "nav-execution", "loadExecution"]) {
+    if (account.indexOf(text) === -1) throw new Error(`account.js 缺少 ${text}`);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"execution\.js"/.test(build)) {
+    throw new Error("build-www.js 没有打包 execution.js");
+  }
+  const executionPath = path.join(HERE, "execution.js");
+  if (!fs.existsSync(executionPath)) {
+    throw new Error("缺少 execution.js");
+  }
+  const execution = fs.readFileSync(executionPath, "utf8");
+  for (const text of [
+    "renderExecution", "loadExecution", "bindExecution", "executionRpc",
+    "get_execution_board", "review_task_acceptance",
+    "accept_task_handoff", "decide_change_request",
+    "create_change_request", "submit_task_acceptance",
+    "data-execution-action", "execution-allowed",
+  ]) {
+    if (execution.indexOf(text) === -1) {
+      throw new Error(`execution.js 缺少 ${text}`);
+    }
+  }
+  const store = fs.readFileSync(path.join(HERE, "store.js"), "utf8");
+  if (store.indexOf("execution:") === -1) {
+    throw new Error("store.js 缺少 execution 缓存");
+  }
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

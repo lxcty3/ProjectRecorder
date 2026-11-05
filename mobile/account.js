@@ -387,6 +387,7 @@ function finishLogin() {
   if (typeof refreshPointState === "function") refreshPointState(true);
   if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
   if (typeof loadOperations === "function") loadOperations(false);
+  if (typeof loadExecution === "function") loadExecution(false);
   showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
 }
@@ -398,6 +399,7 @@ function resumeSession() {
   if (typeof refreshPointState === "function") refreshPointState(false);
   if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
   if (typeof loadOperations === "function") loadOperations(false);
+  if (typeof loadExecution === "function") loadExecution(false);
   refreshNotifyPermission().then(() => renderMe());
   if (typeof ensureGetuiPushConsent === "function") {
     ensureGetuiPushConsent();
@@ -439,6 +441,9 @@ function applyRoleUI() {
   if ((!advanced || !management) && typeof clearOperationsCache === "function") {
     clearOperationsCache();
   }
+  if (!profile && typeof clearExecutionCache === "function") {
+    clearExecutionCache();
+  }
 
   /* 简单模式只保留今天、知识星球和我的；高级模式才展开经营与治理页。 */
   if ($("nav-simple")) $("nav-simple").classList.toggle("hidden", !profile || advanced);
@@ -459,6 +464,12 @@ function applyRoleUI() {
   }
   if ($("nav-operations")) {
     $("nav-operations").classList.toggle("hidden", !advanced || !management);
+  }
+  if ($("nav-execution")) {
+    $("nav-execution").classList.toggle("hidden", !profile);
+  }
+  if ($("nav-execution-simple")) {
+    $("nav-execution-simple").classList.toggle("hidden", !profile);
   }
   if (profile && currentPageName() === "operations" && !management) {
     showPage(advanced ? "dash" : "today");

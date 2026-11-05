@@ -120,6 +120,25 @@ function identityHasAdvancedAccess() {
   ]);
 }
 
+function identityCanReviewAcceptance() {
+  return identityCanAny([
+    "tasks.grade", "tasks.assign", "projects.manage",
+    "company.manage", "people.manage",
+  ]);
+}
+
+function identityCanManageExecution() {
+  return identityCanAny([
+    "company.manage", "projects.manage", "tasks.assign",
+    "tasks.grade", "people.manage",
+  ]);
+}
+
+function identityCanExecution() {
+  // The server scopes the board to the caller's tasks and handoffs.
+  return !!DB.profile;
+}
+
 function identityPercent(value) {
   return Math.round(num(value) * 100) / 100;
 }

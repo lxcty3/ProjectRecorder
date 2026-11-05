@@ -36,6 +36,7 @@ const FILES = [
   "today.js",
   "decision.js",
   "operations.js",
+  "execution.js",
   "account.js",
   "community.js",
   "app.js",

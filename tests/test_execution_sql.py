@@ -145,5 +145,16 @@ class ExecutionSqlTest(unittest.TestCase):
         self.assertIn("'code','permission_denied'", self.lowered)
 
 
+    def test_board_exposes_scoped_task_project_and_member_sources(self):
+        for fragment in (
+            "'tasks',v_tasks",
+            "'projects',v_projects",
+            "'members',v_members",
+            "public._execution_task_enterprise(t.id)=v_eid",
+            "m.enterprise_id=v_eid and m.status='active'",
+        ):
+            self.assertIn(fragment, self.lowered)
+
+
 if __name__ == "__main__":
     unittest.main()
