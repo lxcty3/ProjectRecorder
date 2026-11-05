@@ -436,6 +436,9 @@ function applyRoleUI() {
   const isStaff = !!(profile && !management);
   if (!advancedAllowed) DB.uiMode = "simple";
   const advanced = !!(profile && advancedAllowed && DB.uiMode === "advanced");
+  if ((!advanced || !management) && typeof clearOperationsCache === "function") {
+    clearOperationsCache();
+  }
 
   /* 简单模式只保留今天、知识星球和我的；高级模式才展开经营与治理页。 */
   if ($("nav-simple")) $("nav-simple").classList.toggle("hidden", !profile || advanced);
@@ -455,7 +458,7 @@ function applyRoleUI() {
     showPage("today");
   }
   if ($("nav-operations")) {
-    $("nav-operations").classList.toggle("hidden", !management);
+    $("nav-operations").classList.toggle("hidden", !advanced || !management);
   }
   if (profile && currentPageName() === "operations" && !management) {
     showPage(advanced ? "dash" : "today");

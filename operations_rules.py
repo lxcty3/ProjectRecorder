@@ -82,12 +82,21 @@ def capacity_gap(required, available):
     return max(required_total - available_total, 0.0)
 
 
-def performance_score(on_time, first_pass, rework, collaboration):
+def performance_score(
+    on_time,
+    first_pass,
+    rework,
+    collaboration,
+    complexity=0,
+    business_contribution=0,
+):
     """Compute an evidence score only; this does not authorize compensation."""
     raw = (
-        _rate(on_time) * 35
-        + _rate(first_pass) * 30
-        + (1 - _rate(rework)) * 20
-        + min(max(_number(collaboration), 0.0), 5.0) / 5 * 15
+        _rate(on_time) * 30
+        + _rate(first_pass) * 25
+        + (1 - _rate(rework)) * 15
+        + min(max(_number(collaboration), 0.0), 5.0) / 5 * 10
+        + min(max(_number(complexity), 0.0), 5.0) / 5 * 12
+        + min(max(_number(business_contribution), 0.0), 5.0) / 5 * 8
     )
     return max(0.0, min(100.0, round(raw, 1)))

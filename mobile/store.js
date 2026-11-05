@@ -168,7 +168,9 @@ function emptyDatabase() {
     /* 管理经营摘要与员工自己的绩效依据。敏感数据只保存在本机缓存，
        仍由服务端 RPC 决定是否能读取。 */
     operations: { projects: [], capacity_gaps: [], performance: [],
-                  worklog_summary: {}, at: 0 },
+                  worklog_summary: {}, capacity_demands: [], skills: [],
+                  collection_alerts: [], members: [], security_audit: [],
+                  access: {}, at: 0 },
     myPerformance: { items: [], at: 0 },
 
     /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
@@ -295,7 +297,9 @@ function migrate(data) {
   );
   merged.operations = Object.assign(
     { projects: [], capacity_gaps: [], performance: [],
-      worklog_summary: {}, at: 0 },
+      worklog_summary: {}, capacity_demands: [], skills: [],
+      collection_alerts: [], members: [], security_audit: [],
+      access: {}, at: 0 },
     merged.operations || {}
   );
   merged.myPerformance = Object.assign(
@@ -624,20 +628,24 @@ function addWorklog(data, options) {
 }
 
 function updateWorklog(id, data) {
-  const log = DB.worklogs.find(item => item.id === Number(id));
+  const local = DB.worklogs.find(item => String(item.id) === String(id));
+  const remote = (DB.remoteWorklogs || []).find(
+    item => String(item.id) === String(id));
+  const log = local || remote;
   if (!log) throw new Error("这条工时已经不存在了。");
-  if (data.hours !== undefined) {
+  const cloudOnly = !local;
+  if (!cloudOnly && data.hours !== undefined) {
     const hours = num(data.hours);
     if (hours <= 0 || hours > 24) throw new Error("工时要大于 0 且不超过 24。");
     log.hours = hours;
   }
-  if (data.work_date !== undefined) {
+  if (!cloudOnly && data.work_date !== undefined) {
     const date = String(data.work_date).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("日期格式不对。");
     if (date > todayISO()) throw new Error("不能填未来的日期。");
     log.work_date = date;
   }
-  if (data.project_id !== undefined) {
+  if (!cloudOnly && data.project_id !== undefined) {
     log.project_id = data.project_id === "" || data.project_id === null
       ? null : Number(data.project_id);
     if (log.project_id !== null && !getProject(log.project_id)) {
@@ -649,16 +657,16 @@ function updateWorklog(id, data) {
       if (!step || step.project_id !== log.project_id) log.step_id = null;
     }
   }
-  if (data.step_id !== undefined) {
+  if (!cloudOnly && data.step_id !== undefined) {
     log.step_id = data.step_id === "" || data.step_id === null
       ? null : Number(data.step_id);
   }
-  if (data.employee_id !== undefined) {
+  if (!cloudOnly && data.employee_id !== undefined) {
     const employee = getEmployee(data.employee_id);
     if (!employee) throw new Error("这个人已经不在名单里了。");
     log.employee_id = employee.id;
   }
-  if (data.content !== undefined) log.content = String(data.content);
+  if (!cloudOnly && data.content !== undefined) log.content = String(data.content);
   if (data.billable !== undefined) log.billable = data.billable !== false;
   if (data.overtime !== undefined) log.overtime = !!data.overtime;
   if (data.work_kind !== undefined) {
@@ -926,7 +934,9 @@ function resetSyncState() {
   DB.syncQueue = [];
   DB.dimensionQueue = [];
   DB.operations = { projects: [], capacity_gaps: [], performance: [],
-                    worklog_summary: {}, at: 0 };
+                    worklog_summary: {}, capacity_demands: [], skills: [],
+                    collection_alerts: [], members: [], security_audit: [],
+                    access: {}, at: 0 };
   DB.myPerformance = { items: [], at: 0 };
   DB.syncCursor = {};
   DB.notifyCursor = {};

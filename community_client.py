@@ -200,9 +200,13 @@ def _request(method, path, *, body=None, token="", params=None,
     if not raw.strip():
         return None
     try:
-        return json.loads(raw)
+        payload = json.loads(raw)
     except ValueError as error:
         raise CommunityError("社区服务器返回了无法识别的数据。") from error
+    if (isinstance(payload, dict) and payload.get("ok") is False
+            and payload.get("code") == "permission_denied"):
+        raise CommunityError(_translate_error(_error_message(payload)))
+    return payload
 
 
 class CommunityClient:
@@ -606,6 +610,13 @@ class CommunityClient:
                 "p_demand": str(demand_id) if demand_id else None,
                 "p_data": dict(data or {}),
             },
+        )
+
+    def get_worklog_dimensions(self, session, worklog_id):
+        return _request(
+            "POST", "/rest/v1/rpc/get_worklog_dimensions",
+            token=session.access_token,
+            body={"p_worklog": str(worklog_id)},
         )
 
     def upsert_worklog_dimensions(self, session, worklog_id, data):

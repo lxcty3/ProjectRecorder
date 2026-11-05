@@ -637,6 +637,9 @@ class MainWindow(QMainWindow):
             self.account_session.profile["enterprise_role_name"] = me.get("role_name")
             self.account_session.profile["enterprise_permissions"] = me.get("permissions") or []
         self._refresh_account_ui()
+        if (hasattr(self, "operations_page")
+                and (self._effective_ui_mode() != "advanced" or not self._management_view())):
+            self.operations_page.refresh()
 
     def _account_role_label(self):
         me = self._identity_me()

@@ -1,7 +1,13 @@
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from community_client import CommunityClient, CommunitySession
+from community_client import (
+    CommunityClient,
+    CommunityError,
+    CommunitySession,
+    _request,
+)
 
 
 class OperationsClientTest(unittest.TestCase):
@@ -58,6 +64,32 @@ class OperationsClientTest(unittest.TestCase):
             request.call_args.kwargs["body"],
             {"p_demand": None,
              "p_data": {"skill": "python", "required_hours": 8}},
+        )
+
+    @patch("community_client.urllib.request.urlopen")
+    def test_permission_denied_payload_raises_client_error(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps({
+            "ok": False,
+            "code": "permission_denied",
+            "error": "project scope does not allow this operation",
+        }).encode("utf-8")
+        urlopen.return_value = response
+        with self.assertRaises(CommunityError) as caught:
+            _request("POST", "/rest/v1/rpc/example", token="token", body={})
+        self.assertIn("project scope", str(caught.exception))
+
+    @patch("community_client._request")
+    def test_get_worklog_dimensions_method(self, request):
+        request.return_value = {"overtime": True, "work_kind": "presales"}
+        result = self.client.get_worklog_dimensions(self.session, "w1")
+        self.assertTrue(result["overtime"])
+        request.assert_called_once_with(
+            "POST",
+            "/rest/v1/rpc/get_worklog_dimensions",
+            token="token",
+            body={"p_worklog": "w1"},
         )
 
     @patch("community_client._request")

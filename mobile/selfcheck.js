@@ -320,6 +320,71 @@ test("工时经营标签排队后只保留一条并可撤销", () => {
   if (run("DB.dimensionQueue.length") !== 0) throw new Error("撤销后标签仍在队列");
 });
 
+test("本地工时维度保留到拿到云 UUID 后再同步", () => {
+  fresh();
+  run(`DB.profile = {id: "profile-uuid"};
+    queueWorklogDimensions(42, {billable: false, overtime: true,
+      work_kind: "presales", rework: true, waiting: true, travel: true});`);
+  if (run("DB.dimensionQueue.length") !== 1) throw new Error("本地维度没进队列");
+  if (run("DB.dimensionQueue[0].worklog_id") !== null) {
+    throw new Error("本地数字 id 不应冒充云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== "42") {
+    throw new Error("本地工时的 id 没保留");
+  }
+  run(`resolveQueuedWorklogDimensions(42,
+    "22222222-2222-4222-8222-222222222222");`);
+  if (run("DB.dimensionQueue[0].worklog_id")
+      !== "22222222-2222-4222-8222-222222222222") {
+    throw new Error("拿到 UUID 后没绑定维度队列");
+  }
+  if (run("DB.dimensionQueue[0].data.work_kind") !== "presales") {
+    throw new Error("等待同步时维度被丢掉");
+  }
+});
+
+test("对象形式的绩效证据也能渲染来源 ID", () => {
+  fresh();
+  const html = run(`(function () {
+    var box = { innerHTML: "", querySelectorAll: function () { return []; } };
+    document.getElementById = function (id) {
+      return id === "my-performance" ? box : null;
+    };
+    window.$ = function (id) { return document.getElementById(id); };
+    window.escapeHtml = function (value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    };
+    DB.myPerformance = {items: [{
+      id: "e1", period: "2026-11", status: "submitted", score: 81,
+      evidence: {type: "worklog", source_id: "w1", label: "客户交付"},
+      employee_statement: "", reviewer_note: ""
+    }]};
+    renderMyPerformance();
+    return box.innerHTML;
+  })();`);
+  if (html.indexOf("worklog w1") === -1) {
+    throw new Error("对象证据没有显示 source_id");
+  }
+});
+
+test("简单模式和权限丢失会清掉经营缓存", () => {
+  fresh();
+  run(`window.$ = function (id) { return document.getElementById(id); };
+    DB.profile = {id: "u1"};
+    DB.uiMode = "simple";
+    DB.operations = {projects: [{name: "secret"}],
+      capacity_gaps: [], performance: [], worklog_summary: {}, at: 1};`);
+  if (run("operationsAllowedInCurrentMode()") !== false) {
+    throw new Error("简单模式被误判为允许经营数据");
+  }
+  run("clearOperationsCache()");
+  if (run("DB.operations.projects.length") !== 0) {
+    throw new Error("权限/模式变化后经营缓存没清空");
+  }
+});
+
 test("工时为 0 要报错", () => {
   fresh();
   run('window.__e = addEmployee({name: "王强"});');
@@ -554,7 +619,7 @@ test("洞察能抓出顺序矛盾", () => {
     addStep(window.__p.id, {name: "第二步", status: "已完成"});`);
   const found = plain(run("insights()"));
   const hit = found.some(item => item.title.indexOf("顺序矛盾") !== -1);
-  if (!hit) throw new Error("顺序矛盾没被抓出来：" 
+  if (!hit) throw new Error("顺序矛盾没被抓出来："
     + found.map(item => item.title).join("；"));
 });
 
@@ -2610,7 +2675,8 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js", "today.js"]
+  const sources = ["app.js", "account.js", "community.js", "today.js",
+                   "operations.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
 
@@ -4969,6 +5035,10 @@ test("经营摘要：管理页、能力缺口和个人绩效依据完整接线",
     "renderMyPerformance", "loadMyPerformanceEvidence",
     "get_my_performance_evidence", "submit_performance_statement",
     "upsert_worklog_dimensions", "queueWorklogDimensions",
+    "resolveQueuedWorklogDimensions", "operationsAllowedInCurrentMode",
+    "clearOperationsCache", "get_worklog_dimensions",
+    "upsert_profile_skill", "upsert_capacity_demand",
+    "upsert_performance_evidence", "operationsRpc",
   ]) {
     if (operations.indexOf(text) === -1) {
       throw new Error(`operations.js 缺少 ${text}`);

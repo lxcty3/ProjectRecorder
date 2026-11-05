@@ -28,6 +28,7 @@ class OperationsSqlTest(unittest.TestCase):
             "upsert_profile_skill",
             "upsert_capacity_demand",
             "upsert_worklog_dimensions",
+            "get_worklog_dimensions",
             "upsert_performance_evidence",
             "get_my_performance_evidence",
             "submit_performance_statement",
@@ -44,6 +45,8 @@ class OperationsSqlTest(unittest.TestCase):
             "outsourced_paid numeric",
             "labor_cost numeric",
             "estimated_completion_cost numeric",
+            "invoice_due_date date",
+            "payment_terms text",
             "updated_by uuid",
             "updated_at timestamptz",
         ):
@@ -86,6 +89,7 @@ class OperationsSqlTest(unittest.TestCase):
             "collaboration_score numeric",
             "complexity_score numeric",
             "business_contribution numeric",
+            "customer_evaluation jsonb",
             "employee_statement text",
             "reviewed_by uuid",
             "reviewed_at timestamptz",
@@ -111,8 +115,24 @@ class OperationsSqlTest(unittest.TestCase):
             "'people.manage'",
             "'tasks.grade'",
             "_operations_has_permission",
+            "_operations_can_access_project",
+            "_operations_can_access_profile",
+            "_operations_has_company_permission",
+            "_operations_denied",
         ):
             self.assertIn(fragment, self.lowered)
+
+    def test_permission_conditions_and_dashboard_field_filters(self):
+        for fragment in (
+            "v_conditions->'project_ids'",
+            "v_conditions->'profile_ids'",
+            "'amount_limit'",
+            "'can_finance'",
+            "'can_performance'",
+            "'can_worklogs'",
+            "case when v_can_finance then jsonb_build_object",
+        ):
+            self.assertIn(fragment.lower(), self.lowered)
 
     def test_rls_least_privilege_and_audit(self):
         self.assertGreaterEqual(self.lowered.count("security definer"), 12)
@@ -123,6 +143,7 @@ class OperationsSqlTest(unittest.TestCase):
             "capacity_demands",
             "performance_evidence",
             "worklog_dimensions",
+            "operations_security_audit",
         ):
             self.assertIn(f"alter table public.{table} enable row level security",
                           self.lowered)
@@ -134,6 +155,11 @@ class OperationsSqlTest(unittest.TestCase):
         self.assertIn("enterprise_identity_audit", self.lowered)
         self.assertIn("operations.economics.updated", self.lowered)
         self.assertIn("operations.performance.reviewed", self.lowered)
+        self.assertIn("source_type='finance'", self.lowered)
+        self.assertIn("w.approval_status='approved'", self.lowered)
+        self.assertIn("_operations_validate_evidence", self.lowered)
+        self.assertIn("_operations_evidence_details", self.lowered)
+        self.assertIn("'code','permission_denied'", self.lowered)
 
 
 if __name__ == "__main__":

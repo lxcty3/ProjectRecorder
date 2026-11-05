@@ -2,6 +2,7 @@ import json
 import os
 import unittest
 import uuid
+from datetime import date, timedelta
 
 try:
     import psycopg2
@@ -50,6 +51,71 @@ class OperationsIntegrationTest(unittest.TestCase):
             cur.execute("rollback to savepoint expected_operations_denial")
         if expected:
             self.assertIn(expected, str(caught.exception))
+
+    def _denied(self, user_id, sql, params=(), operation=""):
+        result = self._as(user_id, sql, params)[0]
+        self.assertFalse(result.get("ok", True), result)
+        self.assertEqual("permission_denied", result.get("code"))
+        if operation:
+            self.assertIn(operation, result.get("error", ""))
+        return result
+
+    def _project(self, owner_id, name):
+        return self._as(
+            owner_id,
+            "select public.save_project(null,1,%s::jsonb)",
+            (json.dumps({"name": name, "budget": 100000}),),
+        )[0]["id"]
+
+    def _scoped_manager(self, enterprise_id, owner_id, allowed_project):
+        manager_id = uuid.uuid4()
+        code = "manager-" + manager_id.hex
+        template_id = uuid.uuid4()
+        version_id = uuid.uuid4()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into auth.users(id,email) values(%s,%s)",
+                (manager_id, code + "@example.test"),
+            )
+            cur.execute(
+                "insert into public.profiles(id,code,name,role,boss_id) "
+                "values(%s,%s,'Scoped Manager','employee',%s)",
+                (manager_id, code, owner_id),
+            )
+            cur.execute(
+                "insert into public.enterprise_members("
+                "enterprise_id,profile_id,role_key,department,status"
+                ") values(%s,%s,'project_manager','Delivery','active')",
+                (enterprise_id, manager_id),
+            )
+            cur.execute(
+                "insert into public.enterprise_role_templates("
+                "id,enterprise_id,key,name,is_system"
+                ") values(%s,%s,%s,'Scoped Project Manager',false)",
+                (template_id, enterprise_id, code),
+            )
+            cur.execute(
+                "insert into public.enterprise_role_template_versions("
+                "id,template_id,version,status,created_by"
+                ") values(%s,%s,1,'active',%s)",
+                (version_id, template_id, owner_id),
+            )
+            cur.execute(
+                "insert into public.enterprise_role_template_permissions("
+                "template_version_id,permission_key,resource,action,scope,"
+                "conditions,high_risk"
+                ") values(%s,'projects.manage','projects','manage','project',"
+                "%s::jsonb,false)",
+                (version_id, json.dumps({"project_ids": [str(allowed_project)]})),
+            )
+            cur.execute(
+                "insert into public.enterprise_role_assignments("
+                "enterprise_id,profile_id,template_version_id,is_primary,"
+                "status,appointed_by"
+                ") values(%s,%s,%s,true,'active',%s)",
+                (enterprise_id, manager_id, version_id, owner_id),
+            )
+        return manager_id
 
     def _fixture(self):
         owner_id = uuid.uuid4()
@@ -117,20 +183,22 @@ class OperationsIntegrationTest(unittest.TestCase):
             (enterprise_id,),
         )[0]
         self.assertEqual(1, audit_count)
-        self._expect_error(
+        self._denied(
             employee_id,
             "select public.get_operations_dashboard(4)",
-            expected="management permission required",
+            operation="dashboard",
         )
-        self._expect_error(
+        self._denied(
             employee_id,
             "select public.upsert_project_economics(%s,'{}'::jsonb)",
             (project_id,),
-            expected="permission required",
+            operation="upsert_project_economics",
         )
 
     def test_worklog_dimensions_skills_capacity_and_performance_round_trip(self):
-        _, owner_id, employee_id, _ = self._fixture()
+        _, owner_id, employee_id, project_id = self._fixture()
+        today = date.today()
+        period = today.strftime("%Y-%m")
         worklog_id = self._as(
             employee_id,
             "insert into public.worklogs("
@@ -177,8 +245,8 @@ class OperationsIntegrationTest(unittest.TestCase):
             (json.dumps({
                 "skill": "python",
                 "required_hours": 80,
-                "needed_from": "2026-01-01",
-                "needed_until": "2026-01-28",
+                "needed_from": today.isoformat(),
+                "needed_until": (today + timedelta(days=27)).isoformat(),
             }),),
         )
         dashboard = self._as(
@@ -188,19 +256,36 @@ class OperationsIntegrationTest(unittest.TestCase):
         self.assertGreater(float(gap["gap_hours"]), 0)
         self.assertTrue(dashboard["worklog_summary"]["overtime_hours"] >= 3)
 
+        task_id = self._as(
+            None,
+            "insert into public.tasks("
+            "boss_id,employee_id,project_id,title,plan_date,est_hours"
+            ") values(%s,%s,%s,'Delivered worklog migration',current_date,4)"
+            " returning id",
+            (owner_id, employee_id, project_id),
+        )[0]
         evidence = self._as(
             owner_id,
-            "select public.upsert_performance_evidence(%s,'2026-11',%s::jsonb)",
+            "select public.upsert_performance_evidence(%s,%s,%s::jsonb)",
             (
                 employee_id,
+                period,
                 json.dumps({
                     "on_time_rate": 0.9,
                     "first_pass_rate": 0.8,
                     "rework_rate": 0.1,
                     "collaboration_score": 4.5,
-                    "complexity_score": 3,
+                    "complexity_score": 4,
                     "business_contribution": 4,
-                    "evidence": [{"type": "task", "id": "t1"}],
+                    "customer_evaluation": {
+                        "score": 4.8,
+                        "comment": "Clear and reliable delivery.",
+                        "evaluator": "Customer A",
+                    },
+                    "evidence": [
+                        {"type": "task", "id": str(task_id)},
+                        {"type": "worklog", "id": str(worklog_id)},
+                    ],
                 }),
             ),
         )[0]
@@ -208,7 +293,10 @@ class OperationsIntegrationTest(unittest.TestCase):
             employee_id, "select public.get_my_performance_evidence()"
         )[0]
         self.assertEqual(1, len(own["items"]))
-        self.assertEqual("t1", own["items"][0]["evidence"][0]["id"])
+        self.assertEqual(str(task_id), own["items"][0]["evidence"][0]["id"])
+        self.assertEqual(4.8, float(
+            own["items"][0]["customer_evaluation"]["score"]
+        ))
         self._as(
             employee_id,
             "select public.submit_performance_statement(%s,%s)",
@@ -230,6 +318,161 @@ class OperationsIntegrationTest(unittest.TestCase):
                 "'authenticated','public.project_economics','SELECT')",
             )[0]
         )
+
+    def test_scoped_manager_can_only_use_assigned_project_and_is_audited(self):
+        enterprise_id, owner_id, _, project_a = self._fixture()
+        project_b = self._project(owner_id, "Other project")
+        manager_id = self._scoped_manager(
+            enterprise_id, owner_id, project_a
+        )
+        allowed = self._as(
+            manager_id,
+            "select public.upsert_project_economics(%s,%s::jsonb)",
+            (project_a, json.dumps({"contract_amount": 1000})),
+        )[0]
+        self.assertNotIn("ok", allowed)
+        denied = self._denied(
+            manager_id,
+            "select public.upsert_project_economics(%s,%s::jsonb)",
+            (project_b, json.dumps({"contract_amount": 1000})),
+            operation="upsert_project_economics",
+        )
+        self.assertEqual("permission_denied", denied["code"])
+        dashboard = self._as(
+            manager_id, "select public.get_operations_dashboard(4)"
+        )[0]
+        self.assertEqual([project_a], [p["project_id"] for p in dashboard["projects"]])
+        self.assertNotIn("contract_amount", dashboard["projects"][0])
+        self.assertFalse(dashboard["access"]["can_finance"])
+        performance_denied = self._denied(
+            manager_id,
+            "select public.upsert_performance_evidence(%s,%s,%s::jsonb)",
+            (employee_id, date.today().strftime("%Y-%m"),
+             json.dumps({"on_time_rate": 1})),
+            operation="upsert_performance_evidence",
+        )
+        self.assertEqual("permission_denied", performance_denied["code"])
+        audit_count = self._as(
+            None,
+            "select count(*) from public.operations_security_audit "
+            "where enterprise_id=%s and actor_profile_id=%s "
+            "and operation='upsert_project_economics'",
+            (enterprise_id, manager_id),
+        )[0]
+        self.assertEqual(1, audit_count)
+
+    def test_rejected_worklogs_are_excluded_from_summary(self):
+        _, owner_id, employee_id, _ = self._fixture()
+        with self.conn.cursor() as cur:
+            for status, hours in (("approved", 3), ("rejected", 8), ("pending", 5)):
+                cur.execute(
+                    "insert into public.worklogs("
+                    "boss_id,employee_id,work_date,hours,content,source,"
+                    "approval_status"
+                    ") values(%s,%s,current_date,%s,%s,'manual',%s)",
+                    (owner_id, employee_id, hours, status, status),
+                )
+        dashboard = self._as(
+            owner_id, "select public.get_operations_dashboard(4)"
+        )[0]
+        self.assertEqual(3, float(dashboard["worklog_summary"]["total_hours"]))
+
+    def test_partial_capacity_update_preserves_unchanged_fields(self):
+        _, owner_id, _, project_id = self._fixture()
+        today = date.today()
+        expected_until = (today + timedelta(days=27)).isoformat()
+        demand = self._as(
+            owner_id,
+            "select public.upsert_capacity_demand(null,%s::jsonb)",
+            (json.dumps({
+                "skill": "python",
+                "required_hours": 80,
+                "needed_from": today.isoformat(),
+                "needed_until": expected_until,
+                "project_id": project_id,
+                "note": "initial",
+            }),),
+        )[0]
+        updated = self._as(
+            owner_id,
+            "select public.upsert_capacity_demand(%s,%s::jsonb)",
+            (demand["id"], json.dumps({"note": "updated"})),
+        )[0]
+        self.assertEqual("python", updated["skill"])
+        self.assertEqual(80, float(updated["required_hours"]))
+        self.assertEqual(expected_until, str(updated["needed_until"]))
+        self.assertEqual("updated", updated["note"])
+
+    def test_performance_rejects_foreign_sources_and_records_customer_evaluation(self):
+        enterprise_id, owner_id, employee_id, project_id = self._fixture()
+        other_id = uuid.uuid4()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into auth.users(id,email) values(%s,%s)",
+                (other_id, "other-" + other_id.hex + "@example.test"),
+            )
+            cur.execute(
+                "insert into public.profiles(id,code,name,role,boss_id) "
+                "values(%s,%s,'Other','employee',%s)",
+                (other_id, "other-" + other_id.hex, owner_id),
+            )
+        foreign_task = self._as(
+            None,
+            "insert into public.tasks("
+            "boss_id,employee_id,project_id,title,plan_date,est_hours"
+            ") values(%s,%s,%s,'Foreign task',current_date,2) returning id",
+            (owner_id, other_id, project_id),
+        )[0]
+        self._expect_error(
+            owner_id,
+            "select public.upsert_performance_evidence(%s,%s,%s::jsonb)",
+            (
+                employee_id,
+                date.today().strftime("%Y-%m"),
+                json.dumps({
+                    "on_time_rate": 1,
+                    "first_pass_rate": 1,
+                    "rework_rate": 0,
+                    "collaboration_score": 5,
+                    "complexity_score": 5,
+                    "business_contribution": 5,
+                    "evidence": [{"type": "task", "id": str(foreign_task)}],
+                }),
+            ),
+            expected="evidence task",
+        )
+        self.assertGreater(enterprise_id.int, 0)
+
+    def test_overdue_invoice_creates_collection_alert_and_decision_item(self):
+        enterprise_id, owner_id, employee_id, project_id = self._fixture()
+        result = self._as(
+            owner_id,
+            "select public.upsert_project_economics(%s,%s::jsonb)",
+            (project_id, json.dumps({
+                "contract_amount": 100000,
+                "invoiced_amount": 60000,
+                "collected_amount": 20000,
+                "invoice_due_date": (date.today() - timedelta(days=10)).isoformat(),
+                "payment_terms": "Net 30",
+            })),
+        )[0]
+        self.assertEqual("Net 30", result["payment_terms"])
+        dashboard = self._as(
+            owner_id, "select public.get_operations_dashboard(4)"
+        )[0]
+        alert = next(
+            item for item in dashboard["collection_alerts"]
+            if item["project_id"] == project_id
+        )
+        self.assertGreater(float(alert["overdue_amount"]), 0)
+        queue_item = self._as(
+            None,
+            "select id,status,source_type from public.decision_items "
+            "where enterprise_id=%s and source_type='finance' and source_id=%s",
+            (enterprise_id, project_id),
+        )
+        self.assertIsNotNone(queue_item)
+        self.assertEqual("finance", queue_item[2])
 
 
 if __name__ == "__main__":

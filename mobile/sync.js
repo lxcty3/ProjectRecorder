@@ -958,13 +958,13 @@ async function pushQueue() {
       }
 
       /* 表不存在：sql/migrate-notify.sql 没跑。
- 
+
          **这种也要丢弃**，和唯一约束同理——表不会自己出现，
          留着只会把队列永远堵住，而且用户完全不知道是这个原因。
          通知功能降级（没有通知），但别的功能照常。
- 
+
          记一条提示，让界面能说清楚"要跑哪段 SQL"。
- 
+
          **注意：这个标记要能自己消掉。**
          原来只在这里设 true，没有任何地方设回 false——
          于是"跑完 SQL 之后提示还在"，用户会以为没生效。
@@ -1377,6 +1377,19 @@ function mergeRemoteWorklogs(rows) {
     const existing = DB.remoteWorklogs.find(item => item.id === row.id);
     if (existing) Object.assign(existing, row);
     else { DB.remoteWorklogs.push(row); changed += 1; }
+    const local = DB.worklogs.find(item =>
+      !item.cloud_id
+      && item.work_date === row.work_date
+      && String(item.content || "") === String(row.content || "")
+      && Math.abs(num(item.hours) - num(row.hours)) < 0.001
+    );
+    if (local && typeof resolveQueuedWorklogDimensions === "function") {
+      local.cloud_id = row.id;
+      resolveQueuedWorklogDimensions(local.id, row.id);
+      if (typeof queueWorklogDimensions === "function") {
+        queueWorklogDimensions(row.id, local);
+      }
+    }
   });
   if (changed || rows.length) _save();
   return changed;
@@ -1445,17 +1458,24 @@ async function pushDimensionQueue() {
   if (!cloudClient || !DB.profile) return { pushed: 0, failed: [] };
   if (!Array.isArray(DB.dimensionQueue)) DB.dimensionQueue = [];
   if (!DB.dimensionQueue.length) return { pushed: 0, failed: [] };
-  const batch = DB.dimensionQueue.slice(0, QUEUE_BATCH);
+  const batch = DB.dimensionQueue.filter(item =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      .test(String(item.worklog_id || ""))
+  ).slice(0, QUEUE_BATCH);
+  if (!batch.length) return { pushed: 0, failed: [] };
   const done = [];
   const failed = [];
   for (let i = 0; i < batch.length; i += 1) {
     const item = batch[i];
     try {
-      const { error } = await cloudClient.rpc("upsert_worklog_dimensions", {
+      const { data, error } = await cloudClient.rpc("upsert_worklog_dimensions", {
         p_worklog: String(item.worklog_id),
         p_data: item.data || {},
       });
       if (error) throw new Error(error.message || String(error));
+      if (data && typeof data === "object" && data.ok === false) {
+        throw new Error(data.error || "worklog dimension permission denied");
+      }
       done.push(item.worklog_id);
       delete item.lastError;
       delete item.lastErrorAt;

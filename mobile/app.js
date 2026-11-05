@@ -2014,7 +2014,7 @@ function renderTeam() {
     node.onclick = () => editEmployee(Number(node.dataset.employee));
   });
   block.querySelectorAll("[data-worklog]").forEach(node => {
-    node.onclick = () => editWorklog(Number(node.dataset.worklog));
+    node.onclick = () => editWorklog(String(node.dataset.worklog));
   });
 }
 
@@ -2073,40 +2073,55 @@ function editEmployee(id) {
 /* ============================================================
    工时表单
    ============================================================ */
-function editWorklog(id) {
-  if (!activeEmployees().length) {
+async function editWorklog(id) {
+  if (!id && !activeEmployees().length) {
     toast("先加一个员工");
     editEmployee(null);
     return;
   }
-  const log = id ? DB.worklogs.find(row => row.id === Number(id)) : null;
+  const localLog = id ? DB.worklogs.find(
+    row => String(row.id) === String(id)) : null;
+  const cloudLog = id ? (DB.remoteWorklogs || []).find(
+    row => String(row.id) === String(id)) : null;
+  const log = localLog || cloudLog || null;
   if (id && !log) { toast("这条工时已经不存在了"); return; }
   const isNew = !log;
-  const draft = log || { work_date: todayISO(), hours: 8, source: "manual" };
+  const cloudOnly = !!cloudLog && !localLog;
+  const draft = Object.assign(
+    { work_date: todayISO(), hours: 8, source: "manual" },
+    log || {}
+  );
+  if (cloudOnly && typeof loadWorklogDimensions === "function") {
+    Object.assign(draft, await loadWorklogDimensions(cloudLog));
+  }
+  const locked = cloudOnly ? " disabled" : "";
+  const employeeOptions = activeEmployees().map(employee =>
+    `<option value="${employee.id}"`
+      + (String(draft.employee_id) === String(employee.id) ? " selected" : "")
+      + `>${escapeHtml(employee.name)}</option>`).join("");
+  const projectOptions = DB.projects.map(project =>
+    `<option value="${project.id}"`
+      + (String(draft.project_id) === String(project.id) ? " selected" : "")
+      + `>${escapeHtml(project.name)}</option>`).join("");
 
   openSheet(isNew ? "记一笔工时" : "修改工时", `
+    ${cloudOnly ? '<div class="hint">这条是云端来源工时。基础字段保持只读；经营标签会通过权限校验后单独保存。</div>' : ""}
     <label for="w-employee">谁</label>
-    <select id="w-employee">${activeEmployees().map(employee =>
-      `<option value="${employee.id}"`
-      + (draft.employee_id === employee.id ? " selected" : "")
-      + `>${escapeHtml(employee.name)}</option>`).join("")}</select>
+    <select id="w-employee"${locked}>${employeeOptions}</select>
     <label for="w-project">项目</label>
-    <select id="w-project"><option value="">（非项目事务）</option>
-      ${DB.projects.map(project =>
-        `<option value="${project.id}"`
-        + (draft.project_id === project.id ? " selected" : "")
-        + `>${escapeHtml(project.name)}</option>`).join("")}</select>
+    <select id="w-project"${locked}><option value="">（非项目事务）</option>
+      ${projectOptions}</select>
     <label for="w-step">步骤（可选）</label>
-    <select id="w-step"></select>
+    <select id="w-step"${locked}></select>
     <div class="row2">
       <div><label for="w-date">日期</label>
-        <input id="w-date" type="date" value="${escapeHtml(draft.work_date || todayISO())}"></div>
+        <input id="w-date" type="date" value="${escapeHtml(draft.work_date || todayISO())}"${locked}></div>
       <div><label for="w-hours">工时</label>
         <input id="w-hours" type="number" step="0.5" min="0.5" max="24"
-               value="${num(draft.hours) || 8}"></div>
+               value="${num(draft.hours) || 8}"${locked}></div>
     </div>
     <label for="w-content">做了什么</label>
-    <textarea id="w-content">${escapeHtml(draft.content || "")}</textarea>
+    <textarea id="w-content"${locked}>${escapeHtml(draft.content || "")}</textarea>
     <div class="section-head" style="margin-top:14px"><span>经营标签</span>
       <span class="meta">默认已选好，按实际情况调整</span></div>
     <div class="check-grid">
@@ -2132,11 +2147,11 @@ function editWorklog(id) {
         + "改之前先想一下是不是该重新解释。</div>" : ""}
   `, [
     { label: "取消", onClick: closeSheet },
-    ...(isNew ? [] : [{ label: "删除", kind: "danger", onClick: () => {
+    ...(isNew || cloudOnly ? [] : [{ label: "删除", kind: "danger", onClick: () => {
       if (!confirm("确定删除这条工时？")) return;
       deleteWorklog(id); closeSheet(); renderTeam(); toast("已删除");
     } }]),
-    { label: "保存", kind: "", onClick: () => saveWorklog(id) },
+    { label: "保存", kind: "", onClick: () => saveWorklog(id || null) },
   ]);
 
   $("w-project").onchange = () =>

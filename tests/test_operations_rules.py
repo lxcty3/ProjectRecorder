@@ -60,13 +60,20 @@ class OperationsRulesTest(unittest.TestCase):
             first_pass=0.8,
             rework=0.1,
             collaboration=4.5,
+            complexity=3.0,
+            business_contribution=4.0,
         )
         self.assertGreater(score, 70)
         self.assertLessEqual(score, 100)
 
+    def test_complexity_and_business_contribution_change_score(self):
+        base = performance_score(0.9, 0.8, 0.1, 4.5, 0, 0)
+        stronger = performance_score(0.9, 0.8, 0.1, 4.5, 5, 5)
+        self.assertGreater(stronger, base)
+
     def test_performance_score_is_bounded_and_never_negative(self):
-        self.assertEqual(performance_score(2, 2, -1, 9), 100)
-        self.assertEqual(performance_score(-1, -1, 2, -4), 0)
+        self.assertEqual(performance_score(2, 2, -1, 9, 9, 9), 100)
+        self.assertEqual(performance_score(-1, -1, 2, -4, -3, -2), 0)
 
     def test_performance_score_does_not_mutate_inputs_or_publish_wage(self):
         inputs = {
