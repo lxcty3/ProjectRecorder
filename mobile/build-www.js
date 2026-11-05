@@ -38,6 +38,7 @@ const FILES = [
   "operations.js",
   "execution.js",
   "intake.js",
+  "phone-preview.html",
   "intake.html",
   "public-intake.js",
   "account.js",

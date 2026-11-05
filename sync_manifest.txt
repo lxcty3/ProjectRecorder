@@ -125,3 +125,5 @@ mobile/www/intake.html
 mobile/www/public-intake.js
 mobile/www/vendor/qrcode.min.js
 mobile/sql/work-intake-v1.sql
+mobile/phone-preview.html
+mobile/www/phone-preview.html

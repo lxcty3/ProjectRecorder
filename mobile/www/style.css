@@ -2357,3 +2357,175 @@ input[type="date"], input[type="number"] {
 .intake-action {
   margin: 3px 6px 3px 0;
 }
+
+
+/* ============================================================
+   2026-11 calm density pass
+   ------------------------------------------------------------
+   The interface should read as a quiet paper workspace, not a
+   stack of tinted glass cards. Keep one muted accent for actions,
+   remove decorative color fields, and let spacing carry hierarchy.
+   ============================================================ */
+:root {
+  --glass:        rgba(255, 255, 255, .91);
+  --glass-strong: rgba(255, 255, 255, .97);
+  --nav-bg:       rgba(250, 252, 250, .97);
+  --glass-edge:   rgba(70, 88, 80, .08);
+  --glass-shadow: none;
+  --edge-soft:    rgba(54, 70, 63, .10);
+  --field:        rgba(249, 251, 249, .96);
+  --card:         var(--panel);
+  --nav-h:        60px;
+  --gap:          14px;
+}
+
+[data-theme="dark"] {
+  --glass:        rgba(29, 35, 32, .93);
+  --glass-strong: rgba(29, 35, 32, .98);
+  --nav-bg:       rgba(23, 29, 26, .97);
+  --glass-edge:   rgba(190, 220, 208, .09);
+  --glass-shadow: none;
+  --edge-soft:    rgba(190, 220, 208, .12);
+  --field:        rgba(25, 31, 28, .88);
+  --card:         var(--panel);
+}
+
+body {
+  background:
+    radial-gradient(900px 420px at 18% -20%,
+      rgba(124, 158, 149, .07), transparent 68%),
+    linear-gradient(180deg, #f8faf8 0%, #f2f5f2 100%);
+  background-attachment: scroll;
+}
+
+[data-theme="dark"] body {
+  background:
+    radial-gradient(900px 420px at 18% -20%,
+      rgba(142, 170, 162, .07), transparent 68%),
+    linear-gradient(180deg, #161b19 0%, #131715 100%);
+}
+
+.topbar {
+  padding: 12px 18px;
+}
+
+.topbar h1 {
+  font-size: 23px;
+  letter-spacing: -.02em;
+}
+
+.sub {
+  margin-top: 3px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+}
+
+.body {
+  padding: 8px 18px calc(28px + env(safe-area-inset-bottom));
+}
+
+.page .body {
+  padding-bottom: calc(var(--nav-h) + 28px);
+}
+
+.card {
+  padding: 18px;
+  border-color: var(--line);
+  background: var(--panel);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.card-head {
+  margin-bottom: 14px;
+}
+
+.section-head {
+  margin: 24px 2px 12px;
+  color: var(--fg-soft);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.summary {
+  gap: 20px;
+  padding: 4px 2px 8px;
+}
+
+.btn {
+  min-height: 48px;
+  padding: 0 18px;
+}
+
+.btn.ghost,
+.chip {
+  background: var(--panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.chip {
+  border-color: var(--line);
+  color: var(--fg-soft);
+}
+
+.chip.on {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+}
+
+.decision-summary {
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.decision-summary-card {
+  padding: 12px;
+  border-color: var(--line-soft);
+  border-radius: 12px;
+  background: var(--read);
+}
+
+.decision-summary-card.is-severe {
+  border-color: color-mix(in srgb, var(--severe) 28%, var(--line));
+  background: var(--read);
+}
+
+.decision-kind,
+.execution-state {
+  background: var(--accent-wash);
+  color: var(--accent-dim);
+  font-weight: 550;
+}
+
+.execution-card {
+  margin-bottom: 12px;
+  padding: 15px 16px;
+  border-color: var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.execution-card.is-blocked {
+  border-color: color-mix(in srgb, var(--risk) 32%, var(--line));
+  background: var(--panel);
+}
+
+.execution-field {
+  margin-top: 11px;
+  padding-top: 10px;
+}
+
+.decision-evidence,
+.identity-toolbar,
+.grade-option {
+  background: var(--read);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+nav {
+  box-shadow: none;
+  border-top-color: var(--line);
+}
