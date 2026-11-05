@@ -321,6 +321,23 @@ class PhaseOneFinalBlockersTest(unittest.TestCase):
             install,
         )
 
+    def test_standalone_community_migration_adds_unlock_columns(self):
+        import pglast
+
+        community = read("mobile/sql/community.sql")
+        pglast.parse_sql(community)
+        create_start = community.index(
+            "create table if not exists public.community_posts"
+        )
+        index_start = community.index("create index", create_start)
+        create_block = community[create_start:index_start]
+        self.assertIn("unlock_cost integer", create_block)
+        self.assertIn("is_required boolean", create_block)
+        for column in ("unlock_cost", "is_required"):
+            alter = f"add column if not exists {column}"
+            alter_start = community.index(alter, create_start)
+            self.assertLess(alter_start, community.index("create or replace function", create_start))
+
     def test_authorized_ledger_is_not_truncated(self):
         point_state = self.rpc_definition("get_point_state")
         self.assertNotIn("limit 100", point_state)

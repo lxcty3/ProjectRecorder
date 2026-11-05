@@ -21,6 +21,11 @@ create table if not exists public.community_posts (
   created_at timestamptz not null default now()
 );
 
+alter table public.community_posts
+  add column if not exists unlock_cost integer not null default 0
+    check (unlock_cost >= 0),
+  add column if not exists is_required boolean not null default false;
+
 create index if not exists idx_community_posts_created
   on public.community_posts(created_at desc);
 create index if not exists idx_community_posts_author
