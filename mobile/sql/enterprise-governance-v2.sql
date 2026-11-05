@@ -3807,7 +3807,7 @@ begin
         ),
         'decision_reason',x.decision_reason,'decided_at',x.decided_at,
         'created_at',x.created_at
-      ) order by case when x.status='open' then 0 else 1 end,x.created_at desc),'[]'::jsonb)
+      )),'[]'::jsonb)
       from public.enterprise_role_motions x
       left join public.profiles tp on tp.id=x.target_profile_id
       join public.profiles pp on pp.id=x.proposer_profile_id
@@ -3839,7 +3839,7 @@ begin
         ),''),
         'can_vote',bm.status='open' and v_is_board,
         'can_finalize',bm.status='open' and v_is_board
-      ) order by case when bm.status='open' then 0 else 1 end,bm.created_at desc),'[]'::jsonb)
+      )),'[]'::jsonb)
       from public.enterprise_board_motions bm
       join public.profiles pp on pp.id=bm.proposer_profile_id
       left join lateral (

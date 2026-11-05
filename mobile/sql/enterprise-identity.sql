@@ -508,7 +508,7 @@ begin
         ),
         'decision_reason',x.decision_reason,'decided_at',x.decided_at,
         'created_at',x.created_at
-      ) order by case when x.status='open' then 0 else 1 end,x.created_at desc),'[]'::jsonb)
+      )),'[]'::jsonb)
       from public.enterprise_role_motions x
       join public.profiles tp on tp.id=x.target_profile_id
       join public.profiles pp on pp.id=x.proposer_profile_id

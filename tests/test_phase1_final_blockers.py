@@ -321,6 +321,17 @@ class PhaseOneFinalBlockersTest(unittest.TestCase):
             install,
         )
 
+    def test_identity_motion_aggregate_avoids_correlated_order_by(self):
+        import pglast
+
+        for name in ('enterprise-identity.sql', 'enterprise-governance-v2.sql'):
+            sql = read('mobile/sql/' + name)
+            pglast.parse_sql(sql)
+            self.assertNotIn(
+                "order by case when x.status='open' then 0 else 1 end,x.created_at desc",
+                sql,
+            )
+
     def test_standalone_community_migration_adds_unlock_columns(self):
         import pglast
 
