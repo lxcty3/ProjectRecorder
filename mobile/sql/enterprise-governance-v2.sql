@@ -3916,8 +3916,18 @@ declare
   v_result jsonb;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
-  v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
-  if not public._identity_is_member(v_eid,v_uid) then
+  select e.id into v_eid
+    from public.enterprises e
+   where e.owner_profile_id=public._identity_owner_for_uid(v_uid)
+   limit 1;
+  if v_eid is null then
+    select m.enterprise_id into v_eid
+      from public.enterprise_members m
+     where m.profile_id=v_uid and m.status='active'
+     order by m.updated_at desc
+     limit 1;
+  end if;
+  if v_eid is null or not public._identity_is_member(v_eid,v_uid) then
     raise exception 'not an enterprise member';
   end if;
   select coalesce(jsonb_agg(item order by created_at desc),'[]'::jsonb)

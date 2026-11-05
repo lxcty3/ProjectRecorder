@@ -51,6 +51,8 @@ class PhaseOneFinalBlockersTest(unittest.TestCase):
         ):
             self.assertIn(marker, helper)
         listing = self.rpc_definition("list_knowledge_posts")
+        self.assertNotIn("_identity_bootstrap", listing)
+        self.assertIn("select e.id into v_eid", listing)
         self.assertIn("'content',case", listing)
         self.assertIn("enterprise_knowledge_unlocks", listing)
         self.assertIn("'locked',", listing)
