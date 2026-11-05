@@ -1007,3 +1007,76 @@ class CommunityClient:
                 "p_request_type": str(request_type or "customer"),
             },
         )
+
+    # ---------------------------------------------------------- shareholder meetings
+    def shareholder_meetings(self, session, enterprise_id=None):
+        body = {}
+        if enterprise_id:
+            body["p_enterprise"] = str(enterprise_id)
+        data = _request(
+            "POST", "/rest/v1/rpc/get_shareholder_meetings",
+            token=session.access_token, body=body,
+        )
+        return data if isinstance(data, dict) else {}
+
+    def initiate_shareholder_meeting(self, session, title, agenda,
+                                     scheduled_at, reason):
+        title = str(title or "").strip()
+        agenda = str(agenda or "").strip()
+        reason = str(reason or "").strip()
+        if not title or not agenda:
+            raise ValueError("title and agenda are required")
+        if not reason:
+            raise ValueError("special meeting reason required")
+        if not scheduled_at:
+            raise ValueError("scheduled time is required")
+        return _request(
+            "POST", "/rest/v1/rpc/initiate_shareholder_meeting",
+            token=session.access_token,
+            body={
+                "p_title": title, "p_agenda": agenda,
+                "p_scheduled_at": str(scheduled_at),
+                "p_reason": reason,
+            },
+        )
+
+    def vote_shareholder_meeting(self, session, meeting_id, choice, note=""):
+        choice = str(choice or "").strip().lower()
+        if choice not in ("yes", "no", "abstain"):
+            raise ValueError("vote choice must be yes, no, or abstain")
+        return _request(
+            "POST", "/rest/v1/rpc/vote_shareholder_meeting",
+            token=session.access_token,
+            body={
+                "p_meeting": str(meeting_id), "p_choice": choice,
+                "p_note": str(note or "").strip(),
+            },
+        )
+
+    def record_shareholder_meeting_attendance(self, session, meeting_id,
+                                               status, note=""):
+        from meeting_rules import validate_attendance
+
+        status = str(status or "").strip().lower()
+        note = str(note or "").strip()
+        validation = validate_attendance(status, note)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/record_shareholder_meeting_attendance",
+            token=session.access_token,
+            body={
+                "p_meeting": str(meeting_id), "p_status": status,
+                "p_note": note,
+            },
+        )
+
+    def complete_shareholder_meeting(self, session, meeting_id, minutes):
+        minutes = str(minutes or "").strip()
+        if not minutes:
+            raise ValueError("meeting minutes required")
+        return _request(
+            "POST", "/rest/v1/rpc/complete_shareholder_meeting",
+            token=session.access_token,
+            body={"p_meeting": str(meeting_id), "p_minutes": minutes},
+        )

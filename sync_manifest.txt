@@ -128,3 +128,14 @@ mobile/sql/work-intake-v1.sql
 mobile/phone-preview.html
 mobile/www/phone-preview.html
 mobile/sql/fix-community-list-rpc.sql
+meeting_rules.py
+meeting_ui.py
+tests/test_meeting_rules.py
+tests/test_meeting_sql.py
+tests/test_meeting_client.py
+tests/test_meeting_ui.py
+tests/test_meeting_integration.py
+tests/test_meeting_docs.py
+mobile/meeting.js
+mobile/www/meeting.js
+mobile/sql/shareholder-meetings-v1.sql

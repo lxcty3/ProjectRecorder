@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from community_client import CommunityClient
 from community_ui import CommunityWorker
+from meeting_ui import ShareholderMeetingPage
 from role_templates_ui import RoleTemplatePage
 from widgets import SectionTitle, StatCard, label, muted
 
@@ -386,6 +387,9 @@ class IdentityPage(QWidget):
         role_layout.addWidget(self.role_text, 1)
         self.tabs.addTab(role_page, "身份权限")
 
+        self.meeting_page = ShareholderMeetingPage(self.window)
+        self.tabs.addTab(self.meeting_page, "股东大会")
+
         self.role_template_page = RoleTemplatePage(self.window)
         self.tabs.addTab(self.role_template_page, "身份模板")
 
@@ -398,6 +402,8 @@ class IdentityPage(QWidget):
         self._update_actions()
 
     def apply_account_session(self, session):
+        if hasattr(self, "meeting_page"):
+            self.meeting_page.apply_account_session(session)
         changed = (
             self.session is not session
             or (self.session and session and self.session.user_id != session.user_id)
@@ -425,6 +431,8 @@ class IdentityPage(QWidget):
         workers = list(self.workers)
         if hasattr(self, "board_point_page"):
             workers.extend(self.board_point_page.workers)
+        if hasattr(self, "meeting_page"):
+            self.meeting_page.shutdown()
         for worker in workers:
             if worker.isRunning():
                 worker.wait(12000)
@@ -495,6 +503,8 @@ class IdentityPage(QWidget):
             if hasattr(self.window, "apply_identity_state"):
                 self.window.apply_identity_state(self.snapshot)
             self._render()
+            if hasattr(self, "meeting_page"):
+                self.meeting_page.refresh()
             self.status_label.setText("已同步企业身份")
 
         self._run(work, done, "正在加载企业身份…")

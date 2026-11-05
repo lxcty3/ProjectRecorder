@@ -160,6 +160,7 @@ function emptyDatabase() {
     /* 最近一次从云端取到的企业身份快照。
        离线时仍能显示上次确认过的身份和权限。 */
     identity: null,
+    shareholderMeetings: { data: null, at: 0, error: "" },
 
     /* 企业积分快照。余额、季度池和流水都来自 get_point_state，
        离线时继续显示最后一次确认过的值。 */

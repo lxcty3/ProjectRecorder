@@ -103,6 +103,28 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 - **模式记忆**：服务端返回并保存 `preferred_mode`；桌面和手机切换后跨设备生效，权限撤销后自动回退到简单模式。
 - **审计留痕**：提案、投票、股份变更、模板变更、临时兼任、积分池和积分发放均写入企业审计表。
 
+### 股东大会、月度会议和请假记录
+
+在现有企业身份与治理能力之上，新增独立的股东大会议程：
+
+- **月度例行会议**：系统自动为当前月份建立一次例行股东大会，默认安排在本月最后一天 18:00（上海时区）；每月最多一场有效例行会议。
+- **临时股东大会**：持股股东可以发起临时会议，但必须填写特殊原因；本月只能存在一场有效临时会议。
+- **同意门槛**：临时会议的召集需要超过半数在册股东按人数同意，不按股份权重计算。发起人自动投赞成票。
+- **出席登记**：股东可以登记出席、缺席或请假；请假必须填写原因，并与对应会议绑定保存。
+- **会议纪要**：企业所有者、董事长或具备治理管理权限的身份可以结束会议并记录纪要。
+- **审计与权限**：会议、召集投票、出席和请假均由 SECURITY DEFINER RPC 写入企业审计；客户端不能直接写表。
+- **桌面和手机入口**：电脑端位于「企业身份 → 股东大会」，手机端位于「更多 → 治理 → 股东大会」。
+
+股东大会升级顺序：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/shareholder-meetings-v1.sql
+```
+
+`install-unified.sql` 末尾包含受前置条件保护的股东大会区块。首次部署后打开治理页，系统会自动建立当前月例行会议。
+
 阶段一升级顺序：
 
 部署时，在现有数据库脚本之后按以下顺序运行：
@@ -480,6 +502,7 @@ python -m unittest tests.test_decision_integration -v
 python -m unittest tests.test_execution_integration -v
 python -m unittest tests.test_operations_integration -v
 python -m unittest tests.test_intake_integration -v
+python -m unittest tests.test_meeting_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
@@ -499,6 +522,7 @@ mobile/sql/decision-approvals-v1.sql
 mobile/sql/execution-tracking-v1.sql
 mobile/sql/operations-economics-v1.sql
 mobile/sql/work-intake-v1.sql
+mobile/sql/shareholder-meetings-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。

@@ -217,6 +217,9 @@ async function refreshIdentity(force) {
     if (typeof renderMe === "function") renderMe();
     if (typeof renderToday === "function") renderToday();
     renderIdentity();
+    if (typeof loadShareholderMeetings === "function") {
+      loadShareholderMeetings(false);
+    }
     if (typeof refreshDecisionCenterIfActive === "function") {
       refreshDecisionCenterIfActive();
     }
@@ -251,6 +254,8 @@ function renderIdentity() {
     $("identity-member-count").textContent = "";
     $("identity-motion-count").textContent = "";
     if ($("identity-board")) $("identity-board").innerHTML = "";
+    if ($("identity-meetings")) $("identity-meetings").innerHTML = "";
+    if ($("identity-meeting-count")) $("identity-meeting-count").textContent = "";
     if ($("identity-point-state")) $("identity-point-state").innerHTML = "";
     if ($("identity-board-count")) $("identity-board-count").textContent = "";
     if ($("identity-point-count")) $("identity-point-count").textContent = "";

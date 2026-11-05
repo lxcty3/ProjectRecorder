@@ -27,7 +27,7 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "identity.js", "today.js",
+               "sync.js", "notify.js", "meeting.js", "identity.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js",
                "app.js"];
@@ -5058,6 +5058,29 @@ test("企业治理：积分与模式有本地缓存", () => {
   if (run("Array.isArray(DB.pointState.ledger)") !== true) {
     throw new Error("pointState.ledger 默认应为数组");
   }
+});
+
+test("股东大会：月度会议、临时会议和请假完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of ["identity-meetings", "identity-meeting-count"]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('src="meeting.js"') === -1) throw new Error("没有加载 meeting.js");
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  if (app.indexOf("loadShareholderMeetings") === -1) throw new Error("app.js 没有加载股东大会");
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  if (identity.indexOf("loadShareholderMeetings") === -1) throw new Error("identity.js 没有刷新股东大会");
+  const meeting = fs.readFileSync(path.join(HERE, "meeting.js"), "utf8");
+  for (const text of [
+    "get_shareholder_meetings", "initiate_shareholder_meeting",
+    "vote_shareholder_meeting", "record_shareholder_meeting_attendance",
+    "complete_shareholder_meeting", "请假必须填写原因",
+    "data-meeting-vote", "data-meeting-attend", "identity-meetings",
+  ]) {
+    if (meeting.indexOf(text) === -1) throw new Error(`meeting.js 缺少 ${text}`);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!/"meeting\.js"/.test(build)) throw new Error("build-www.js 没有打包 meeting.js");
 });
 
 test("决策中心：手机管理审批页完整接线", () => {

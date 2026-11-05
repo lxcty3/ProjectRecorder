@@ -222,6 +222,7 @@ function showPage(name) {
   if (target === "identity") {
     renderIdentity();
     if (typeof refreshIdentity === "function") refreshIdentity(false);
+    if (typeof loadShareholderMeetings === "function") loadShareholderMeetings(false);
   }
   if (target === "community") renderCommunity();
   if (target === "me") renderMe();

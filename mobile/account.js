@@ -444,6 +444,9 @@ function applyRoleUI() {
   if (!profile && typeof clearExecutionCache === "function") {
     clearExecutionCache();
   }
+  if ((!profile || !advanced) && typeof clearShareholderMeetings === "function") {
+    clearShareholderMeetings();
+  }
   if (!management && typeof clearIntakeManagementCache === "function") {
     clearIntakeManagementCache();
   }
