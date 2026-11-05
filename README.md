@@ -155,11 +155,37 @@ mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
 mobile/sql/operations-economics-v1.sql
+mobile/sql/execution-tracking-v1.sql
 ```
 
 `decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
 
 `install-unified.sql` 末尾包含受前置条件保护的 Phase 2A 和 Phase 2B 区块：基础统一安装时如果阶段一、任务延期或决策中心表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 和 `mobile/sql/operations-economics-v1.sql` 为准。
+
+### 执行追踪、验收、依赖、交接与变更
+
+Phase 3 在经营分析之后建立可追踪的执行闭环：
+
+- **验收闭环**：任务提交时必须填写验收标准和交付证据，并指定独立验收人。状态只允许待验收、返工和已验收；只有已验收是最终完成，提交人不能自行验收。
+- **依赖影响**：任务支持前后置依赖和依赖间隔。服务端拒绝循环依赖，并按最长累计路径计算下游延迟天数、预计日期和责任人，供桌面和手机下钻。
+- **交接确认**：交接物、发起人、接收人和部门都会记录。交接必须由接收方确认或拒绝，发起人不能代确认。
+- **变更控制**：变更申请记录 `decision_items` 范围、原因、紧急程度，以及工期、成本、资源和风险影响。未批准的变更不会覆盖原计划或项目日期、预算、任务计划；高影响或跨部门变更进入 Phase 2A 决策队列。
+- **审计与权限**：`task_acceptance`、`task_dependencies`、`task_handoffs`、`change_requests` 和审计表启用 RLS，直接表写入收回。成功操作写入 `execution_audit` 和企业审计，越权尝试写入 `execution_security_audit`。
+- **客户端入口**：桌面「执行追踪」只在高级管理模式显示；手机所有已登录成员都可进入，但服务端只返回本人任务、本人交接和授权管理范围。所有按钮均调用真实 RPC。
+
+阶段 3 部署顺序：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+mobile/sql/operations-economics-v1.sql
+mobile/sql/execution-tracking-v1.sql
+```
+
+`install-unified.sql` 末尾包含受前置条件保护的 Phase 3 区块；决策中心和执行追踪基础表未就绪时会跳过并输出提示。独立部署仍以 `mobile/sql/execution-tracking-v1.sql` 为准。执行追踪集成测试位于 `tests.test_execution_integration`，使用 `PROJECT_RECORDER_TEST_DATABASE_URL` 指向一次性测试库。
 
 ### 统一云端部署
 
@@ -422,6 +448,7 @@ $env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.
 python -m unittest tests.test_enterprise_governance_integration -v
 python -m unittest tests.test_decision_integration -v
 python -m unittest tests.test_operations_integration -v
+python -m unittest tests.test_execution_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
@@ -437,7 +464,7 @@ mobile/sql/operations-economics-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。
-经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、逐字段金额上限、跨企业项目拒绝审计、技能自助编辑权限、项目-only 能力权限、工时标签、员工证据说明、经理复核和审计。
+经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、逐字段金额上限、跨企业项目拒绝审计、技能自助编辑权限、项目-only 能力权限、工时标签、员工证据说明、经理复核和审计。执行追踪集成测试位于 `tests.test_execution_integration`，覆盖独立验收、最终状态、依赖循环与下游影响、接收方交接、变更不改计划及直接表写入拒绝。
 
 注意：
 
