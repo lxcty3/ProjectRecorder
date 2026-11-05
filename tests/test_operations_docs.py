@@ -15,6 +15,9 @@ class OperationsDocsTest(unittest.TestCase):
             "decision-approvals-v1.sql",
             "PROJECT_RECORDER_TEST_DATABASE_URL",
             "tests.test_operations_integration",
+            "逐字段",
+            "迁移队列",
+            "人员查看范围",
         ):
             self.assertIn(text, readme)
         self.assertLess(

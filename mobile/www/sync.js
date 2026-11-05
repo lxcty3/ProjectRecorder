@@ -1374,22 +1374,36 @@ function mergeRemoteWorklogs(rows) {
   let changed = 0;
   if (!Array.isArray(DB.remoteWorklogs)) DB.remoteWorklogs = [];
   rows.forEach(row => {
+    let local = DB.worklogs.find(
+      item => String(item.cloud_id || "") === String(row.id || "")
+    );
+    if (!local) {
+      local = DB.worklogs.find(item =>
+        !item.cloud_id
+        && item.work_date === row.work_date
+        && String(item.content || "") === String(row.content || "")
+        && Math.abs(num(item.hours) - num(row.hours)) < 0.001
+      );
+    }
+    if (local) {
+      /* A migrated local row and its cloud copy are one worklog. Keep the
+         local numeric key for edits, but bind it to the authoritative UUID
+         so the combined list does not count it twice. */
+      local.cloud_id = row.id;
+      local.approval_status = row.approval_status || local.approval_status;
+      local.updated_at = row.updated_at || local.updated_at;
+      if (typeof resolveQueuedWorklogDimensions === "function") {
+        resolveQueuedWorklogDimensions(local.id, row.id);
+      }
+      const duplicateIndex = DB.remoteWorklogs.findIndex(
+        item => String(item.id || "") === String(row.id || "")
+      );
+      if (duplicateIndex >= 0) DB.remoteWorklogs.splice(duplicateIndex, 1);
+      return;
+    }
     const existing = DB.remoteWorklogs.find(item => item.id === row.id);
     if (existing) Object.assign(existing, row);
     else { DB.remoteWorklogs.push(row); changed += 1; }
-    const local = DB.worklogs.find(item =>
-      !item.cloud_id
-      && item.work_date === row.work_date
-      && String(item.content || "") === String(row.content || "")
-      && Math.abs(num(item.hours) - num(row.hours)) < 0.001
-    );
-    if (local && typeof resolveQueuedWorklogDimensions === "function") {
-      local.cloud_id = row.id;
-      resolveQueuedWorklogDimensions(local.id, row.id);
-      if (typeof queueWorklogDimensions === "function") {
-        queueWorklogDimensions(row.id, local);
-      }
-    }
   });
   if (changed || rows.length) _save();
   return changed;
@@ -1454,13 +1468,72 @@ async function verifyNotifyTable() {
   }
 }
 
+async function pushWorklogMigrationQueue() {
+  if (!cloudClient || !DB.profile) return {migrated: 0, failed: [], waiting: 0};
+  if (typeof ensureLocalWorklogMigrationQueues === "function") {
+    ensureLocalWorklogMigrationQueues();
+  }
+  if (!Array.isArray(DB.worklogMigrationQueue)) DB.worklogMigrationQueue = [];
+  if (!DB.worklogMigrationQueue.length) {
+    return {migrated: 0, failed: [], waiting: 0};
+  }
+  const batch = DB.worklogMigrationQueue.slice(0, QUEUE_BATCH);
+  const failed = [];
+  let migrated = 0;
+  let waiting = 0;
+  for (let i = 0; i < batch.length; i += 1) {
+    const item = batch[i];
+    const built = typeof worklogMigrationPayload === "function"
+      ? worklogMigrationPayload(item) : {ready: false, reason: "Migration helper missing."};
+    if (!built.ready) {
+      item.lastError = String(built.reason || "Migration is not ready.");
+      item.lastErrorAt = nowISO();
+      waiting += 1;
+      continue;
+    }
+    try {
+      /* Insert instead of upsert: worklogs only grant INSERT to the
+         employee/boss path, and an upsert retry would also require UPDATE.
+         A duplicate id means the previous attempt committed server-side,
+         so it is safe to finish the local migration. */
+      const result = await cloudClient.from("worklogs").insert(built.payload);
+      if (result.error) throw new Error(result.error.message || result.error);
+      if (typeof completeWorklogMigration === "function") {
+        completeWorklogMigration(item);
+      }
+      migrated += 1;
+    } catch (error) {
+      const message = String(error.message || error);
+      if (/duplicate key|unique constraint|violates.*unique/i.test(message)
+          && typeof completeWorklogMigration === "function") {
+        completeWorklogMigration(item);
+        migrated += 1;
+        continue;
+      }
+      item.lastError = message;
+      item.lastErrorAt = nowISO();
+      failed.push({
+        table: "worklogs", op: "migration", message: message,
+      });
+    }
+  }
+  _save();
+  return {migrated: migrated, failed: failed, waiting: waiting};
+}
+
 async function pushDimensionQueue() {
   if (!cloudClient || !DB.profile) return { pushed: 0, failed: [] };
+  if (typeof ensureLocalWorklogMigrationQueues === "function") {
+    ensureLocalWorklogMigrationQueues();
+  }
   if (!Array.isArray(DB.dimensionQueue)) DB.dimensionQueue = [];
   if (!DB.dimensionQueue.length) return { pushed: 0, failed: [] };
+  const pendingMigrations = new Set((DB.worklogMigrationQueue || []).map(
+    item => String(item.cloud_id || "")));
   const batch = DB.dimensionQueue.filter(item =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       .test(String(item.worklog_id || ""))
+    && !pendingMigrations.has(String(item.worklog_id || ""))
   ).slice(0, QUEUE_BATCH);
   if (!batch.length) return { pushed: 0, failed: [] };
   const done = [];
@@ -1498,8 +1571,8 @@ async function syncNow(reason) {
   if (syncInFlight) {
     /* 实时事件可能恰好在 pullAll 已查完后到达；若只复用当前 Promise，
        该事件要等下一轮轮询才会出现。保留一次补同步，避免漏掉唤醒。 */
-    if (["realtime", "realtime-connected", "visible", "online", "manual"]
-        .indexOf(String(reason || "")) !== -1) {
+    if (["realtime", "realtime-connected", "visible", "online", "manual",
+         "staff-account"].indexOf(String(reason || "")) !== -1) {
       syncAgain = true;
       syncAgainReason = reason;
     }
@@ -1522,6 +1595,7 @@ async function syncNow(reason) {
     try {
       syncBusy = 2;
       const pushed = await pushQueue();
+      const migrationsPushed = await pushWorklogMigrationQueue();
       const dimensionsPushed = await pushDimensionQueue();
 
       /* **表建好了就把"没装好"的提示撤掉。**
@@ -1566,6 +1640,8 @@ async function syncNow(reason) {
          upsert 一直被拒，而界面显示"已同步"——
          用户以为报上去了，老板那边什么都没有。 */
       const uploadFailures = (pushed && pushed.failed ? pushed.failed : [])
+        .concat(migrationsPushed && migrationsPushed.failed
+          ? migrationsPushed.failed : [])
         .concat(dimensionsPushed && dimensionsPushed.failed
           ? dimensionsPushed.failed : []);
       if (uploadFailures.length) {
@@ -2497,7 +2573,11 @@ async function createCloudStaff(account) {
     if (payload.already_existed) {
       account.lastNote = "云端已经有这个员工号了";
     }
+    if (typeof ensureLocalWorklogMigrationQueues === "function") {
+      ensureLocalWorklogMigrationQueues();
+    }
     _save();
+    syncNow("staff-account");
     return true;
   } catch (error) {
     /* 把数据库的英文报错转成能看懂的说明 */
@@ -2630,7 +2710,8 @@ function deleteTask(taskId) {
    没有就退回手写版本——不能因为缺一个 API 就崩掉。 */
 function uuid() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
+    const generated = String(crypto.randomUUID() || "");
+    if (UUID_PATTERN.test(generated)) return generated;
   }
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, ch => {
     const rand = Math.random() * 16 | 0;

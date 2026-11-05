@@ -326,20 +326,110 @@ test("本地工时维度保留到拿到云 UUID 后再同步", () => {
     queueWorklogDimensions(42, {billable: false, overtime: true,
       work_kind: "presales", rework: true, waiting: true, travel: true});`);
   if (run("DB.dimensionQueue.length") !== 1) throw new Error("本地维度没进队列");
-  if (run("DB.dimensionQueue[0].worklog_id") !== null) {
-    throw new Error("本地数字 id 不应冒充云 UUID");
+  const reserved = run("DB.dimensionQueue[0].worklog_id");
+  if (!run(`operationsUuid(${JSON.stringify(reserved)})`)) {
+    throw new Error("本地数字 id 没有换成预留云 UUID");
   }
-  if (run("DB.dimensionQueue[0].local_id") !== "42") {
-    throw new Error("本地工时的 id 没保留");
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("维度不应继续永久等待本地 id");
   }
-  run(`resolveQueuedWorklogDimensions(42,
-    "22222222-2222-4222-8222-222222222222");`);
-  if (run("DB.dimensionQueue[0].worklog_id")
-      !== "22222222-2222-4222-8222-222222222222") {
-    throw new Error("拿到 UUID 后没绑定维度队列");
+  if (run("DB.worklogMigrationQueue[0].local_id") !== "42") {
+    throw new Error("迁移队列没保留本地工时 id");
+  }
+  if (run("DB.dimensionQueue[0].worklog_id") !== reserved) {
+    throw new Error("预留云 UUID 后被意外改写");
   }
   if (run("DB.dimensionQueue[0].data.work_kind") !== "presales") {
     throw new Error("等待同步时维度被丢掉");
+  }
+});
+
+test("本地手工工时排队迁移为云 UUID 并同步维度", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "王强"});
+    window.__p = addProject({name: "本地项目"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      project_id: window.__p.id, work_date: "2026-01-05",
+      hours: 8, content: "本地手工工时"});
+    DB.employees[0].cloud_id =
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    syncWorklogDimensions(window.__w);`);
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("本地工时没有进入迁移队列");
+  }
+  const cloudId = run("DB.worklogMigrationQueue[0].cloud_id");
+  if (!run(`operationsUuid(${JSON.stringify(cloudId)})`)) {
+    throw new Error("迁移队列没有分配云 UUID");
+  }
+  if (run("DB.dimensionQueue.length") !== 1) {
+    throw new Error("维度没有继续排队");
+  }
+  if (run("DB.dimensionQueue[0].worklog_id") !== cloudId) {
+    throw new Error("维度没有绑定预留的云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("维度仍在等待非 UUID");
+  }
+  const built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (!built.ready) throw new Error("可映射工时却没有迁移载荷");
+  if (built.payload.employee_id
+      !== "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") {
+    throw new Error("迁移载荷没有使用云端员工 UUID");
+  }
+  if (built.payload.project_name !== "本地项目") {
+    throw new Error("迁移后丢失本地项目名称");
+  }
+  run("completeWorklogMigration(DB.worklogMigrationQueue[0]);");
+  if (run("DB.worklogMigrationQueue.length") !== 0) {
+    throw new Error("迁移成功后队列没有清掉");
+  }
+  if (run("DB.worklogs[0].cloud_id") !== cloudId) {
+    throw new Error("本地工时没有记录云 UUID");
+  }
+});
+
+test("本地工时缺员工云映射时等待而不是永久拒绝", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "待建号员工"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 4, content: "等待建号"});
+    syncWorklogDimensions(window.__w);`);
+  let built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (built.ready) throw new Error("没有员工云映射却可以迁移");
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("等待状态不应丢失迁移项");
+  }
+  run(`DB.employees[0].cloud_id =
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc";`);
+  built = plain(run("worklogMigrationPayload(DB.worklogMigrationQueue[0])"));
+  if (!built.ready) throw new Error("员工拿到云 UUID 后仍未恢复迁移");
+});
+
+test("历史非 UUID 维度队列会补建本地工时迁移", () => {
+  fresh();
+  run(`DB.profile = {id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      role: "boss", name: "老板"};
+    window.__e = addEmployee({name: "王强"});
+    DB.employees[0].cloud_id =
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 2, content: "历史本地工时"});
+    DB.dimensionQueue = [{worklog_id: null, local_id: String(window.__w.id),
+      data: {work_kind: "internal", billable: false}}];
+    ensureLocalWorklogMigrationQueues();`);
+  if (run("DB.worklogMigrationQueue.length") !== 1) {
+    throw new Error("历史等待项没有补建迁移队列");
+  }
+  const cloudId = run("DB.worklogMigrationQueue[0].cloud_id");
+  if (run("DB.dimensionQueue[0].worklog_id") !== cloudId) {
+    throw new Error("历史维度项没有改绑云 UUID");
+  }
+  if (run("DB.dimensionQueue[0].local_id") !== null) {
+    throw new Error("历史维度项仍在永久等待");
   }
 });
 
@@ -1301,6 +1391,39 @@ test("工时汇总既包含本地也包含员工报的", () => {
   const sources = all.map(item => item.__source).sort();
   if (sources.join(",") !== "cloud,local") {
     throw new Error("来源标记不对：" + sources.join(","));
+  }
+});
+
+test("同步流程先迁移本地工时再上传维度", () => {
+  const source = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  const migrate = source.indexOf(
+    "const migrationsPushed = await pushWorklogMigrationQueue();");
+  const dimensions = source.indexOf(
+    "const dimensionsPushed = await pushDimensionQueue();");
+  if (migrate < 0 || dimensions < 0 || migrate > dimensions) {
+    throw new Error("工时迁移必须先于维度上传");
+  }
+  if (source.indexOf("pendingMigrations") < 0) {
+    throw new Error("等待迁移的工时不能被维度上传误判为失败");
+  }
+});
+
+test("迁移后的本地工时和云端回流不会重复计数", () => {
+  fresh();
+  run(`window.__e = addEmployee({name: "我"});
+    window.__w = addWorklog({employee_id: window.__e.id,
+      work_date: "2026-01-05", hours: 3, content: "迁移工时"});
+    DB.worklogs[0].cloud_id =
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    mergeRemoteWorklogs([{id: DB.worklogs[0].cloud_id,
+      employee_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      work_date: "2026-01-05", hours: 3, content: "迁移工时",
+      project_name: "", source: "manual", approval_status: "pending"}]);`);
+  if (run("DB.remoteWorklogs.length") !== 0) {
+    throw new Error("云端回流被重复放入 remoteWorklogs");
+  }
+  if (run("allWorklogs().length") !== 1) {
+    throw new Error("迁移工时被统计了两遍");
   }
 });
 
@@ -5036,6 +5159,8 @@ test("经营摘要：管理页、能力缺口和个人绩效依据完整接线",
     "get_my_performance_evidence", "submit_performance_statement",
     "upsert_worklog_dimensions", "queueWorklogDimensions",
     "resolveQueuedWorklogDimensions", "operationsAllowedInCurrentMode",
+    "queueLocalWorklogMigration", "ensureLocalWorklogMigrationQueues",
+    "worklogMigrationPayload", "completeWorklogMigration",
     "clearOperationsCache", "get_worklog_dimensions",
     "upsert_profile_skill", "upsert_capacity_demand",
     "upsert_performance_evidence", "operationsRpc",

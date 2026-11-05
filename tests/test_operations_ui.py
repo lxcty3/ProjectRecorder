@@ -70,6 +70,11 @@ class OperationsUiTest(unittest.TestCase):
                 "waiting_hours": 1, "travel_hours": 3,
                 "by_kind": {"project": 20, "presales": 12},
             },
+            "access": {
+                "can_finance": True, "can_capacity": True,
+                "can_performance": True, "can_worklogs": True,
+                "can_people": True,
+            },
             "window_weeks": 4,
         }
         page.render()
@@ -84,6 +89,30 @@ class OperationsUiTest(unittest.TestCase):
         detail = page.detail_view.toPlainText()
         self.assertIn("task t1", detail)
         self.assertIn("交付接口", detail)
+
+    def test_project_only_capacity_is_hidden_with_permission_message(self):
+        page = self._page(["projects.manage"])
+        page.snapshot = {
+            "projects": [],
+            "capacity_gaps": [{
+                "skill": "Python", "required_hours": 80,
+                "available_hours": 0, "gap_hours": 80,
+            }],
+            "capacity_demands": [],
+            "skills": [],
+            "performance": [],
+            "worklog_summary": {},
+            "access": {
+                "can_finance": False,
+                "can_capacity": False,
+                "capacity_requires_people_scope": True,
+                "capacity_permission_message":
+                    "Capacity gaps require people visibility scope.",
+            },
+        }
+        page.render()
+        self.assertEqual(0, page.capacity_table.rowCount())
+        self.assertIn("人员", page.capacity_label.text())
 
     def test_actions_follow_permissions(self):
         page = self._page(["finance.manage", "people.manage"])

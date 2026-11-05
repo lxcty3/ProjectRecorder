@@ -99,6 +99,12 @@ function renderOperations() {
   const canCapacity = access.can_capacity === true;
   const canPerformance = access.can_performance === true;
   const canWorklogs = access.can_worklogs === true;
+  const capacityMessage = access.capacity_requires_people_scope === true
+    ? "能力缺口需要人员查看范围；当前权限不计算缺口。"
+    : String(
+      access.capacity_permission_message ||
+      "能力缺口需要人员查看范围；当前权限不计算缺口。"
+    );
   const margin = projects.reduce((sum, item) => sum + operationsNum(item.projected_margin), 0);
   const collectionGap = projects.reduce(
     (sum, item) => sum + operationsNum(item.collection_gap), 0);
@@ -111,8 +117,8 @@ function renderOperations() {
         <b>${operationsMoney(margin)}</b></div>
       <div class="decision-summary-card ${collectionGap > 0 ? "is-severe" : ""}">
         <span>回款缺口</span><b>${operationsMoney(collectionGap)}</b></div>` : ""}
-      <div class="decision-summary-card ${shortages > 0 ? "is-severe" : ""}">
-        <span>能力缺口</span><b>${shortages}</b></div>
+      <div class="decision-summary-card ${canCapacity && shortages > 0 ? "is-severe" : ""}">
+        <span>能力缺口</span><b>${canCapacity ? shortages : "—"}</b></div>
       <div class="decision-summary-card ${alerts.length > 0 ? "is-severe" : ""}">
         <span>逾期回款</span><b>${alerts.length}</b></div>`;
   }
@@ -143,7 +149,9 @@ function renderOperations() {
       </div>`).join("")
     : '<div class="identity-empty"><b>暂无经营数据</b><span>有权限的成员录入合同与成本后会显示在这里。</span></div>';
 
-  const gapHtml = gaps.length
+  const gapHtml = !canCapacity
+    ? `<div class="identity-empty"><b>能力缺口未展示</b><span>${escapeHtml(capacityMessage)}</span></div>`
+    : gaps.length
     ? gaps.map(item => `
       <div class="operations-card">
         <div class="operations-card-head">
@@ -434,13 +442,248 @@ function operationsUuid(value) {
     .test(String(value || ""));
 }
 
+function localWorklog(localId) {
+  return (DB.worklogs || []).find(
+    item => String(item.id) === String(localId)
+  ) || null;
+}
+
+function worklogMigrationEmployeeId(worklog) {
+  const raw = String((worklog && worklog.employee_id) || "");
+  if (operationsUuid(raw)) return raw;
+  const employee = (DB.employees || []).find(item =>
+    String(item.id) === raw
+    || String(item.cloud_id || "") === raw
+    || String(item.cloud_profile_id || "") === raw
+  );
+  if (employee) {
+    const candidates = [
+      employee.cloud_id, employee.cloud_profile_id, employee.profile_id,
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      if (operationsUuid(candidates[i])) return String(candidates[i]);
+    }
+  }
+  const accounts = typeof staffAccounts === "function" ? staffAccounts() : [];
+  let account = accounts.find(
+    item => String(item.employee_id || "") === raw
+  );
+  if (!account && employee) {
+    const sameName = accounts.filter(
+      item => String(item.name || "") === String(employee.name || "")
+    );
+    if (sameName.length === 1) account = sameName[0];
+  }
+  if (account && operationsUuid(account.employee_id)) {
+    return String(account.employee_id);
+  }
+  if (DB.profile && employee
+      && String(employee.name || "") === String(DB.profile.name || "")
+      && operationsUuid(DB.profile.id)) {
+    return String(DB.profile.id);
+  }
+  return "";
+}
+
+function currentWorklogOwnerId() {
+  const profile = DB.profile || {};
+  if (profile.role === "boss" && operationsUuid(profile.id)) {
+    return String(profile.id);
+  }
+  if (operationsUuid(profile.boss_id)) return String(profile.boss_id);
+  if (typeof identityOwnerId === "function") {
+    const ownerId = identityOwnerId();
+    if (operationsUuid(ownerId)) return String(ownerId);
+  }
+  return "";
+}
+
+function worklogMigrationBossId(worklog) {
+  const owned = String((worklog && worklog.owner_profile_id) || "");
+  if (operationsUuid(owned)) return owned;
+  const raw = String((worklog && worklog.boss_id) || "");
+  if (operationsUuid(raw)) return raw;
+  return currentWorklogOwnerId();
+}
+
+function worklogMigrationProjectId(worklog) {
+  const raw = String((worklog && worklog.cloud_project_id) || "");
+  if (operationsUuid(raw)) return raw;
+  const project = (DB.projects || []).find(
+    item => String(item.id) === String(worklog && worklog.project_id)
+  );
+  if (!project) return "";
+  return operationsUuid(project.cloud_id) ? String(project.cloud_id)
+    : operationsUuid(project.cloud_project_id)
+      ? String(project.cloud_project_id) : "";
+}
+
+function worklogMigrationStepId(worklog) {
+  const raw = String((worklog && worklog.cloud_step_id) || "");
+  if (operationsUuid(raw)) return raw;
+  const step = (DB.steps || []).find(
+    item => String(item.id) === String(worklog && worklog.step_id)
+  );
+  if (!step) return "";
+  return operationsUuid(step.cloud_id) ? String(step.cloud_id) : "";
+}
+
+function queueLocalWorklogMigration(worklogId, worklog) {
+  const localId = String(worklogId || "");
+  if (!localId || operationsUuid(localId)) return null;
+  if (!Array.isArray(DB.worklogMigrationQueue)) {
+    DB.worklogMigrationQueue = [];
+  }
+  const current = worklog || localWorklog(localId) || {};
+  let item = DB.worklogMigrationQueue.find(
+    row => String(row.local_id || "") === localId
+  );
+  let cloudId = item && operationsUuid(item.cloud_id) ? item.cloud_id : "";
+  if (!cloudId && operationsUuid(current.cloud_id)) {
+    cloudId = String(current.cloud_id);
+  }
+  if (!cloudId) cloudId = uuid();
+  if (item) {
+    item.cloud_id = String(cloudId);
+    item.snapshot = Object.assign({}, current);
+    item.updated_at = nowISO();
+    delete item.lastError;
+    delete item.lastErrorAt;
+  } else {
+    item = {
+      local_id: localId,
+      cloud_id: String(cloudId),
+      snapshot: Object.assign({}, current),
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+    DB.worklogMigrationQueue.push(item);
+  }
+  if (!Array.isArray(DB.dimensionQueue)) DB.dimensionQueue = [];
+  DB.dimensionQueue.forEach(row => {
+    if (String(row.local_id || "") === localId) {
+      row.worklog_id = String(cloudId);
+      row.local_id = null;
+      row.updated_at = nowISO();
+    }
+  });
+  _save();
+  return item;
+}
+
+function ensureLocalWorklogMigrationQueues() {
+  const ownerId = currentWorklogOwnerId();
+  (DB.worklogs || []).forEach(item => {
+    if (operationsUuid(item.cloud_id)) return;
+    if (ownerId && operationsUuid(item.owner_profile_id)
+        && String(item.owner_profile_id) !== ownerId) {
+      return;
+    }
+    queueLocalWorklogMigration(item.id, item);
+  });
+  (DB.dimensionQueue || []).forEach(item => {
+    if (!item.local_id) return;
+    const worklog = localWorklog(item.local_id);
+    if (worklog) queueLocalWorklogMigration(item.local_id, worklog);
+  });
+}
+
+function worklogMigrationPayload(item) {
+  const worklog = localWorklog(item && item.local_id)
+    || (item && item.snapshot) || null;
+  const cloudId = String((item && item.cloud_id) || "");
+  if (!worklog) {
+    return {ready: false, reason: "Worklog is no longer available locally."};
+  }
+  if (!operationsUuid(cloudId)) {
+    return {ready: false, reason: "Cloud UUID has not been assigned yet."};
+  }
+  const bossId = worklogMigrationBossId(worklog);
+  const employeeId = worklogMigrationEmployeeId(worklog);
+  if (!bossId) {
+    return {ready: false, reason: "Enterprise owner identity is not available yet."};
+  }
+  const currentOwner = currentWorklogOwnerId();
+  if (currentOwner && bossId !== currentOwner) {
+    return {ready: false, reason: "Worklog belongs to a different enterprise."};
+  }
+  if (!employeeId) {
+    return {
+      ready: false,
+      reason: "Employee cloud account is not available yet.",
+    };
+  }
+  const projectId = worklogMigrationProjectId(worklog);
+  const stepId = worklogMigrationStepId(worklog);
+  const project = (DB.projects || []).find(
+    row => String(row.id) === String(worklog.project_id)
+  );
+  const taskId = operationsUuid(worklog.task_id) ? String(worklog.task_id) : null;
+  return {
+    ready: true,
+    payload: {
+      id: cloudId,
+      boss_id: bossId,
+      employee_id: employeeId,
+      task_id: taskId,
+      project_id: projectId || null,
+      step_id: stepId || null,
+      work_date: String(worklog.work_date || ""),
+      hours: operationsNum(worklog.hours),
+      content: String(worklog.content || ""),
+      project_name: String(worklog.project_name || (project && project.name) || ""),
+      source: String(worklog.source || "manual"),
+      version: 1,
+      approval_status: String(worklog.approval_status || "pending"),
+      idempotency_key: "local-worklog:" + cloudId,
+    },
+  };
+}
+
+function completeWorklogMigration(item) {
+  if (!item) return null;
+  const built = worklogMigrationPayload(item);
+  if (!built.ready) return null;
+  const local = localWorklog(item.local_id);
+  if (local) {
+    local.cloud_id = item.cloud_id;
+    local.cloud_project_id = built.payload.project_id || "";
+    local.cloud_step_id = built.payload.step_id || "";
+    local.updated_at = nowISO();
+  }
+  DB.worklogMigrationQueue = (DB.worklogMigrationQueue || []).filter(
+    row => row !== item && String(row.cloud_id || "") !== String(item.cloud_id || "")
+  );
+  resolveQueuedWorklogDimensions(item.local_id, item.cloud_id);
+  _save();
+  return local;
+}
+
+function removeQueuedWorklogMigration(worklogId) {
+  const id = String(worklogId || "");
+  if (!id) return;
+  DB.worklogMigrationQueue = (DB.worklogMigrationQueue || []).filter(item =>
+    String(item.local_id || "") !== id
+    && String(item.cloud_id || "") !== id
+  );
+  removeQueuedWorklogDimensions(id);
+  _save();
+}
+
 function queueWorklogDimensions(worklogId, worklog) {
   const id = String(worklogId || "");
   if (!id) return false;
   if (!Array.isArray(DB.dimensionQueue)) DB.dimensionQueue = [];
+  let cloudId = operationsUuid(id) ? id : null;
+  let localId = cloudId ? null : id;
+  if (!cloudId) {
+    const migration = queueLocalWorklogMigration(id, worklog);
+    if (migration) {
+      cloudId = migration.cloud_id;
+      localId = null;
+    }
+  }
   const data = worklogDimensionData(worklog || {});
-  const cloudId = operationsUuid(id) ? id : null;
-  const localId = cloudId ? null : id;
   const existing = DB.dimensionQueue.find(item =>
     (cloudId && String(item.worklog_id || "") === cloudId)
     || (localId && String(item.local_id || "") === localId));

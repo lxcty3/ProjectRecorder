@@ -144,6 +144,10 @@ function emptyDatabase() {
     /* 工时经营标签走独立 RPC；等对应 worklogs 行上传成功后再提交。 */
     dimensionQueue: [],
 
+    /* 本地手工工时先迁移为云端 UUID，再提交经营标签。
+       数字 id 只在本机有意义，不能直接发给 uuid 列。 */
+    worklogMigrationQueue: [],
+
     /* 各表最后一次成功拉取的时间，用来做增量拉取。
        没有它就只能每次全量拉，数据一多就慢。 */
     syncCursor: {},
@@ -314,7 +318,7 @@ function migrate(data) {
   ["projects", "steps", "employees", "worklogs", "assignments",
    "assessments", "metrics", "sessions", "habits", "habitLogs",
    "tasks", "taskLogs", "remoteWorklogs", "staffAccounts", "syncQueue",
-   "dimensionQueue", "notifications", "meritLedger",
+   "dimensionQueue", "worklogMigrationQueue", "notifications", "meritLedger",
    "workSessions", "rewards", "redemptions", "leaves"]
     .forEach(key => {
       if (!Array.isArray(merged[key])) merged[key] = [];
@@ -603,8 +607,14 @@ function addWorklog(data, options) {
     if (!step || step.project_id !== projectId) stepId = null;
   }
 
+  const ownerProfileId = DB.profile
+    ? (DB.profile.role === "boss"
+      ? String(DB.profile.id || "")
+      : String(DB.profile.boss_id || ""))
+    : "";
   const log = {
     id: nextId("worklog"),
+    owner_profile_id: ownerProfileId,
     employee_id: employee.id,
     project_id: projectId,
     step_id: stepId,
@@ -683,6 +693,9 @@ function updateWorklog(id, data) {
 
 function deleteWorklog(id) {
   DB.worklogs = DB.worklogs.filter(item => item.id !== Number(id));
+  if (typeof removeQueuedWorklogMigration === "function") {
+    removeQueuedWorklogMigration(id);
+  }
   _save();
 }
 
@@ -902,7 +915,9 @@ function queueChange(table, op, key, payload) {
 /* 队列里还有多少条待上传 */
 function pendingCount() {
   return (Array.isArray(DB.syncQueue) ? DB.syncQueue.length : 0)
-    + (Array.isArray(DB.dimensionQueue) ? DB.dimensionQueue.length : 0);
+    + (Array.isArray(DB.dimensionQueue) ? DB.dimensionQueue.length : 0)
+    + (Array.isArray(DB.worklogMigrationQueue)
+      ? DB.worklogMigrationQueue.length : 0);
 }
 
 /* 上传成功后清掉那些项。只删成功的，失败的留着下次重试。 */
@@ -933,6 +948,7 @@ function clearDimensionQueue(ids) {
 function resetSyncState() {
   DB.syncQueue = [];
   DB.dimensionQueue = [];
+  DB.worklogMigrationQueue = [];
   DB.operations = { projects: [], capacity_gaps: [], performance: [],
                     worklog_summary: {}, capacity_demands: [], skills: [],
                     collection_alerts: [], members: [], security_audit: [],

@@ -67,7 +67,8 @@ class OperationsIntegrationTest(unittest.TestCase):
             (json.dumps({"name": name, "budget": 100000}),),
         )[0]["id"]
 
-    def _scoped_manager(self, enterprise_id, owner_id, allowed_project):
+    def _scoped_manager(self, enterprise_id, owner_id, allowed_project,
+                        permission_key="projects.manage", conditions=None):
         manager_id = uuid.uuid4()
         code = "manager-" + manager_id.hex
         template_id = uuid.uuid4()
@@ -100,13 +101,15 @@ class OperationsIntegrationTest(unittest.TestCase):
                 ") values(%s,%s,1,'active',%s)",
                 (version_id, template_id, owner_id),
             )
+            if conditions is None:
+                conditions = {"project_ids": [str(allowed_project)]}
             cur.execute(
                 "insert into public.enterprise_role_template_permissions("
                 "template_version_id,permission_key,resource,action,scope,"
                 "conditions,high_risk"
-                ") values(%s,'projects.manage','projects','manage','project',"
+                ") values(%s,%s,'projects','manage','project',"
                 "%s::jsonb,false)",
-                (version_id, json.dumps({"project_ids": [str(allowed_project)]})),
+                (version_id, permission_key, json.dumps(conditions)),
             )
             cur.execute(
                 "insert into public.enterprise_role_assignments("
@@ -358,6 +361,133 @@ class OperationsIntegrationTest(unittest.TestCase):
             "where enterprise_id=%s and actor_profile_id=%s "
             "and operation='upsert_project_economics'",
             (enterprise_id, manager_id),
+        )[0]
+        self.assertEqual(1, audit_count)
+
+    def test_every_economics_money_field_is_amount_scoped(self):
+        enterprise_id, owner_id, _, project_id = self._fixture()
+        manager_id = self._scoped_manager(
+            enterprise_id,
+            owner_id,
+            project_id,
+            conditions={
+                "project_ids": [str(project_id)],
+                "amount_limit": 1000,
+            },
+        )
+        for field in (
+            "invoiced_amount",
+            "collected_amount",
+            "outsourced_committed",
+            "outsourced_paid",
+            "labor_cost",
+            "estimated_completion_cost",
+            "other_cost",
+        ):
+            denied = self._denied(
+                manager_id,
+                "select public.upsert_project_economics(%s,%s::jsonb)",
+                (project_id, json.dumps({
+                    "contract_amount": 0,
+                    field: 5000,
+                })),
+                operation="upsert_project_economics",
+            )
+            self.assertIn("monetary field", denied["error"])
+        audit_count = self._as(
+            None,
+            "select count(*) from public.operations_security_audit "
+            "where enterprise_id=%s and actor_profile_id=%s "
+            "and operation='upsert_project_economics'",
+            (enterprise_id, manager_id),
+        )[0]
+        self.assertEqual(7, audit_count)
+
+    def test_project_only_capacity_never_reports_false_shortage(self):
+        enterprise_id, owner_id, employee_id, project_id = self._fixture()
+        today = date.today()
+        self._as(
+            owner_id,
+            "select public.upsert_profile_skill(%s,'python',%s::jsonb)",
+            (employee_id, json.dumps({"available_hours": 40})),
+        )
+        self._as(
+            owner_id,
+            "select public.upsert_capacity_demand(null,%s::jsonb)",
+            (json.dumps({
+                "skill": "python",
+                "required_hours": 80,
+                "needed_from": today.isoformat(),
+                "needed_until": (today + timedelta(days=27)).isoformat(),
+                "project_id": project_id,
+            }),),
+        )
+        manager_id = self._scoped_manager(
+            enterprise_id, owner_id, project_id
+        )
+        dashboard = self._as(
+            manager_id, "select public.get_operations_dashboard(4)"
+        )[0]
+        self.assertFalse(dashboard["access"]["can_capacity"])
+        self.assertTrue(
+            dashboard["access"]["capacity_requires_people_scope"]
+        )
+        self.assertIn(
+            "people", dashboard["access"]["capacity_permission_message"]
+        )
+        self.assertEqual([], dashboard["capacity_gaps"])
+        self.assertEqual([], dashboard["capacity_demands"])
+
+    def test_profile_skill_self_edit_requires_explicit_people_scope(self):
+        enterprise_id, _, employee_id, _ = self._fixture()
+        denied = self._denied(
+            employee_id,
+            "select public.upsert_profile_skill(%s,'python',%s::jsonb)",
+            (employee_id, json.dumps({"level": 3})),
+            operation="upsert_profile_skill",
+        )
+        self.assertEqual("permission_denied", denied["code"])
+        audit_count = self._as(
+            None,
+            "select count(*) from public.operations_security_audit "
+            "where enterprise_id=%s and actor_profile_id=%s "
+            "and operation='upsert_profile_skill'",
+            (enterprise_id, employee_id),
+        )[0]
+        self.assertEqual(1, audit_count)
+
+    def test_cross_enterprise_project_denial_is_audited(self):
+        enterprise_id, owner_id, _, _ = self._fixture()
+        other_owner = uuid.uuid4()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "insert into auth.users(id,email) values(%s,%s)",
+                (other_owner, "foreign-" + other_owner.hex + "@example.test"),
+            )
+            cur.execute(
+                "insert into public.profiles(id,code,name,role,boss_id) "
+                "values(%s,%s,'Foreign Owner','boss',%s)",
+                (other_owner, "foreign-" + other_owner.hex, other_owner),
+            )
+        self._as(
+            other_owner,
+            "select public._identity_bootstrap(%s)",
+            (other_owner,),
+        )
+        foreign_project = self._project(other_owner, "Foreign project")
+        denied = self._denied(
+            owner_id,
+            "select public.upsert_project_economics(%s,%s::jsonb)",
+            (foreign_project, json.dumps({"contract_amount": 1000})),
+            operation="upsert_project_economics",
+        )
+        self.assertIn("cross-enterprise", denied["error"])
+        audit_count = self._as(
+            None,
+            "select count(*) from public.operations_security_audit "
+            "where enterprise_id=%s and actor_profile_id=%s "
+            "and target_id=%s and operation='upsert_project_economics'",
+            (enterprise_id, owner_id, str(foreign_project)),
         )[0]
         self.assertEqual(1, audit_count)
 

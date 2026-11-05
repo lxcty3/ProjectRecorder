@@ -398,6 +398,10 @@ class OperationsPage(QWidget):
         self.collection_label.setWordWrap(True)
         self.collection_label.setObjectName("OperationsCollectionAlert")
         root.addWidget(self.collection_label)
+        self.capacity_label = QLabel("")
+        self.capacity_label.setWordWrap(True)
+        self.capacity_label.setObjectName("OperationsCapacityAlert")
+        root.addWidget(self.capacity_label)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -558,7 +562,7 @@ class OperationsPage(QWidget):
     def _can_manage_skills(self):
         return self._access_flag(
             "can_manage_skills",
-            self._can("people.manage", "company.manage"),
+            self._can("people.manage"),
         )
 
     def _can_manage_capacity(self):
@@ -676,6 +680,9 @@ class OperationsPage(QWidget):
                 item.get("invoice_due_date") or "—",
                 item.get("payment_terms") or "—",
             ], item)
+        access = self.snapshot.get("access")
+        if not isinstance(access, dict):
+            access = {}
         can_finance = self._access_flag(
             "can_finance", self._can("finance.view", "finance.manage")
         )
@@ -697,16 +704,31 @@ class OperationsPage(QWidget):
             )
             self.collection_label.setStyleSheet("")
 
+        can_capacity = self._access_flag(
+            "can_capacity", self._can("people.view_all", "people.manage")
+        )
+        capacity_message = str(access.get("capacity_permission_message") or "")
+        if access.get("capacity_requires_people_scope"):
+            capacity_message = (
+                "能力缺口需要人员查看范围；当前权限只显示项目经营数据。"
+            )
+        self.capacity_label.setText(
+            "" if can_capacity else
+            capacity_message or
+            "能力缺口需要人员查看范围；当前权限只显示项目经营数据。"
+        )
         self.capacity_table.setRowCount(0)
-        for item in self.snapshot.get("capacity_gaps") or []:
-            self._put_row(self.capacity_table, [
-                item.get("skill") or "未命名技能",
-                _hours(item.get("required_hours")),
-                _hours(item.get("available_hours")),
-                _hours(item.get("gap_hours")),
-                f"{item.get('period_start') or '—'} 至 {item.get('period_end') or '—'}",
-                "缺口" if _number(item.get("gap_hours")) > 0 else "已覆盖",
-            ], item)
+        if can_capacity:
+            for item in self.snapshot.get("capacity_gaps") or []:
+                self._put_row(self.capacity_table, [
+                    item.get("skill") or "未命名技能",
+                    _hours(item.get("required_hours")),
+                    _hours(item.get("available_hours")),
+                    _hours(item.get("gap_hours")),
+                    f"{item.get('period_start') or '—'} 至 "
+                    f"{item.get('period_end') or '—'}",
+                    "缺口" if _number(item.get("gap_hours")) > 0 else "已覆盖",
+                ], item)
 
         self.maintenance_table.setRowCount(0)
         for item in self.snapshot.get("capacity_demands") or []:

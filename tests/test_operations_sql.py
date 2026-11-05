@@ -134,6 +134,20 @@ class OperationsSqlTest(unittest.TestCase):
         ):
             self.assertIn(fragment.lower(), self.lowered)
 
+    def test_phase2b_review_blockers_are_enforced(self):
+        for fragment in (
+            "foreach v_amount_key in array",
+            "monetary field exceeds permission condition",
+            "cross-enterprise project access denied",
+            "v_can_capacity:=v_can_people",
+            "'capacity_requires_people_scope'",
+            "capacity_permission_message",
+            "people.manage permission required",
+            "people scope does not allow this profile",
+            "'can_manage_skills',public._operations_has_permission",
+        ):
+            self.assertIn(fragment.lower(), self.lowered)
+
     def test_rls_least_privilege_and_audit(self):
         self.assertGreaterEqual(self.lowered.count("security definer"), 12)
         self.assertIn("set search_path=public,auth,pg_temp", self.lowered)

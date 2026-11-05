@@ -838,12 +838,23 @@ declare
   v_row public.project_economics%rowtype;
   v_projected numeric;
   v_contract numeric;
+  v_amount numeric;
+  v_amount_key text;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
   v_project_eid:=public._operations_project_enterprise(p_project);
   if v_project_eid is null then raise exception 'project not found'; end if;
-  if v_project_eid<>v_eid then raise exception 'project not in enterprise'; end if;
+  if v_project_eid<>v_eid then
+    return public._operations_denied(
+      v_eid,v_uid,'upsert_project_economics',p_project::text,
+      'cross-enterprise project access denied',
+      jsonb_build_object(
+        'project_id',p_project,'project_enterprise_id',v_project_eid,
+        'actor_enterprise_id',v_eid
+      )
+    );
+  end if;
   if not public._operations_has_permission(
     v_eid,v_uid,array['finance.manage','projects.manage']::text[]
   ) then
@@ -888,6 +899,30 @@ begin
       'estimated_completion_cost','other_cost'
     ]::text[]
   );
+
+  foreach v_amount_key in array array[
+    'contract_amount','invoiced_amount','collected_amount',
+    'outsourced_committed','outsourced_paid','labor_cost',
+    'estimated_completion_cost','other_cost'
+  ]::text[]
+  loop
+    if v_data ? v_amount_key then
+      v_amount:=public._operations_number(v_data,v_amount_key);
+      if not public._operations_amount_allowed(
+        v_eid,v_uid,
+        array['finance.manage','projects.manage']::text[],v_amount
+      ) then
+        return public._operations_denied(
+          v_eid,v_uid,'upsert_project_economics',p_project::text,
+          'monetary field exceeds permission condition',
+          jsonb_build_object(
+            'project_id',p_project,'field',v_amount_key,
+            'amount',v_amount
+          )
+        );
+      end if;
+    end if;
+  end loop;
 
   insert into public.project_economics as pe(
     project_id,enterprise_id,contract_amount,invoiced_amount,collected_amount,
@@ -1001,26 +1036,23 @@ begin
   if not public._identity_is_member(v_eid,p_profile) then
     raise exception 'profile must be an active enterprise member';
   end if;
-  if v_uid<>p_profile then
-    if not public._operations_has_permission(
-      v_eid,v_uid,array['people.manage','company.manage']::text[]
-    ) then
-      return public._operations_denied(
-        v_eid,v_uid,'upsert_profile_skill',p_profile::text,
-        'people management permission required',
-        jsonb_build_object('profile_id',p_profile,'skill',v_skill)
-      );
-    end if;
-    if not public._operations_can_access_profile(
-      v_eid,v_uid,p_profile,
-      array['people.manage','company.manage']::text[],false
-    ) then
-      return public._operations_denied(
-        v_eid,v_uid,'upsert_profile_skill',p_profile::text,
-        'people scope does not allow this profile',
-        jsonb_build_object('profile_id',p_profile,'skill',v_skill)
-      );
-    end if;
+  if not public._operations_has_permission(
+    v_eid,v_uid,array['people.manage']::text[]
+  ) then
+    return public._operations_denied(
+      v_eid,v_uid,'upsert_profile_skill',p_profile::text,
+      'people.manage permission required',
+      jsonb_build_object('profile_id',p_profile,'skill',v_skill)
+    );
+  end if;
+  if not public._operations_can_access_profile(
+    v_eid,v_uid,p_profile,array['people.manage']::text[],false
+  ) then
+    return public._operations_denied(
+      v_eid,v_uid,'upsert_profile_skill',p_profile::text,
+      'people scope does not allow this profile',
+      jsonb_build_object('profile_id',p_profile,'skill',v_skill)
+    );
   end if;
   if v_skill='' then raise exception 'skill required'; end if;
   if v_level<1 or v_level>5 then raise exception 'level must be between 1 and 5'; end if;
@@ -1640,6 +1672,7 @@ declare
   v_can_performance boolean:=false;
   v_can_worklogs boolean:=false;
   v_can_audit boolean:=false;
+  v_capacity_blocked boolean:=false;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   v_eid:=public._identity_bootstrap(public._identity_owner_for_uid(v_uid));
@@ -1662,7 +1695,11 @@ begin
     v_eid,v_uid,array['projects.view_all','projects.manage']::text[],
     array['company','team','department','project','self']::text[]
   ) or v_can_finance;
-  v_can_capacity:=v_can_people or v_can_projects;
+  -- Gap math needs both demand and availability. A project-only manager
+  -- cannot see people availability, so returning demand as shortage would
+  -- manufacture a false capacity result.
+  v_can_capacity:=v_can_people;
+  v_capacity_blocked:=v_can_projects and not v_can_people;
   v_can_performance:=public._operations_has_scoped_permission(
     v_eid,v_uid,
     array['people.view_all','people.manage','tasks.grade']::text[],
@@ -1743,12 +1780,17 @@ begin
       'can_finance',v_can_finance,
       'can_people',v_can_people,
       'can_capacity',v_can_capacity,
+      'capacity_requires_people_scope',v_capacity_blocked,
+      'capacity_permission_message',case when v_capacity_blocked
+        then 'Capacity gaps require people visibility scope; demand is hidden without it.'
+        else '' end,
       'can_performance',v_can_performance,
       'can_worklogs',v_can_worklogs,
       'can_audit',v_can_audit,
       'can_manage_economics',public._operations_has_permission(
         v_eid,v_uid,array['finance.manage','projects.manage']::text[]),
-      'can_manage_skills',v_can_people,
+      'can_manage_skills',public._operations_has_permission(
+        v_eid,v_uid,array['people.manage']::text[]),
       'can_manage_capacity',v_can_capacity,
       'can_manage_performance',v_can_performance
     ),
