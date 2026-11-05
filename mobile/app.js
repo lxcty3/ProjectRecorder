@@ -156,7 +156,7 @@ function setBanner(element, text, kind) {
 /* 底部导航要占位置，所以这些页面的 body 要留出底部空间。
    登录页和派任务页没有导航，不用留。 */
 function makeNavScrollable() {
-  ["page-today", "page-decisions", "page-operations", "page-execution",
+  ["page-today", "page-decisions", "page-operations", "page-execution", "page-intake",
    "page-dash", "page-team",
    "page-assist", "page-identity", "page-tasks", "page-community",
    "page-me"].forEach(id => {
@@ -166,7 +166,7 @@ function makeNavScrollable() {
 
 /*: 所有页面。加新页面必须登记在这里——
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
-const PAGES = ["login", "today", "decisions", "operations", "execution", "dash",
+const PAGES = ["login", "today", "decisions", "operations", "execution", "intake", "dash",
                "project", "tasks", "team", "assist", "identity",
                "community", "assign", "staff", "me"];
 
@@ -206,6 +206,10 @@ function showPage(name) {
   if (target === "execution") {
     renderExecution();
     loadExecution(true);
+  }
+  if (target === "intake") {
+    renderIntake();
+    loadIntake(true);
   }
   if (target === "dash") renderDash();
   if (target === "team") renderTeam();
@@ -515,6 +519,7 @@ function bindGlobalEvents() {
   $("btn-decisions-refresh").onclick = () => loadDecisionCenter(true);
   if (typeof bindDecisionCenter === "function") bindDecisionCenter();
   if (typeof bindExecution === "function") bindExecution();
+  if (typeof bindIntake === "function") bindIntake();
   if ($("btn-operations-refresh")) {
     $("btn-operations-refresh").onclick = () => loadOperations(true);
   }

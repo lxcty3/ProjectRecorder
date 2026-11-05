@@ -444,6 +444,12 @@ function applyRoleUI() {
   if (!profile && typeof clearExecutionCache === "function") {
     clearExecutionCache();
   }
+  if (!management && typeof clearIntakeManagementCache === "function") {
+    clearIntakeManagementCache();
+  }
+  if (!profile && typeof clearIntakeCache === "function") {
+    clearIntakeCache();
+  }
 
   /* 简单模式只保留今天、知识星球和我的；高级模式才展开经营与治理页。 */
   if ($("nav-simple")) $("nav-simple").classList.toggle("hidden", !profile || advanced);

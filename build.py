@@ -35,6 +35,7 @@ BUNDLED = [
     ("preview.html", "."),
     ("mobile/sql/community.sql", "."),
     ("mobile/sql/unified-platform.sql", "."),
+    ("mobile/sql/work-intake-v1.sql", "."),
     ("assets/app_icon.ico", "assets"),
     ("assets/app_icon.png", "assets"),
 ]
@@ -56,7 +57,7 @@ HIDDEN = [
     "db", "rules", "theme", "widgets", "chart", "detail", "export", "metrics",
     "server", "server_pages", "submit", "timer", "timer_ui",
     "knowledge_planet", "community_client", "community_ui",
-    "cloud_integration", "collaboration",
+    "cloud_integration", "collaboration", "intake_rules", "intake_ui", "qrcode", "PIL",
 ]
 
 

@@ -2339,3 +2339,21 @@ input[type="date"], input[type="number"] {
   margin-top: 10px;
 }
 .execution-actions .btn { flex: 1 1 120px; }
+
+/* ---------- Phase 4 work intake ---------- */
+.qr-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+}
+.qr-wrap img,
+.qr-wrap canvas {
+  max-width: 100%;
+}
+.intake-action {
+  margin: 3px 6px 3px 0;
+}

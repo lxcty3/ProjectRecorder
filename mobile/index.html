@@ -474,6 +474,40 @@
   </div>
 </section>
 
+<!-- ====================== 工作入口 ====================== -->
+<section id="page-intake" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>工作入口</h1>
+      <div class="sub">快速记录、公开表单、分诊与转入执行</div>
+    </div>
+    <button class="icon-btn" id="btn-intake-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="intake-summary" class="decision-summary"></div>
+    <div class="btn-row">
+      <button class="btn" id="btn-intake-quick">快速记录</button>
+      <button class="btn ghost hidden" id="btn-intake-form">新建公开表单</button>
+      <button class="btn ghost hidden" id="btn-intake-settings">入口设置</button>
+      <button class="btn ghost hidden" id="btn-intake-email">新建邮件入口</button>
+    </div>
+    <div id="intake-forms-wrap" class="hidden">
+      <div class="section-head"><span>公开入口</span>
+        <span class="meta">链接 · 二维码 · 外部提交</span></div>
+      <div id="intake-forms"></div>
+      <div id="intake-email-aliases" class="meta"></div>
+    </div>
+    <div id="intake-management" class="hidden">
+      <div class="section-head"><span>待分诊队列</span>
+        <span class="meta">SLA · 负责人 · 优先级依据</span></div>
+      <div id="intake-requests"></div>
+    </div>
+    <div class="section-head"><span>我的需求</span>
+      <span class="meta">只显示公开进展</span></div>
+    <div id="intake-mine"></div>
+  </div>
+</section>
+
 <!-- ====================== 知识星球社区 ====================== -->
 <section id="page-community" class="page hidden">
   <div class="topbar">
@@ -621,6 +655,7 @@
 <nav id="nav">
   <span id="nav-simple" class="nav-group">
     <button data-page="today" class="on"><b>今天</b></button>
+    <button data-page="intake"><b>需求</b></button>
     <button data-page="execution" id="nav-execution-simple"><b>执行</b></button>
     <button data-page="community"><b>星球</b></button>
     <button data-page="me"><b>我的</b></button>
@@ -628,6 +663,7 @@
   <span id="nav-advanced" class="nav-group hidden">
     <button data-page="decisions"><b>决策</b></button>
     <button data-page="operations" id="nav-operations"><b>经营</b></button>
+    <button data-page="intake"><b>需求</b></button>
     <button data-page="execution" id="nav-execution"><b>执行</b></button>
     <button data-page="dash"><b>看板</b></button>
     <button data-page="team"><b>团队</b></button>
@@ -666,6 +702,7 @@
        7. app.js              —— 主程序，最后加载并启动
      ============================================================ -->
 <script src="vendor/supabase.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script>
   /* 云库没加载上不算致命：sync.js 里所有函数都会先检查
      `typeof window.supabase === "undefined"` 然后安静返回，
@@ -695,6 +732,7 @@
 <script src="decision.js"></script>
 <script src="operations.js"></script>
 <script src="execution.js"></script>
+<script src="intake.js"></script>
 <script src="account.js"></script>
 <script src="community.js"></script>
 <script src="app.js"></script>

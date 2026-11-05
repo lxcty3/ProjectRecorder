@@ -37,6 +37,9 @@ const FILES = [
   "decision.js",
   "operations.js",
   "execution.js",
+  "intake.js",
+  "intake.html",
+  "public-intake.js",
   "account.js",
   "community.js",
   "app.js",
@@ -47,7 +50,7 @@ const FILES = [
    而"员工在外面报工时"正是没网的场景。
    缺这个文件不致命（本机功能照常用），所以只警告不中断。 */
 const VENDOR_DIR = "vendor";
-const VENDOR = ["supabase.js"];
+const VENDOR = ["supabase.js", "qrcode.min.js"];
 
 /* 头像目录。由 prepare-avatars.py 生成，两种版本：
      名字.webp          脸特写（小尺寸用）

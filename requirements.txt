@@ -7,6 +7,10 @@ PyQt6>=6.5            # 界面
 # 不装也能导出，只是格式退回 CSV（会自动生成 8 个文件）
 openpyxl>=3.1
 
+# Desktop QR rendering for public intake forms
+qrcode>=8.0
+pillow>=10
+
 # SQL contract tests
 pglast>=8.7
 

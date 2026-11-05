@@ -807,3 +807,203 @@ class CommunityClient:
                 "p_idempotency_key": key,
             },
         )
+
+    # ---------------------------------------------------------- work intake
+    def intake_board(self, session, enterprise_id=None):
+        body = {}
+        if enterprise_id:
+            body["p_enterprise"] = str(enterprise_id)
+        data = _request(
+            "POST", "/rest/v1/rpc/get_intake_board",
+            token=session.access_token, body=body,
+        )
+        return data if isinstance(data, dict) else {}
+
+    def my_intake_requests(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_my_intake_requests",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def create_intake_request(self, session, data):
+        from intake_rules import validate_submission
+
+        payload = dict(data or {})
+        validation = validate_submission(payload, external=False)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/create_intake_request",
+            token=session.access_token, body={"p_data": payload},
+        )
+
+    def create_intake_form(self, session, data=None):
+        return _request(
+            "POST", "/rest/v1/rpc/create_intake_form",
+            token=session.access_token, body={"p_data": dict(data or {})},
+        )
+
+    def update_intake_form(self, session, form_id, data=None):
+        return _request(
+            "POST", "/rest/v1/rpc/update_intake_form",
+            token=session.access_token,
+            body={"p_form": str(form_id), "p_data": dict(data or {})},
+        )
+
+    def upsert_intake_settings(self, session, data=None):
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_intake_settings",
+            token=session.access_token, body={"p_data": dict(data or {})},
+        )
+
+    def create_intake_email_alias(self, session, label=""):
+        return _request(
+            "POST", "/rest/v1/rpc/create_intake_email_alias",
+            token=session.access_token, body={"p_label": str(label or "")},
+        )
+
+    def triage_intake_request(self, session, request_id, owner_id=None,
+                              request_type=None, priority_override=None,
+                              reason="", status="triage"):
+        reason = str(reason or "").strip()
+        if priority_override is not None and not reason:
+            raise ValueError("priority override reason required")
+        normalized_status = str(status or "triage").strip().lower()
+        if normalized_status not in ("triage", "in_progress", "resolved", "closed"):
+            raise ValueError("invalid triage status")
+        body = {
+            "p_request": str(request_id),
+            "p_owner": str(owner_id) if owner_id else None,
+            "p_request_type": str(request_type) if request_type else None,
+            "p_priority_override": (
+                float(priority_override) if priority_override is not None else None
+            ),
+            "p_reason": reason,
+            "p_status": normalized_status,
+        }
+        return _request(
+            "POST", "/rest/v1/rpc/triage_intake_request",
+            token=session.access_token, body=body,
+        )
+
+    def add_intake_message(self, session, request_id, body, public=True):
+        from intake_rules import validate_message
+
+        validation = validate_message(body, bool(public))
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/add_intake_message",
+            token=session.access_token,
+            body={
+                "p_request": str(request_id),
+                "p_body": str(body or "").strip(),
+                "p_public": bool(public),
+            },
+        )
+
+    def find_intake_duplicates(self, session, request_id, limit=5):
+        try:
+            limit = min(max(int(limit or 5), 1), 20)
+        except (TypeError, ValueError) as error:
+            raise ValueError("duplicate limit must be an integer") from error
+        return _request(
+            "POST", "/rest/v1/rpc/find_intake_duplicates",
+            token=session.access_token,
+            body={"p_request": str(request_id), "p_limit": limit},
+        )
+
+    def merge_intake_request(self, session, source_id, target_id, note=""):
+        if not source_id or not target_id:
+            raise ValueError("source and target request are required")
+        if str(source_id) == str(target_id):
+            raise ValueError("cannot merge a request into itself")
+        return _request(
+            "POST", "/rest/v1/rpc/merge_intake_request",
+            token=session.access_token,
+            body={
+                "p_source": str(source_id),
+                "p_target": str(target_id),
+                "p_note": str(note or ""),
+            },
+        )
+
+    def convert_intake_request(self, session, request_id, kind, data=None):
+        from intake_rules import validate_conversion
+
+        payload = dict(data or {})
+        validation = validate_conversion(kind, payload)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/convert_intake_request",
+            token=session.access_token,
+            body={
+                "p_request": str(request_id),
+                "p_kind": str(kind or "").strip().lower(),
+                "p_data": payload,
+            },
+        )
+
+    def intake_escalate_sla(self, session, enterprise_id=None):
+        body = {}
+        if enterprise_id:
+            body["p_enterprise"] = str(enterprise_id)
+        return _request(
+            "POST", "/rest/v1/rpc/intake_escalate_sla",
+            token=session.access_token, body=body,
+        )
+
+    def public_intake_form(self, token):
+        return _request(
+            "POST", "/rest/v1/rpc/get_public_intake_form",
+            token="", body={"p_token": str(token or "")},
+        )
+
+    def submit_public_intake(self, token, data):
+        from intake_rules import validate_submission
+
+        payload = dict(data or {})
+        validation = validate_submission(payload, external=True)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/submit_public_intake",
+            token="", body={"p_token": str(token or ""), "p_data": payload},
+        )
+
+    def public_intake_status(self, tracking_code, email):
+        if not str(tracking_code or "").strip() or not str(email or "").strip():
+            raise ValueError("tracking code and email are required")
+        return _request(
+            "POST", "/rest/v1/rpc/get_public_intake_status",
+            token="",
+            body={
+                "p_tracking_code": str(tracking_code or "").strip(),
+                "p_email": str(email or "").strip(),
+            },
+        )
+
+    def ingest_intake_email(self, alias_token, sender, subject, body,
+                            request_type="customer"):
+        from intake_rules import validate_submission
+
+        payload = {
+            "title": subject, "detail": body,
+            "request_type": request_type,
+        }
+        validation = validate_submission(payload, external=False)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/ingest_intake_email",
+            token="",
+            body={
+                "p_alias_token": str(alias_token or ""),
+                "p_from": str(sender or ""),
+                "p_subject": str(subject or ""),
+                "p_body": str(body or ""),
+                "p_request_type": str(request_type or "customer"),
+            },
+        )

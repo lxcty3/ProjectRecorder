@@ -28,7 +28,8 @@ const HERE = __dirname;
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "identity.js", "today.js",
-               "decision.js", "operations.js", "execution.js", "account.js", "community.js",
+               "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
+               "community.js",
                "app.js"];
 
 let failed = 0;
@@ -167,7 +168,7 @@ function matchAll(text, pattern, group) {
      改成 vm.Script 预编译后，每个用例只付"执行"的代价。
 */
 const COMPILED = ["store.js", "calc.js", "assist.js", "charts.js", "merit.js",
-                  "sync.js", "notify.js", "operations.js", "execution.js"]
+                  "sync.js", "notify.js", "operations.js", "execution.js", "intake.js"]
   .map(name => ({
   name,
   script: new vm.Script(fs.readFileSync(path.join(HERE, name), "utf8"),
@@ -2799,7 +2800,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
   const sources = ["app.js", "account.js", "community.js", "today.js",
-                   "operations.js", "execution.js"]
+                   "operations.js", "execution.js", "intake.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
 
@@ -5222,6 +5223,64 @@ test("执行追踪：手机验收、交接、变更完整接线", () => {
   const store = fs.readFileSync(path.join(HERE, "store.js"), "utf8");
   if (store.indexOf("execution:") === -1) {
     throw new Error("store.js 缺少 execution 缓存");
+  }
+});
+
+test("工作入口：手机快速记录、公开表单和分诊完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "page-intake", "intake-summary", "intake-requests", "intake-mine",
+    "intake-forms", "btn-intake-quick", "btn-intake-form", "btn-intake-refresh",
+    "btn-intake-settings", "btn-intake-email", "intake-email-aliases",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  if (html.indexOf('data-page="intake"') === -1) {
+    throw new Error("导航缺少工作入口");
+  }
+  if (html.indexOf('src="intake.js"') === -1) {
+    throw new Error("index.html 没有加载 intake.js");
+  }
+  if (html.indexOf('src="vendor/qrcode.min.js"') === -1) {
+    throw new Error("index.html 没有加载二维码组件");
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of [
+    '"intake"', 'target === "intake"', "renderIntake()",
+    "loadIntake(true)", "bindIntake()",
+  ]) {
+    if (app.indexOf(text) === -1) throw new Error(`app.js 缺少 ${text}`);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  for (const text of ['"intake.js"', '"intake.html"', '"public-intake.js"', '"qrcode.min.js"']) {
+    if (build.indexOf(text) === -1) throw new Error(`build-www.js 缺少 ${text}`);
+  }
+  const intake = fs.readFileSync(path.join(HERE, "intake.js"), "utf8");
+  for (const text of [
+    "renderIntake", "loadIntake", "bindIntake", "intakeRpc",
+    "get_my_intake_requests", "get_intake_board", "create_intake_request",
+    "create_intake_form", "triage_intake_request", "convert_intake_request",
+    "merge_intake_request", "add_intake_message", "intakeShowQr", "openIntakeSettings",
+    "create_intake_email_alias", "openIntakeEmailAlias",
+    "data-intake-action",
+  ]) {
+    if (intake.indexOf(text) === -1) throw new Error(`intake.js 缺少 ${text}`);
+  }
+  const publicForm = fs.readFileSync(path.join(HERE, "public-intake.js"), "utf8");
+  new vm.Script(publicForm, { filename: "public-intake.js" });
+  new vm.Script(
+    fs.readFileSync(path.join(HERE, "vendor", "qrcode.min.js"), "utf8"),
+    { filename: "vendor/qrcode.min.js" },
+  );
+  for (const text of [
+    "get_public_intake_form", "submit_public_intake",
+    "get_public_intake_status", "PUBLIC_SUPABASE_URL",
+  ]) {
+    if (publicForm.indexOf(text) === -1) throw new Error(`public-intake.js 缺少 ${text}`);
+  }
+  const store = fs.readFileSync(path.join(HERE, "store.js"), "utf8");
+  if (store.indexOf("intake:") === -1) {
+    throw new Error("store.js 缺少 intake 缓存");
   }
 });
 

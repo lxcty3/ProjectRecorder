@@ -156,6 +156,7 @@ mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
 mobile/sql/execution-tracking-v1.sql
 mobile/sql/operations-economics-v1.sql
+mobile/sql/work-intake-v1.sql
 ```
 
 `decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
@@ -186,6 +187,35 @@ mobile/sql/operations-economics-v1.sql
 ```
 
 `install-unified.sql` 末尾按要求先执行 Phase 3、再执行依赖 `task_acceptance` 的 Phase 2B 区块；决策中心和执行追踪基础表未就绪时会跳过并输出提示。独立部署仍以 `mobile/sql/execution-tracking-v1.sql` 为准。执行追踪集成测试位于 `tests.test_execution_integration`，使用 `PROJECT_RECORDER_TEST_DATABASE_URL` 指向一次性测试库。
+
+
+### 工作入口、公开需求与分诊
+
+Phase 4 把电脑和手机上的临时事项统一成可追踪需求：
+
+- **快速记录**：电脑「工作入口」和手机「需求」页都可以直接记录类型、标题、详情和五项优先级因素。优先级由服务端计算，返回逐项分值和总分；管理者覆盖排序必须填写理由。
+- **公开表单与二维码**：管理端可新建 `intake.html?token=...` 公开入口，复制链接或显示二维码。外部提交者只看到公司名称、表单名称、允许类型和自己的申请编号。
+- **邮件入口**：管理端可创建 `intake+随机令牌@配置域名` 地址，邮件网关把发件人、主题和正文转发到 `ingest_intake_email`。地址令牌和发送频率都由服务端校验。
+- **分诊与 SLA**：故障 2 小时、客户/销售/临时事项 1 天、内部改进 3 天。超时未分诊会自动升级给企业负责人并进入待分诊队列；可调用 `intake_escalate_sla` 或配置定时任务执行。
+- **重复需求**：提交时返回相似度提示；管理端可查看候选、合并重复。合并写入 `merged_into_id`、双向关联并复制全部沟通记录，原始需求和提出人不会被删除。
+- **外部沟通隔离**：公开回复进入公开消息流，`get_public_intake_status` 同时校验申请编号和邮箱；内部备注只对管理端可见，外部状态接口不会返回内部字段。
+- **转入执行**：需求可转项目、转任务或售前支持，保留 `linked_project_id`、`linked_task_id` 和转换事件；转换不会丢失来源、提出人、验收线索和沟通记录。
+- **安全边界**：公开表单启用服务端限流、邮箱校验和同意确认；所有业务表启用 RLS，直接写入被收回，成功和越权操作分别进入企业审计与 `intake_security_audit`。
+
+Phase 4 部署顺序：
+
+```text
+mobile/sql/enterprise-identity.sql
+mobile/sql/community.sql
+mobile/sql/enterprise-governance-v2.sql
+mobile/sql/task-accept-extension.sql
+mobile/sql/decision-approvals-v1.sql
+mobile/sql/execution-tracking-v1.sql
+mobile/sql/operations-economics-v1.sql
+mobile/sql/work-intake-v1.sql
+```
+
+`install-unified.sql` 末尾包含受前置条件保护的 Phase 4 区块。公开静态页为 `mobile/intake.html`，手机管理页加载 `mobile/intake.js`，二维码组件为 `mobile/vendor/qrcode.min.js`。邮件网关需把收到的邮件转发给 `ingest_intake_email`，实际发信由 `intake_notifications` 出站队列处理。
 
 ### 统一云端部署
 
@@ -449,6 +479,7 @@ python -m unittest tests.test_enterprise_governance_integration -v
 python -m unittest tests.test_decision_integration -v
 python -m unittest tests.test_execution_integration -v
 python -m unittest tests.test_operations_integration -v
+python -m unittest tests.test_intake_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
@@ -467,6 +498,7 @@ mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
 mobile/sql/execution-tracking-v1.sql
 mobile/sql/operations-economics-v1.sql
+mobile/sql/work-intake-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。

@@ -179,6 +179,8 @@ function emptyDatabase() {
     execution: { acceptance: [], dependencies: [], handoffs: [],
                   changes: [], tasks: [], projects: [], members: [],
                   access: {}, at: 0 },
+    intake: { myRequests: [], requests: [], forms: [], members: [],
+              projects: [], tasks: [], emailAliases: [], settings: {}, access: {}, at: 0 },
 
     /* 简单模式默认开启；只有具备管理、财务、审计或治理权限的人
        才能切到 advanced。服务端仍会独立校验。 */
