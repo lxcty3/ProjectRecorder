@@ -612,6 +612,12 @@ class MainWindow(QMainWindow):
             "tasks.assign", "finance.view", "audit.read",
         )
 
+    def _execution_view(self):
+        return self._has_identity_permission(
+            "company.manage", "projects.manage", "people.manage",
+            "tasks.assign", "tasks.grade",
+        )
+
     def _advanced_mode_allowed(self):
         """Advanced controls require management, finance, audit or governance authority."""
         if self.account_session is None:
@@ -644,7 +650,7 @@ class MainWindow(QMainWindow):
                 and (self._effective_ui_mode() != "advanced" or not self._management_view())):
             self.operations_page.refresh()
         if (hasattr(self, "execution_page")
-                and (self._effective_ui_mode() != "advanced" or not self._management_view())):
+                and (self._effective_ui_mode() != "advanced" or not self._execution_view())):
             self.execution_page.refresh()
 
     def _account_role_label(self):
@@ -676,12 +682,13 @@ class MainWindow(QMainWindow):
             mode = self._effective_ui_mode()
             advanced = mode == "advanced"
             management = bool(session and self._management_view())
+            execution_view = bool(session and self._execution_view())
             employee_tasks = bool(session and not management and advanced)
 
             self.tabs.setTabVisible(self.today_tab, not advanced)
             self.tabs.setTabVisible(self.decision_tab, advanced and management)
             self.tabs.setTabVisible(self.operations_tab, advanced and management)
-            self.tabs.setTabVisible(self.execution_tab, advanced and management)
+            self.tabs.setTabVisible(self.execution_tab, advanced and execution_view)
             if self.decision_page.session is not session:
                 self.decision_page.apply_account_session(session)
             if self.operations_page.session is not session:

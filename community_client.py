@@ -735,6 +735,16 @@ class CommunityClient:
             },
         )
 
+    def delete_task_dependency(self, session, task_id, depends_on_task_id):
+        return _request(
+            "POST", "/rest/v1/rpc/delete_task_dependency",
+            token=session.access_token,
+            body={
+                "p_task": str(task_id),
+                "p_depends_on": str(depends_on_task_id),
+            },
+        )
+
     def create_task_handoff(self, session, task_id, to_profile_id, artifact,
                             note=""):
         artifact = str(artifact or "").strip()

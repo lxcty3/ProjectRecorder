@@ -154,17 +154,17 @@ mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
-mobile/sql/operations-economics-v1.sql
 mobile/sql/execution-tracking-v1.sql
+mobile/sql/operations-economics-v1.sql
 ```
 
 `decision-approvals-v1.sql` 会建立 `decision_items`、`approval_requests` 及事件表，并把现有请假、工时、奖励兑换、任务延期和身份任免数据同步进统一审批。脚本纯 ASCII、可重复执行；业务表只通过 SECURITY DEFINER RPC 读写，直接表权限对客户端收回。
 
-`install-unified.sql` 末尾包含受前置条件保护的 Phase 2A 和 Phase 2B 区块：基础统一安装时如果阶段一、任务延期或决策中心表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql` 和 `mobile/sql/operations-economics-v1.sql` 为准。
+`install-unified.sql` 末尾包含受前置条件保护的 Phase 2A、Phase 3 和 Phase 2B 区块：基础统一安装时如果阶段一、任务延期、决策中心或执行追踪表还不存在，会跳过并输出提示；完成前置迁移后重新执行统一安装脚本即可应用。独立部署时仍以 `mobile/sql/decision-approvals-v1.sql`、`mobile/sql/execution-tracking-v1.sql` 和 `mobile/sql/operations-economics-v1.sql` 为准。
 
 ### 执行追踪、验收、依赖、交接与变更
 
-Phase 3 在经营分析之后建立可追踪的执行闭环：
+Phase 3 建立可追踪的执行闭环，并作为经营绩效聚合的验收数据源；部署时应先于经营分析迁移：
 
 - **验收闭环**：任务提交时必须填写验收标准和交付证据，并指定独立验收人。状态只允许待验收、返工和已验收；只有已验收是最终完成，提交人不能自行验收。
 - **依赖影响**：任务支持前后置依赖和依赖间隔。服务端拒绝循环依赖，并按最长累计路径计算下游延迟天数、预计日期和责任人，供桌面和手机下钻。
@@ -181,11 +181,11 @@ mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
-mobile/sql/operations-economics-v1.sql
 mobile/sql/execution-tracking-v1.sql
+mobile/sql/operations-economics-v1.sql
 ```
 
-`install-unified.sql` 末尾包含受前置条件保护的 Phase 3 区块；决策中心和执行追踪基础表未就绪时会跳过并输出提示。独立部署仍以 `mobile/sql/execution-tracking-v1.sql` 为准。执行追踪集成测试位于 `tests.test_execution_integration`，使用 `PROJECT_RECORDER_TEST_DATABASE_URL` 指向一次性测试库。
+`install-unified.sql` 末尾按要求先执行 Phase 3、再执行依赖 `task_acceptance` 的 Phase 2B 区块；决策中心和执行追踪基础表未就绪时会跳过并输出提示。独立部署仍以 `mobile/sql/execution-tracking-v1.sql` 为准。执行追踪集成测试位于 `tests.test_execution_integration`，使用 `PROJECT_RECORDER_TEST_DATABASE_URL` 指向一次性测试库。
 
 ### 统一云端部署
 
@@ -447,32 +447,38 @@ python -m pip install -r requirements-test.txt
 $env:PROJECT_RECORDER_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/project_recorder_test'
 python -m unittest tests.test_enterprise_governance_integration -v
 python -m unittest tests.test_decision_integration -v
-python -m unittest tests.test_operations_integration -v
 python -m unittest tests.test_execution_integration -v
+python -m unittest tests.test_operations_integration -v
 ```
 
 运行前按以下顺序在测试库执行：
 
 ```text
+mobile/sql/setup-tables.sql
+mobile/sql/migrate-notify.sql
+mobile/sql/work-session.sql
+mobile/sql/merit-ledger.sql
+mobile/sql/rewards-leave.sql
 mobile/sql/unified-platform.sql
 mobile/sql/enterprise-identity.sql
 mobile/sql/community.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql
+mobile/sql/execution-tracking-v1.sql
 mobile/sql/operations-economics-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。
-经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、逐字段金额上限、跨企业项目拒绝审计、技能自助编辑权限、项目-only 能力权限、工时标签、员工证据说明、经理复核和审计。执行追踪集成测试位于 `tests.test_execution_integration`，覆盖独立验收、最终状态、依赖循环与下游影响、接收方交接、变更不改计划及直接表写入拒绝。
+经营集成测试位于 `tests.test_operations_integration`，覆盖经营聚合、逐字段金额上限、跨企业项目拒绝审计、技能自助编辑权限、项目-only 能力权限、工时标签、员工证据说明、经理复核和审计。执行追踪集成测试位于 `tests.test_execution_integration`，会实际执行 PL/pgSQL 函数体，覆盖看板全部分区、验收/评级/积分门禁、返工重开、权限只读、中文风险与紧急度归一化、决策双写同步、可选依赖、绩效聚合、接收方交接、变更不改计划及直接表写入拒绝。
 
 注意：
 
 - `PROJECT_RECORDER_TEST_DATABASE_URL` 未设置或未安装 `psycopg2-binary` 时，集成测试会自动跳过，不影响普通 `unittest`。
 - CI 中把该变量保存为受保护的 secret，指向临时数据库；不要让测试连接生产库。
-- 集成测试需要 `authenticated`、`anon`、`auth.uid()` 和 Supabase RLS 环境；普通本地 PostgreSQL 需先模拟这些角色和 JWT claim 设置。
+- 集成测试需要 `authenticated`、`anon`、`auth.uid()`、`auth.users`、`pgcrypto` 和 Supabase RLS 环境；普通本地 PostgreSQL 需先创建这些角色/函数与 schema，再按上方顺序执行迁移。仅有 `pglast` 不能验证 PL/pgSQL 函数体，因此发布前必须让该 opt-in 套件实际调用 RPC。
 - 测试大多在事务中回滚；并发发分测试会提交隔离夹具并在 `finally` 中清理，因此必须使用一次性数据库。
-- 发布前除集成测试外，还应执行 `python check.py`、`node build-www.js`、`node selfcheck.js`、SQL `pglast` 解析和 `npx cap sync android`。
+- 发布前应先让 opt-in 集成测试在一次性数据库实际执行全部 RPC，再执行 `python check.py`、`node build-www.js`、`node selfcheck.js`、SQL `pglast` 解析和 `npx cap sync android`。
 
 ## 自检
 

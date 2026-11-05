@@ -5,8 +5,11 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QInputDialog,
+    QSpinBox,
     QLabel,
     QPushButton,
     QTabWidget,
@@ -158,9 +161,35 @@ class ExecutionPage(QWidget):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.addWidget(SectionTitle("依赖与下游影响"))
         self.dependency_table = self._table([
-            "任务", "依赖上游", "间隔", "阻塞", "上游状态", "下游影响", "负责人",
+            "任务", "依赖上游", "间隔", "要求", "阻塞", "上游状态", "下游影响", "负责人",
         ])
+        self.dependency_table.itemSelectionChanged.connect(self._sync_actions)
         layout.addWidget(self.dependency_table, 1)
+        controls = QHBoxLayout()
+        self.dependency_task_combo = QComboBox()
+        self.dependency_upstream_combo = QComboBox()
+        self.dependency_lag = QSpinBox()
+        self.dependency_lag.setRange(0, 3650)
+        self.dependency_required = QCheckBox("必须依赖")
+        self.dependency_required.setChecked(True)
+        self.dependency_add_button = QPushButton("保存依赖")
+        self.dependency_add_button.setObjectName("GhostButton")
+        self.dependency_remove_button = QPushButton("删除依赖")
+        self.dependency_remove_button.setObjectName("GhostButton")
+        self.dependency_add_button.clicked.connect(self._add_dependency)
+        self.dependency_remove_button.clicked.connect(
+            self._remove_selected_dependency
+        )
+        controls.addWidget(muted("任务"))
+        controls.addWidget(self.dependency_task_combo, 2)
+        controls.addWidget(muted("依赖"))
+        controls.addWidget(self.dependency_upstream_combo, 2)
+        controls.addWidget(self.dependency_lag)
+        controls.addWidget(self.dependency_required)
+        controls.addWidget(self.dependency_add_button)
+        controls.addWidget(self.dependency_remove_button)
+        controls.addStretch()
+        layout.addLayout(controls)
         self.tabs.addTab(page, "依赖")
 
     def _build_handoff_tab(self):
@@ -301,7 +330,7 @@ class ExecutionPage(QWidget):
             f"待确认交接 {pending_handoffs} · 待决变更 {pending_changes}"
         )
         self._render_acceptance(acceptance, access)
-        self._render_dependencies(dependencies)
+        self._render_dependencies(dependencies, access)
         self._render_handoffs(handoffs, access)
         self._render_changes(changes, access)
         if self.acceptance_table.rowCount():
@@ -329,7 +358,7 @@ class ExecutionPage(QWidget):
             if not actions and item.get("status") == "pending":
                 actions = {"accept": can_review, "rework": can_review}
 
-    def _render_dependencies(self, rows):
+    def _render_dependencies(self, rows, access):
         self.dependency_table.setRowCount(0)
         for item in rows:
             affected = item.get("affected_tasks")
@@ -344,11 +373,13 @@ class ExecutionPage(QWidget):
                 item.get("title") or "任务",
                 item.get("depends_on_title") or "上游任务",
                 f"{int(_number(item.get('lag_days')))} 天",
+                "必须" if item.get("required", True) else "可选",
                 f"延迟 {delayed} 天" if item.get("blocked") else "正常",
                 item.get("upstream_status") or "—",
                 impact,
                 item.get("employee_name") or item.get("upstream_employee_name") or "—",
             ], item)
+        self._sync_dependency_choices(access)
 
     def _render_handoffs(self, rows, access):
         self.handoff_table.setRowCount(0)
@@ -374,6 +405,81 @@ class ExecutionPage(QWidget):
                 item.get("resource_impact") or "—",
                 item.get("risk") or "healthy",
             ], item)
+
+    def _sync_dependency_choices(self, access):
+        tasks = [
+            item for item in (self.snapshot.get("tasks") or [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        for combo in (self.dependency_task_combo, self.dependency_upstream_combo):
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for item in tasks:
+                label = str(item.get("title") or item.get("id"))
+                employee = item.get("employee_name")
+                if employee:
+                    label += f" · {employee}"
+                combo.addItem(label, str(item.get("id")))
+            if current:
+                index = combo.findData(str(current))
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+        allowed = bool(access.get("can_manage_dependencies"))
+        self.dependency_task_combo.setEnabled(allowed and len(tasks) > 0)
+        self.dependency_upstream_combo.setEnabled(allowed and len(tasks) > 1)
+        self.dependency_lag.setEnabled(allowed)
+        self.dependency_required.setEnabled(allowed)
+        self.dependency_add_button.setEnabled(allowed and len(tasks) > 1)
+        selected = self._selected(self.dependency_table) or {}
+        actions = selected.get("actions") if isinstance(
+            selected.get("actions"), dict
+        ) else {}
+        self.dependency_remove_button.setEnabled(
+            allowed and bool(actions.get("remove"))
+        )
+
+    def _add_dependency(self):
+        if self.session is None:
+            return
+        task_id = self.dependency_task_combo.currentData()
+        upstream_id = self.dependency_upstream_combo.currentData()
+        if not task_id or not upstream_id or task_id == upstream_id:
+            self._set_status("请选择两个不同任务。", error=True)
+            return
+        self._execute_dependency(
+            task_id,
+            upstream_id,
+            self.dependency_lag.value(),
+            self.dependency_required.isChecked(),
+        )
+
+    def _remove_selected_dependency(self):
+        item = self._selected(self.dependency_table)
+        if not item or self.session is None:
+            return
+        self._execute_dependency_removal(
+            item.get("task_id"), item.get("depends_on_task_id")
+        )
+
+    def _execute_dependency(self, task_id, upstream_id, lag_days, required):
+        return self._start_worker(
+            lambda: CommunityClient().upsert_task_dependency(
+                self.session, task_id, upstream_id, lag_days, required
+            ),
+            self._mutation_done,
+            self._action_failed,
+        )
+
+    def _execute_dependency_removal(self, task_id, upstream_id):
+        return self._start_worker(
+            lambda: CommunityClient().delete_task_dependency(
+                self.session, task_id, upstream_id
+            ),
+            self._mutation_done,
+            self._action_failed,
+        )
 
     def _selected(self, table):
         row = table.currentRow()
@@ -407,6 +513,7 @@ class ExecutionPage(QWidget):
         self.change_return_button.setEnabled(
             bool(change_actions.get("return"))
         )
+        self._sync_dependency_choices(self.snapshot.get("access") or {})
 
     def _note(self, title, prompt, required=False):
         note, accepted = QInputDialog.getMultiLineText(self, title, prompt)

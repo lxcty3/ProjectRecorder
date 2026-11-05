@@ -2,12 +2,13 @@
 -- Project Recorder - Phase 2B operations economics
 --
 -- Deployment order:
+--   unified-platform.sql
 --   enterprise-identity.sql
 --   community.sql
 --   enterprise-governance-v2.sql
---   unified-platform.sql
 --   task-accept-extension.sql
 --   decision-approvals-v1.sql
+--   execution-tracking-v1.sql
 --   operations-economics-v1.sql
 --
 -- This migration is additive and ASCII-only. Business tables stay
@@ -1957,28 +1958,111 @@ begin
       left join availability a on a.skill=s.skill
     ),
     'performance',(
-      select coalesce(jsonb_agg(
-        to_jsonb(e)||jsonb_build_object(
-          'name',p.name,
-          'source_id',e.id,
+      with acceptance_stats as (
+        select
+          t.employee_id profile_id,
+          to_char(coalesce(max(a.reviewed_at),now()),'YYYY-MM') period,
+          count(*) filter(where a.status='accepted') accepted_count,
+          count(*) filter(where a.status='rework') rework_count,
+          case when count(*) filter(where a.status='accepted')>0 then
+            count(*) filter(
+              where a.status='accepted' and a.submitted_at::date<=t.plan_date
+            )::numeric/count(*) filter(where a.status='accepted')
+          else 0 end on_time_rate,
+          case when count(*)>0 then
+            count(*) filter(where a.status='accepted')::numeric/count(*)
+          else 0 end first_pass_rate,
+          case when count(*)>0 then
+            count(*) filter(where a.status='rework')::numeric/count(*)
+          else 0 end rework_rate,
+          jsonb_agg(jsonb_build_object(
+            'type','task_acceptance','id',a.task_id,'status',a.status,
+            'reviewed_at',a.reviewed_at)) evidence
+        from public.task_acceptance a
+        join public.tasks t on t.id=a.task_id
+        where v_can_performance and a.enterprise_id=v_eid
+          and a.status in ('accepted','rework')
+          and public._operations_can_access_profile(
+            v_eid,v_uid,t.employee_id,
+            array['people.view_all','people.manage','tasks.grade']::text[],false)
+        group by t.employee_id,to_char(coalesce(a.reviewed_at,a.updated_at),'YYYY-MM')
+      ), performance_items as (
+        select jsonb_build_object(
+          'id',e.id,
+          'enterprise_id',e.enterprise_id,
+          'profile_id',e.profile_id,
+          'period',e.period,
+          'on_time_rate',e.on_time_rate,
+          'first_pass_rate',e.first_pass_rate,
+          'rework_rate',e.rework_rate,
+          'collaboration_score',e.collaboration_score,
+          'complexity_score',e.complexity_score,
+          'business_contribution',e.business_contribution,
+          'customer_evaluation',e.customer_evaluation,
+          'evidence',e.evidence,
+          'employee_statement',e.employee_statement,
+          'status',e.status,
           'score',case when e.status='reviewed' then e.score
             else public._operations_performance_score(
               e.on_time_rate,e.first_pass_rate,e.rework_rate,
               e.collaboration_score,e.complexity_score,
               e.business_contribution) end,
+          'reviewer_note',e.reviewer_note,
+          'reviewed_by',e.reviewed_by,
+          'reviewed_at',e.reviewed_at,
+          'source','manual',
+          'source_id',e.id,
           'evidence_details',public._operations_evidence_details(
             v_eid,e.evidence),
           'can_review',public._operations_can_access_profile(
             v_eid,v_uid,e.profile_id,
             array['people.manage','tasks.grade','company.manage']::text[],false)
-        ) order by p.name,e.period desc
+        ) item,
+        p.name sort_name,
+        e.period sort_period
+        from public.performance_evidence e
+        join public.profiles p on p.id=e.profile_id
+        where v_can_performance and e.enterprise_id=v_eid
+          and public._operations_can_access_profile(
+            v_eid,v_uid,e.profile_id,
+            array['people.view_all','people.manage','tasks.grade']::text[],false)
+        union all
+        select jsonb_build_object(
+          'id',null,
+          'enterprise_id',v_eid,
+          'profile_id',s.profile_id,
+          'period',s.period,
+          'on_time_rate',s.on_time_rate,
+          'first_pass_rate',s.first_pass_rate,
+          'rework_rate',s.rework_rate,
+          'collaboration_score',0,
+          'complexity_score',0,
+          'business_contribution',0,
+          'customer_evaluation','{}'::jsonb,
+          'evidence',s.evidence,
+          'employee_statement','',
+          'status','submitted',
+          'score',public._operations_performance_score(
+            s.on_time_rate,s.first_pass_rate,s.rework_rate,0,0,0),
+          'reviewer_note','Derived from task acceptance records',
+          'reviewed_by',null,
+          'reviewed_at',null,
+          'source','task_acceptance',
+          'source_id',null,
+          'accepted_count',s.accepted_count,
+          'rework_count',s.rework_count,
+          'evidence_details',s.evidence,
+          'can_review',false
+        ) item,
+        p.name sort_name,
+        s.period sort_period
+        from acceptance_stats s
+        join public.profiles p on p.id=s.profile_id
+      )
+      select coalesce(jsonb_agg(
+        item order by sort_name,sort_period desc
       ),'[]'::jsonb)
-      from public.performance_evidence e
-      join public.profiles p on p.id=e.profile_id
-      where v_can_performance and e.enterprise_id=v_eid
-        and public._operations_can_access_profile(
-          v_eid,v_uid,e.profile_id,
-          array['people.view_all','people.manage','tasks.grade']::text[],false)
+      from performance_items
     ),
     'worklog_summary',(
       with entries as (

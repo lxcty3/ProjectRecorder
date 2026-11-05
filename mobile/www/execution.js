@@ -133,9 +133,19 @@ function renderExecution() {
       <div class="decision-summary-card ${pendingChanges ? "is-watch" : ""}">
         <span>待决变更</span><b>${pendingChanges}</b></div>`;
   }
+  const access = state.access || {};
   if ($("execution-tools")) {
     $("execution-tools").classList.toggle("hidden", !executionAllowed());
   }
+  const toolVisibility = {
+    "btn-execution-submit": !!access.can_submit_acceptance,
+    "btn-execution-dependency": !!access.can_manage_dependencies,
+    "btn-execution-handoff": !!access.can_create_handoff,
+    "btn-execution-change": !!access.can_manage_changes,
+  };
+  Object.entries(toolVisibility).forEach(([id, visible]) => {
+    if ($(id)) $(id).classList.toggle("hidden", !visible);
+  });
 
   $("execution-acceptance").innerHTML = acceptance.length
     ? acceptance.map(item => {
@@ -172,14 +182,23 @@ function renderExecution() {
       const impact = affected.length
         ? affected.map(row => `${escapeHtml(row.title || "任务")} +${executionNum(row.delay_days)} 天`).join(" · ")
         : "暂无下游影响";
+      const actions = item.actions || {};
+      const remove = actions.remove
+        ? `<button class="btn ghost execution-action"
+             data-execution-action="dependency-remove"
+             data-task-id="${escapeHtml(String(item.task_id || ""))}"
+             data-upstream-id="${escapeHtml(String(item.depends_on_task_id || ""))}">删除依赖</button>`
+        : "";
       return `<article class="execution-card ${item.blocked ? "is-blocked" : ""}">
         <div class="execution-card-head">
           <div><b>${escapeHtml(item.title || "任务")}</b>
             <div class="meta">依赖 ${escapeHtml(item.depends_on_title || "上游任务")}
-              · 间隔 ${executionNum(item.lag_days)} 天</div></div>
+              · 间隔 ${executionNum(item.lag_days)} 天
+              · ${item.required ? "必须依赖" : "可选依赖"}</div></div>
           <span class="execution-state">${item.blocked ? `延迟 ${executionNum(item.delayed_days)} 天` : "正常"}</span>
         </div>
         <div class="execution-field"><span>下游影响</span><p>${impact}</p></div>
+        ${remove ? `<div class="execution-actions">${remove}</div>` : ""}
       </article>`;
     }).join("")
     : executionEmpty("任务依赖会显示在这里。");
@@ -303,6 +322,48 @@ async function submitExecutionAcceptance() {
     p_task: task, p_criteria: criteria, p_evidence: evidence,
     p_reviewer: reviewer, p_note: "mobile submission",
   }, "验收已提交");
+}
+
+function openDependencyCreate(selectedTask) {
+  const tasks = executionState().tasks;
+  if (tasks.length < 2) { toast("至少需要两个任务才能建立依赖"); return; }
+  const first = selectedTask || tasks[0].id;
+  const second = tasks.find(task => String(task.id) !== String(first)).id;
+  const taskOptions = executionTaskOptions(first, false);
+  const upstreamOptions = tasks.map(task => {
+    const value = escapeHtml(String(task.id || ""));
+    return `<option value="${value}"${String(task.id) === String(second) ? " selected" : ""}>${escapeHtml(task.title || "任务")}</option>`;
+  }).join("");
+  openSheet("新增任务依赖", `
+    <label for="execution-dependency-task">任务</label>
+    <select id="execution-dependency-task">${taskOptions}</select>
+    <label for="execution-dependency-upstream">依赖上游</label>
+    <select id="execution-dependency-upstream">${upstreamOptions}</select>
+    <label for="execution-dependency-lag">间隔天数</label>
+    <input id="execution-dependency-lag" type="number" min="0" value="0">
+    <label class="check">
+      <input id="execution-dependency-required" type="checkbox" checked>
+      必须依赖（取消后为可选依赖，不阻塞任务）
+    </label>
+  `, [
+    { label: "取消", onClick: closeSheet },
+    { label: "保存", kind: "", onClick: submitExecutionDependency },
+  ]);
+}
+
+async function submitExecutionDependency() {
+  const task = $("execution-dependency-task").value;
+  const upstream = $("execution-dependency-upstream").value;
+  const lag = Math.max(0, Number($("execution-dependency-lag").value) || 0);
+  const required = $("execution-dependency-required").checked;
+  if (!task || !upstream || task === upstream) {
+    toast("请选择两个不同任务");
+    return;
+  }
+  await executeExecutionMutation("upsert_task_dependency", {
+    p_task: task, p_depends_on: upstream,
+    p_lag_days: lag, p_required: required,
+  }, "任务依赖已保存");
 }
 
 function openHandoffCreate(selectedTask) {
@@ -469,13 +530,17 @@ function bindExecution() {
   if ($("btn-execution-submit")) {
     $("btn-execution-submit").onclick = () => openAcceptanceSubmission("");
   }
+  if ($("btn-execution-dependency")) {
+    $("btn-execution-dependency").onclick = () => openDependencyCreate("");
+  }
   if ($("btn-execution-handoff")) {
     $("btn-execution-handoff").onclick = () => openHandoffCreate("");
   }
   if ($("btn-execution-change")) {
     $("btn-execution-change").onclick = () => openChangeCreate("");
   }
-  const containers = ["execution-acceptance", "execution-handoffs", "execution-changes"];
+  const containers = ["execution-acceptance", "execution-dependencies",
+    "execution-handoffs", "execution-changes"];
   containers.forEach(id => {
     const root = $(id);
     if (!root) return;
@@ -483,6 +548,13 @@ function bindExecution() {
       const button = event.target.closest("[data-execution-action]");
       if (!button || button.disabled) return;
       const action = button.dataset.executionAction;
+      if (action === "dependency-remove") {
+        executeExecutionMutation("delete_task_dependency", {
+          p_task: button.dataset.taskId,
+          p_depends_on: button.dataset.upstreamId,
+        }, "任务依赖已删除");
+        return;
+      }
       const decisions = {
         "acceptance-accept": "accepted", "acceptance-rework": "rework",
         "handoff-accept": "accepted", "handoff-reject": "rejected",

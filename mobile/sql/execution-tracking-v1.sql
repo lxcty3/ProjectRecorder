@@ -2,14 +2,14 @@
 -- Project Recorder - Phase 3 execution tracking
 --
 -- Deployment order:
+--   unified-platform.sql
 --   enterprise-identity.sql
 --   community.sql
 --   enterprise-governance-v2.sql
---   unified-platform.sql
 --   task-accept-extension.sql
 --   decision-approvals-v1.sql
---   operations-economics-v1.sql
 --   execution-tracking-v1.sql
+--   operations-economics-v1.sql
 --
 -- All business tables are private. Clients read and write through the
 -- SECURITY DEFINER RPCs at the end of this file.
@@ -155,18 +155,39 @@ returns text
 language plpgsql immutable security definer
 set search_path=public,auth,pg_temp
 as $fn$
-declare v_risk text:=lower(btrim(coalesce(p_risk,'health')));
+declare v_risk text:=lower(btrim(coalesce(p_risk,'healthy')));
 begin
-  if v_risk in ('severe','critical','high','serious')
+  if v_risk in ('severe','critical','high','serious',
+                U&'\4E25\91CD',U&'\9AD8\98CE\9669') then
     return 'severe';
   end if;
-  if v_risk in ('risk','medium','warning') then
+  if v_risk in ('risk','medium','warning',U&'\98CE\9669') then
     return 'risk';
   end if;
-  if v_risk in ('attention','low') then
+  if v_risk in ('attention','low',U&'\5173\6CE8') then
     return 'attention';
   end if;
-  return 'healthy';
+  if v_risk in ('healthy','',U&'\5065\5EB7') then
+    return 'healthy';
+  end if;
+  return 'attention';
+end;
+$fn$;
+
+create or replace function public._execution_urgency(p_urgency text)
+returns text
+language plpgsql immutable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare v_urgency text:=lower(btrim(coalesce(p_urgency,'')));
+begin
+  if v_urgency in ('critical','emergency','severe',U&'\4E25\91CD') then
+    return 'critical';
+  end if;
+  if v_urgency in ('urgent',U&'\7D27\6025') then return 'urgent'; end if;
+  if v_urgency in ('high',U&'\9AD8') then return 'high'; end if;
+  if v_urgency in ('normal','',U&'\666E\901A') then return 'normal'; end if;
+  return v_urgency;
 end;
 $fn$;
 
@@ -181,11 +202,11 @@ language plpgsql immutable security definer
 set search_path=public,auth,pg_temp
 as $fn$
 begin
-  return amount >= 50000
-    or schedule_impact_days > 3
-    or risk in ('severe','risk')`n    or public._execution_risk(risk) in ('severe','risk')
+  return coalesce(amount,0) >= 50000
+    or coalesce(schedule_impact_days,0) > 3
+    or public._execution_risk(risk) in ('severe','risk')
     or coalesce(cross_department,false)
-    or lower(coalesce(urgency,'')) in
+    or public._execution_urgency(urgency) in
       ('high','urgent','critical','emergency');
 end;
 $fn$;
@@ -279,6 +300,198 @@ begin
 end;
 $fn$;
 
+create or replace function public._execution_role_key(p_eid uuid,p_uid uuid)
+returns text
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select coalesce((
+    select m.role_key from public.enterprise_members m
+     where m.enterprise_id=p_eid and m.profile_id=p_uid and m.status='active'
+     limit 1
+  ),'');
+$fn$;
+
+create or replace function public._execution_is_read_only_role(p_eid uuid,p_uid uuid)
+returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select public._execution_role_key(p_eid,p_uid) in ('auditor','supervisor');
+$fn$;
+
+create or replace function public._execution_has_project_permission(
+  p_eid uuid,
+  p_uid uuid,
+  p_project uuid,
+  p_permissions text[]
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_grant jsonb;
+  v_scope text;
+  v_conditions jsonb;
+  v_project_ids jsonb;
+  v_project_boss uuid;
+  v_actor_department text;
+  v_target_department text;
+begin
+  if p_uid is null or not public._identity_is_member(p_eid,p_uid) then
+    return false;
+  end if;
+  if public._execution_is_read_only_role(p_eid,p_uid) then return false; end if;
+  if exists(
+    select 1 from public.enterprises e
+     where e.id=p_eid and e.owner_profile_id=p_uid
+  ) then return true; end if;
+  if p_project is not null then
+    select p.boss_id into v_project_boss
+      from public.projects p where p.id=p_project;
+    if v_project_boss=p_uid then return true; end if;
+    select m.department into v_actor_department
+      from public.enterprise_members m
+     where m.enterprise_id=p_eid and m.profile_id=p_uid and m.status='active';
+    select m.department into v_target_department
+      from public.tasks t
+      join public.enterprise_members m
+        on m.enterprise_id=p_eid and m.profile_id=t.employee_id
+       and m.status='active'
+     where t.project_id=p_project
+     limit 1;
+  end if;
+  for v_grant in
+    select value from jsonb_array_elements(
+      public._identity_role_permission_grants(p_eid,p_uid)
+    )
+  loop
+    if not ((v_grant->>'permission_key')=any(p_permissions)) then continue; end if;
+    v_scope:=coalesce(v_grant->>'scope','self');
+    v_conditions:=coalesce(v_grant->'conditions','{}'::jsonb);
+    if v_scope='company' then return true; end if;
+    if p_project is null then continue; end if;
+    v_project_ids:=case when jsonb_typeof(v_conditions->'project_ids')='array'
+      then v_conditions->'project_ids' else '[]'::jsonb end;
+    if v_project_ids ? p_project::text
+       or coalesce(v_conditions->>'project_id','')=p_project::text then
+      return true;
+    end if;
+    if v_scope='project'
+       and not (v_conditions ? 'project_ids')
+       and not (v_conditions ? 'project_id') then
+      return true;
+    end if;
+    if v_scope in ('team','department')
+       and v_actor_department is not null
+       and v_actor_department=v_target_department then
+      return true;
+    end if;
+    if v_scope='self' and exists(
+      select 1 from public.tasks t
+       where t.project_id=p_project and t.employee_id=p_uid
+    ) then return true; end if;
+  end loop;
+  return false;
+end;
+$fn$;
+
+create or replace function public._execution_can_submit_task(
+  p_eid uuid,
+  p_uid uuid,
+  p_task uuid
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare v_task public.tasks%rowtype;
+begin
+  if p_uid is null or public._execution_is_read_only_role(p_eid,p_uid) then
+    return false;
+  end if;
+  select * into v_task from public.tasks where id=p_task;
+  if not found then return false; end if;
+  if p_uid in (v_task.boss_id,v_task.employee_id) then return true; end if;
+  return public._execution_has_project_permission(
+    p_eid,p_uid,v_task.project_id,array['tasks.assign']::text[]);
+end;
+$fn$;
+
+create or replace function public._execution_can_review_task(
+  p_eid uuid,
+  p_uid uuid,
+  p_task uuid
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare v_task public.tasks%rowtype;
+begin
+  if p_uid is null or public._execution_is_read_only_role(p_eid,p_uid) then
+    return false;
+  end if;
+  select * into v_task from public.tasks where id=p_task;
+  if not found then return false; end if;
+  return public._execution_has_project_permission(
+    p_eid,p_uid,v_task.project_id,array['tasks.grade']::text[]);
+end;
+$fn$;
+
+create or replace function public._execution_can_manage_task(
+  p_eid uuid,
+  p_uid uuid,
+  p_task uuid
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare v_task public.tasks%rowtype;
+begin
+  if p_uid is null or public._execution_is_read_only_role(p_eid,p_uid) then
+    return false;
+  end if;
+  select * into v_task from public.tasks where id=p_task;
+  if not found then return false; end if;
+  return public._execution_has_project_permission(
+    p_eid,p_uid,v_task.project_id,
+    array['tasks.assign','projects.manage']::text[]);
+end;
+$fn$;
+
+create or replace function public._execution_can_handoff_task(
+  p_eid uuid,
+  p_uid uuid,
+  p_task uuid
+) returns boolean
+language plpgsql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare v_task public.tasks%rowtype;
+begin
+  if p_uid is null or public._execution_is_read_only_role(p_eid,p_uid) then
+    return false;
+  end if;
+  select * into v_task from public.tasks where id=p_task;
+  if not found then return false; end if;
+  if p_uid in (v_task.boss_id,v_task.employee_id) then return true; end if;
+  return public._execution_has_project_permission(
+    p_eid,p_uid,v_task.project_id,
+    array['tasks.assign','people.manage']::text[]);
+end;
+$fn$;
+
+create or replace function public._execution_can_manage_change(
+  p_eid uuid,
+  p_uid uuid,
+  p_project uuid
+) returns boolean
+language sql stable security definer
+set search_path=public,auth,pg_temp
+as $fn$
+  select public._execution_has_project_permission(
+    p_eid,p_uid,p_project,array['projects.manage']::text[]);
+$fn$;
+
 create or replace function public._execution_task_enterprise(p_task uuid)
 returns uuid
 language plpgsql stable security definer
@@ -291,6 +504,38 @@ begin
   return public._identity_bootstrap(v_boss);
 end;
 $fn$;
+
+create or replace function public._execution_guard_task_log()
+returns trigger
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_task public.tasks%rowtype;
+  v_eid uuid;
+begin
+  select * into v_task from public.tasks where id=new.task_id;
+  if not found then raise exception 'task not found'; end if;
+  if new.employee_id is distinct from v_task.employee_id then
+    raise exception 'task log employee must match assignee';
+  end if;
+  if coalesce(v_task.accept_status,'pending')<>'accepted' then
+    raise exception 'assignment must be accepted before completion';
+  end if;
+  v_eid:=public._execution_task_enterprise(new.task_id);
+  if v_eid is null or not public._execution_can_submit_task(
+    v_eid,new.employee_id,new.task_id
+  ) then
+    raise exception 'read-only role cannot create completion evidence';
+  end if;
+  return new;
+end;
+$fn$;
+
+drop trigger if exists trg_execution_task_log_guard on public.task_logs;
+create trigger trg_execution_task_log_guard
+  before insert or update of task_id,employee_id on public.task_logs
+  for each row execute function public._execution_guard_task_log();
 
 create or replace function public._execution_dependency_cycle(
   p_eid uuid,
@@ -335,7 +580,7 @@ begin
       select d.task_id,v_delay+d.lag_days,array[p_task,d.task_id]
         from public.task_dependencies d
        where d.enterprise_id=p_eid and d.depends_on_task_id=p_task
-         and d.required=true
+         and coalesce(d.required,true)=true
       union all
       select d.task_id,affected.delay_days+d.lag_days,
              affected.path||d.task_id
@@ -399,11 +644,16 @@ begin
       v_eid,v_uid,'submit_task_acceptance','task',p_task::text,
       'active enterprise member required');
   end if;
-  if v_uid<>v_task.employee_id
-     and not public._execution_has_management(v_eid,v_uid) then
+  if not public._execution_can_submit_task(v_eid,v_uid,p_task) then
     return public._execution_denied(
       v_eid,v_uid,'submit_task_acceptance','task',p_task::text,
-      'only the assignee or a manager can submit acceptance');
+      'assignee or tasks.assign authority required');
+  end if;
+  if coalesce(v_task.accept_status,'pending')<>'accepted' then
+    raise exception 'assignment must be accepted before acceptance submission';
+  end if;
+  if not exists(select 1 from public.task_logs l where l.task_id=p_task) then
+    raise exception 'task completion log required before acceptance';
   end if;
   if v_criteria='' then raise exception 'acceptance criteria required'; end if;
   if v_evidence='' then raise exception 'evidence required'; end if;
@@ -412,6 +662,9 @@ begin
   end if;
   if not public._identity_is_member(v_eid,p_reviewer) then
     raise exception 'reviewer must be an active enterprise member';
+  end if;
+  if not public._execution_can_review_task(v_eid,p_reviewer,p_task) then
+    raise exception 'reviewer requires tasks.grade authority';
   end if;
   select * into v_old from public.task_acceptance
    where task_id=p_task for update;
@@ -464,6 +717,7 @@ declare
   v_note text:=btrim(coalesce(p_note,''));
   v_row public.task_acceptance%rowtype;
   v_before jsonb;
+  v_removed integer:=0;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   if v_decision not in ('accepted','rework') then
@@ -472,12 +726,13 @@ begin
   select * into v_row from public.task_acceptance
    where task_id=p_task for update;
   if not found then raise exception 'acceptance record not found'; end if;
-  if v_uid<>v_row.reviewer_id
-     and not public._execution_has_management(v_row.enterprise_id,v_uid) then
+  if not public._execution_can_review_task(
+    v_row.enterprise_id,v_uid,p_task
+  ) then
     return public._execution_denied(
       v_row.enterprise_id,v_uid,'review_task_acceptance',
       'task_acceptance',p_task::text,
-      'only the designated reviewer or a manager can decide');
+      'tasks.grade authority required');
   end if;
   if v_row.reviewer_id=v_row.submitter_id then
     raise exception 'independent reviewer required';
@@ -496,7 +751,25 @@ begin
   if v_decision='rework' and v_note='' then
     raise exception 'rework note required';
   end if;
+  if not exists(
+    select 1 from public.tasks t
+     where t.id=p_task and coalesce(t.accept_status,'pending')='accepted'
+  ) then
+    raise exception 'assignment must be accepted before acceptance review';
+  end if;
+  if not exists(select 1 from public.task_logs l where l.task_id=p_task) then
+    raise exception 'task completion log required before final acceptance';
+  end if;
   v_before:=to_jsonb(v_row);
+  if v_decision='rework' then
+    delete from public.task_logs where task_id=p_task;
+    get diagnostics v_removed = row_count;
+    insert into public.task_events(
+      id,boss_id,employee_id,task_id,kind,title
+    )
+    select gen_random_uuid(),t.boss_id,t.employee_id,t.id,'undone',t.title
+      from public.tasks t where t.id=p_task;
+  end if;
   update public.task_acceptance set
     status=v_decision,
     review_note=v_note,
@@ -508,10 +781,14 @@ begin
   perform public._execution_success(
     v_row.enterprise_id,v_uid,'task_acceptance',p_task::text,
     'acceptance.'||v_decision,v_before,to_jsonb(v_row),
-    jsonb_build_object('note',v_note,'final_complete',v_decision='accepted'));
+    jsonb_build_object(
+      'note',v_note,'final_complete',v_decision='accepted',
+      'reopened',v_decision='rework'));
   return jsonb_build_object(
     'ok',true,'task_id',p_task,'status',v_decision,
-    'final_complete',v_decision='accepted','duplicate',false);
+    'final_complete',v_decision='accepted','duplicate',false,
+    'reopened',v_decision='rework',
+    'completion_logs_removed',v_removed);
 end;
 $fn$;
 
@@ -544,11 +821,10 @@ begin
        public._execution_task_enterprise(p_depends_on) then
     raise exception 'tasks must belong to the same enterprise';
   end if;
-  if not public._execution_has_management(v_eid,v_uid)
-     and v_uid not in (v_task.boss_id,v_dep.boss_id) then
+  if not public._execution_can_manage_task(v_eid,v_uid,p_task) then
     return public._execution_denied(
       v_eid,v_uid,'upsert_task_dependency','task',p_task::text,
-      'management permission required');
+      'tasks.assign or projects.manage authority required');
   end if;
   if p_task=p_depends_on then
     raise exception 'dependency cycle detected';
@@ -586,6 +862,48 @@ begin
 end;
 $fn$;
 
+create or replace function public.delete_task_dependency(
+  p_task uuid,
+  p_depends_on uuid
+) returns jsonb
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_uid uuid:=auth.uid();
+  v_eid uuid;
+  v_before jsonb;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  v_eid:=public._execution_task_enterprise(p_task);
+  if v_eid is null or v_eid is distinct from
+       public._execution_task_enterprise(p_depends_on) then
+    raise exception 'tasks must belong to the same enterprise';
+  end if;
+  if not public._execution_can_manage_task(v_eid,v_uid,p_task) then
+    return public._execution_denied(
+      v_eid,v_uid,'delete_task_dependency','task',p_task::text,
+      'tasks.assign or projects.manage authority required');
+  end if;
+  select to_jsonb(d) into v_before from public.task_dependencies d
+   where d.task_id=p_task and d.depends_on_task_id=p_depends_on
+   for update;
+  if v_before is null then
+    return jsonb_build_object(
+      'ok',true,'duplicate',true,'task_id',p_task,
+      'depends_on_task_id',p_depends_on);
+  end if;
+  delete from public.task_dependencies d
+   where d.task_id=p_task and d.depends_on_task_id=p_depends_on;
+  perform public._execution_success(
+    v_eid,v_uid,'task_dependency',p_task::text||':'||p_depends_on::text,
+    'dependency.deleted',v_before,'{}'::jsonb,'{}'::jsonb);
+  return jsonb_build_object(
+    'ok',true,'duplicate',false,'task_id',p_task,
+    'depends_on_task_id',p_depends_on);
+end;
+$fn$;
+
 -- ---------------------------------------------------------- handoff RPCs
 create or replace function public.create_task_handoff(
   p_task uuid,
@@ -611,11 +929,10 @@ begin
   if not found then raise exception 'task not found'; end if;
   v_eid:=public._execution_task_enterprise(p_task);
   if v_eid is null then raise exception 'task enterprise not found'; end if;
-  if v_uid<>v_task.employee_id and v_uid<>v_task.boss_id
-     and not public._execution_has_management(v_eid,v_uid) then
+  if not public._execution_can_handoff_task(v_eid,v_uid,p_task) then
     return public._execution_denied(
       v_eid,v_uid,'create_task_handoff','task',p_task::text,
-      'only the task owner or a manager can hand off');
+      'task participant, tasks.assign, or people.manage authority required');
   end if;
   if p_to is null or p_to=v_uid then
     raise exception 'handoff recipient must be another profile';
@@ -670,6 +987,11 @@ begin
   end if;
   select * into v_row from public.task_handoffs where id=p_handoff for update;
   if not found then raise exception 'handoff not found'; end if;
+  if public._execution_is_read_only_role(v_row.enterprise_id,v_uid) then
+    return public._execution_denied(
+      v_row.enterprise_id,v_uid,'accept_task_handoff','task_handoff',
+      p_handoff::text,'read-only role cannot decide handoffs');
+  end if;
   if v_row.to_profile_id<>v_uid then
     return public._execution_denied(
       v_row.enterprise_id,v_uid,'accept_task_handoff','task_handoff',
@@ -721,7 +1043,7 @@ declare
   v_title text:=btrim(coalesce(v_data->>'title',''));
   v_scope text:=btrim(coalesce(v_data->>'scope',''));
   v_reason text:=btrim(coalesce(v_data->>'reason',''));
-  v_urgency text:=lower(btrim(coalesce(v_data->>'urgency','')));
+  v_urgency text:=public._execution_urgency(v_data->>'urgency');
   v_resource text:=btrim(coalesce(v_data->>'resource_impact',''));
   v_schedule integer;
   v_cost numeric;
@@ -739,6 +1061,11 @@ begin
     return public._execution_denied(
       v_eid,v_uid,'create_change_request','project',p_project::text,
       'active enterprise member required');
+  end if;
+  if not public._execution_can_manage_change(v_eid,v_uid,p_project) then
+    return public._execution_denied(
+      v_eid,v_uid,'create_change_request','project',p_project::text,
+      'projects.manage authority required');
   end if;
   if v_title='' then v_title:=left(v_scope,120); end if;
   if v_scope='' or v_reason='' or v_urgency='' or v_resource=''
@@ -819,10 +1146,12 @@ begin
   select * into v_row from public.change_requests
    where id=p_change for update;
   if not found then raise exception 'change request not found'; end if;
-  if not public._execution_has_management(v_row.enterprise_id,v_uid) then
+  if not public._execution_can_manage_change(
+    v_row.enterprise_id,v_uid,v_row.project_id
+  ) then
     return public._execution_denied(
       v_row.enterprise_id,v_uid,'decide_change_request',
-      'change_request',p_change::text,'management permission required');
+      'change_request',p_change::text,'projects.manage authority required');
   end if;
   v_high:=public._execution_change_requires_approval(
     v_row.cost_impact,v_row.schedule_impact_days,v_row.risk,
@@ -885,6 +1214,58 @@ begin
 end;
 $fn$;
 
+create or replace function public._execution_sync_change_from_decision()
+returns trigger
+language plpgsql security definer
+set search_path=public,auth,pg_temp
+as $fn$
+declare
+  v_status text;
+  v_change public.change_requests%rowtype;
+begin
+  if new.source_type<>'change' then return new; end if;
+  select * into v_change from public.change_requests
+   where id=new.source_id and decision_item_id=new.id;
+  if found and auth.uid() is not null then
+    if not public._execution_can_manage_change(
+      new.enterprise_id,auth.uid(),v_change.project_id
+    ) then
+      raise exception 'projects.manage authority required';
+    end if;
+    if public._execution_change_requires_approval(
+      v_change.cost_impact,v_change.schedule_impact_days,v_change.risk,
+      v_change.cross_department,v_change.urgency
+    ) and not public._decision_is_executive(new.enterprise_id,auth.uid()) then
+      raise exception 'executive approval required for high impact change';
+    end if;
+  end if;
+  v_status:=case new.status
+    when 'resolved' then 'approved'
+    when 'dismissed' then 'rejected'
+    when 'deferred' then 'returned'
+    else 'pending' end;
+  update public.change_requests c set
+    status=v_status,
+    approver_id=case when v_status in ('approved','rejected')
+      then coalesce(auth.uid(),c.approver_id) else c.approver_id end,
+    decision_note=case when btrim(coalesce(new.resolution,''))<>''
+      then new.resolution else c.decision_note end,
+    decided_at=case when v_status in ('approved','rejected','returned')
+      then now() else c.decided_at end,
+    version=c.version+1
+  where c.id=new.source_id
+    and c.decision_item_id=new.id
+    and c.status is distinct from v_status;
+  return new;
+end;
+$fn$;
+
+drop trigger if exists trg_execution_sync_change_from_decision
+  on public.decision_items;
+create trigger trg_execution_sync_change_from_decision
+  after update of status,resolution on public.decision_items
+  for each row execute function public._execution_sync_change_from_decision();
+
 -- ---------------------------------------------------------- board query
 create or replace function public.get_execution_board(
   p_enterprise uuid default null
@@ -896,7 +1277,11 @@ declare
   v_uid uuid:=auth.uid();
   v_eid uuid:=p_enterprise;
   v_management boolean;
+  v_read_only boolean;
   v_can_accept boolean;
+  v_can_dependencies boolean;
+  v_can_handoff boolean;
+  v_can_changes boolean;
   v_acceptance jsonb:='[]'::jsonb;
   v_dependencies jsonb:='[]'::jsonb;
   v_handoffs jsonb:='[]'::jsonb;
@@ -931,185 +1316,253 @@ begin
       'active enterprise membership required');
   end if;
   v_management:=public._execution_has_management(v_eid,v_uid);
-  v_can_accept:=v_management
-    or public._execution_has_permission(v_eid,v_uid,'tasks.grade');
+  v_read_only:=public._execution_is_read_only_role(v_eid,v_uid);
+  v_can_accept:=public._execution_has_permission(v_eid,v_uid,'tasks.grade');
+  v_can_dependencies:=public._execution_has_permission(
+    v_eid,v_uid,'tasks.assign')
+    or public._execution_has_permission(v_eid,v_uid,'projects.manage');
+  v_can_handoff:=public._execution_has_permission(v_eid,v_uid,'tasks.assign')
+    or public._execution_has_permission(v_eid,v_uid,'people.manage');
+  v_can_changes:=public._execution_has_permission(
+    v_eid,v_uid,'projects.manage');
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'task_id',a.task_id,
-    'title',t.title,
-    'project_id',t.project_id,
-    'plan_date',t.plan_date,
-    'criteria',a.criteria,
-    'evidence',a.evidence,
-    'submitter_id',a.submitter_id,
-    'submitter_name',sp.name,
-    'reviewer_id',a.reviewer_id,
-    'reviewer_name',rp.name,
-    'status',a.status,
-    'review_note',a.review_note,
-    'version',a.version,
-    'submitted_at',a.submitted_at,
-    'reviewed_at',a.reviewed_at,
-    'actions',jsonb_build_object(
-      'accept',a.status='pending'
-        and (a.reviewer_id=v_uid or v_can_accept),
-      'rework',a.status='pending'
-        and (a.reviewer_id=v_uid or v_can_accept))
-  ) order by a.submitted_at desc),'[]'::jsonb)
-  into v_acceptance
-  from public.task_acceptance a
-  join public.tasks t on t.id=a.task_id
-  left join public.profiles sp on sp.id=a.submitter_id
-  left join public.profiles rp on rp.id=a.reviewer_id
-  where a.enterprise_id=v_eid
-    and (v_management or a.reviewer_id=v_uid or a.submitter_id=v_uid
-         or t.boss_id=v_uid or t.employee_id=v_uid)
-  order by a.submitted_at desc
-  limit 100;
+  select coalesce(jsonb_agg(acceptance.row order by acceptance.sort_at desc),'[]'::jsonb)
+    into v_acceptance
+    from (
+      select jsonb_build_object(
+        'task_id',a.task_id,
+        'title',t.title,
+        'project_id',t.project_id,
+        'plan_date',t.plan_date,
+        'criteria',a.criteria,
+        'evidence',a.evidence,
+        'submitter_id',a.submitter_id,
+        'submitter_name',sp.name,
+        'reviewer_id',a.reviewer_id,
+        'reviewer_name',rp.name,
+        'status',a.status,
+        'review_note',a.review_note,
+        'version',a.version,
+        'submitted_at',a.submitted_at,
+        'reviewed_at',a.reviewed_at,
+        'actions',jsonb_build_object(
+          'accept',a.status='pending'
+            and public._execution_can_review_task(v_eid,v_uid,a.task_id),
+          'rework',a.status='pending'
+            and public._execution_can_review_task(v_eid,v_uid,a.task_id))
+      ) row,
+      a.submitted_at sort_at
+      from public.task_acceptance a
+      join public.tasks t on t.id=a.task_id
+      left join public.profiles sp on sp.id=a.submitter_id
+      left join public.profiles rp on rp.id=a.reviewer_id
+      where a.enterprise_id=v_eid
+        and (v_management or a.reviewer_id=v_uid or a.submitter_id=v_uid
+             or t.boss_id=v_uid or t.employee_id=v_uid)
+      order by a.submitted_at desc
+      limit 100
+    ) acceptance;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'id',h.id,
-    'task_id',h.task_id,
-    'title',t.title,
-    'artifact',h.artifact,
-    'note',h.note,
-    'from_profile_id',h.from_profile_id,
-    'from_name',fp.name,
-    'to_profile_id',h.to_profile_id,
-    'to_name',tp.name,
-    'from_department',h.from_department,
-    'to_department',h.to_department,
-    'status',h.status,
-    'decision_note',h.decision_note,
-    'created_at',h.created_at,
-    'accepted_at',h.accepted_at,
-    'decided_at',h.decided_at,
-    'version',h.version,
-    'actions',jsonb_build_object(
-      'accept',h.status='pending' and h.to_profile_id=v_uid,
-      'reject',h.status='pending' and h.to_profile_id=v_uid)
-  ) order by h.created_at desc),'[]'::jsonb)
-  into v_handoffs
-  from public.task_handoffs h
-  join public.tasks t on t.id=h.task_id
-  left join public.profiles fp on fp.id=h.from_profile_id
-  left join public.profiles tp on tp.id=h.to_profile_id
-  where h.enterprise_id=v_eid
-    and (v_management or h.from_profile_id=v_uid or h.to_profile_id=v_uid)
-  order by h.created_at desc
-  limit 100;
+  select coalesce(jsonb_agg(handoffs.row order by handoffs.sort_at desc),'[]'::jsonb)
+    into v_handoffs
+    from (
+      select jsonb_build_object(
+        'id',h.id,
+        'task_id',h.task_id,
+        'title',t.title,
+        'artifact',h.artifact,
+        'note',h.note,
+        'from_profile_id',h.from_profile_id,
+        'from_name',fp.name,
+        'to_profile_id',h.to_profile_id,
+        'to_name',tp.name,
+        'from_department',h.from_department,
+        'to_department',h.to_department,
+        'status',h.status,
+        'decision_note',h.decision_note,
+        'created_at',h.created_at,
+        'accepted_at',h.accepted_at,
+        'decided_at',h.decided_at,
+        'version',h.version,
+        'actions',jsonb_build_object(
+          'accept',h.status='pending' and not v_read_only
+            and h.to_profile_id=v_uid,
+          'reject',h.status='pending' and not v_read_only
+            and h.to_profile_id=v_uid)
+      ) row,
+      h.created_at sort_at
+      from public.task_handoffs h
+      join public.tasks t on t.id=h.task_id
+      left join public.profiles fp on fp.id=h.from_profile_id
+      left join public.profiles tp on tp.id=h.to_profile_id
+      where h.enterprise_id=v_eid
+        and (v_management or h.from_profile_id=v_uid or h.to_profile_id=v_uid)
+      order by h.created_at desc
+      limit 100
+    ) handoffs;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'id',c.id,
-    'project_id',c.project_id,
-    'project_name',pr.name,
-    'requester_id',c.requester_id,
-    'requester_name',rp.name,
-    'title',c.title,
-    'scope',c.scope,
-    'reason',c.reason,
-    'urgency',c.urgency,
-    'schedule_impact_days',c.schedule_impact_days,
-    'cost_impact',c.cost_impact,
-    'resource_impact',c.resource_impact,
-    'risk',c.risk,
-    'cross_department',c.cross_department,
-    'status',c.status,
-    'approver_id',c.approver_id,
-    'decision_note',c.decision_note,
-    'decision_item_id',c.decision_item_id,
-    'version',c.version,
-    'created_at',c.created_at,
-    'decided_at',c.decided_at,
-    'high_impact',public._execution_change_requires_approval(
-      c.cost_impact,c.schedule_impact_days,c.risk,
-      c.cross_department,c.urgency),
-    'plan_mutated',false,
-    'actions',jsonb_build_object(
-      'approve',c.status='pending' and v_management,
-      'reject',c.status='pending' and v_management,
-      'return',c.status='pending' and v_management)
-  ) order by c.created_at desc),'[]'::jsonb)
-  into v_changes
-  from public.change_requests c
-  join public.projects pr on pr.id=c.project_id
-  left join public.profiles rp on rp.id=c.requester_id
-  where c.enterprise_id=v_eid
-    and (v_management or c.requester_id=v_uid)
-  order by c.created_at desc
-  limit 100;
+  select coalesce(jsonb_agg(changes.row order by changes.sort_at desc),'[]'::jsonb)
+    into v_changes
+    from (
+      select jsonb_build_object(
+        'id',c.id,
+        'project_id',c.project_id,
+        'project_name',pr.name,
+        'requester_id',c.requester_id,
+        'requester_name',rp.name,
+        'title',c.title,
+        'scope',c.scope,
+        'reason',c.reason,
+        'urgency',c.urgency,
+        'schedule_impact_days',c.schedule_impact_days,
+        'cost_impact',c.cost_impact,
+        'resource_impact',c.resource_impact,
+        'risk',c.risk,
+        'cross_department',c.cross_department,
+        'status',c.status,
+        'approver_id',c.approver_id,
+        'decision_note',c.decision_note,
+        'decision_item_id',c.decision_item_id,
+        'version',c.version,
+        'created_at',c.created_at,
+        'decided_at',c.decided_at,
+        'high_impact',high_impact,
+        'plan_mutated',false,
+        'actions',jsonb_build_object(
+          'approve',c.status='pending' and can_decide,
+          'reject',c.status='pending' and can_decide,
+          'return',c.status='pending' and can_decide)
+      ) row,
+      c.created_at sort_at
+      from (
+        select c.*,
+          public._execution_change_requires_approval(
+            c.cost_impact,c.schedule_impact_days,c.risk,
+            c.cross_department,c.urgency) high_impact,
+          public._execution_can_manage_change(v_eid,v_uid,c.project_id)
+            and (
+              not public._execution_change_requires_approval(
+                c.cost_impact,c.schedule_impact_days,c.risk,
+                c.cross_department,c.urgency)
+              or public._decision_is_executive(v_eid,v_uid)
+            ) can_decide
+          from public.change_requests c
+         where c.enterprise_id=v_eid
+      ) c
+      join public.projects pr on pr.id=c.project_id
+      left join public.profiles rp on rp.id=c.requester_id
+      where v_management or c.requester_id=v_uid
+      order by c.created_at desc
+      limit 100
+    ) changes;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'task_id',d.task_id,
-    'depends_on_task_id',d.depends_on_task_id,
-    'title',t.title,
-    'depends_on_title',u.title,
-    'employee_id',t.employee_id,
-    'employee_name',ep.name,
-    'upstream_employee_id',u.employee_id,
-    'upstream_employee_name',up.name,
-    'project_id',t.project_id,
-    'lag_days',d.lag_days,
-    'required',d.required,
-    'upstream_status',coalesce(a.status,'not_submitted'),
-    'upstream_due_date',u.plan_date,
-    'delayed_days',x.delayed_days,
-    'blocked',x.delayed_days>0,
-    'affected_tasks',public._execution_downstream(
-      v_eid,d.depends_on_task_id,x.delayed_days)
-  ) order by x.delayed_days desc,d.task_id),'[]'::jsonb)
-  into v_dependencies
-  from public.task_dependencies d
-  join public.tasks t on t.id=d.task_id
-  join public.tasks u on u.id=d.depends_on_task_id
-  left join public.task_acceptance a on a.task_id=d.depends_on_task_id
-  left join public.profiles ep on ep.id=t.employee_id
-  left join public.profiles up on up.id=u.employee_id
-  cross join lateral (
-    select case
-      when coalesce(a.status,'not_submitted')<>'accepted'
-       and u.plan_date<current_date
-      then current_date-u.plan_date else 0 end as delayed_days
-  ) x
-  where d.enterprise_id=v_eid
-    and (v_management or t.boss_id=v_uid or t.employee_id=v_uid)
-  order by x.delayed_days desc,d.task_id
-  limit 200;
+  select coalesce(
+    jsonb_agg(dependencies.row order by dependencies.delayed_days desc,dependencies.task_id),'[]'::jsonb
+  ) into v_dependencies
+  from (
+    select jsonb_build_object(
+      'task_id',d.task_id,
+      'depends_on_task_id',d.depends_on_task_id,
+      'title',t.title,
+      'depends_on_title',u.title,
+      'employee_id',t.employee_id,
+      'employee_name',ep.name,
+      'upstream_employee_id',u.employee_id,
+      'upstream_employee_name',up.name,
+      'project_id',t.project_id,
+      'lag_days',d.lag_days,
+      'required',d.required,
+      'upstream_status',coalesce(a.status,'not_submitted'),
+      'upstream_due_date',u.plan_date,
+      'delayed_days',x.delayed_days,
+      'blocked',coalesce(d.required,true) and x.delayed_days>0,
+      'affected_tasks',public._execution_downstream(
+        v_eid,d.depends_on_task_id,
+        case when coalesce(d.required,true) then x.delayed_days else 0 end),
+      'actions',jsonb_build_object(
+        'remove',public._execution_can_manage_task(v_eid,v_uid,d.task_id))
+    ) row,
+    x.delayed_days,
+    d.task_id
+    from public.task_dependencies d
+    join public.tasks t on t.id=d.task_id
+    join public.tasks u on u.id=d.depends_on_task_id
+    left join public.task_acceptance a on a.task_id=d.depends_on_task_id
+    left join public.profiles ep on ep.id=t.employee_id
+    left join public.profiles up on up.id=u.employee_id
+    cross join lateral (
+      select case
+        when coalesce(a.status,'not_submitted')<>'accepted'
+         and u.plan_date<current_date
+        then current_date-u.plan_date else 0 end as delayed_days
+    ) x
+    where d.enterprise_id=v_eid
+      and (v_management or t.boss_id=v_uid or t.employee_id=v_uid)
+    order by x.delayed_days desc,d.task_id
+    limit 200
+  ) dependencies;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'id',t.id,'title',t.title,'project_id',t.project_id,
-    'employee_id',t.employee_id,'employee_name',ep.name,
-    'plan_date',t.plan_date,'acceptance_status',coalesce(a.status,'not_submitted'),
-    'criteria',a.criteria,'evidence',a.evidence,
-    'reviewer_id',a.reviewer_id
-  ) order by t.plan_date,t.title),'[]'::jsonb)
-  into v_tasks
-  from public.tasks t
-  left join public.profiles ep on ep.id=t.employee_id
-  left join public.task_acceptance a on a.task_id=t.id
-  where public._execution_task_enterprise(t.id)=v_eid
-    and (v_management or t.boss_id=v_uid or t.employee_id=v_uid);
+  select coalesce(jsonb_agg(tasks.row order by tasks.plan_date,tasks.title),'[]'::jsonb)
+    into v_tasks
+    from (
+      select jsonb_build_object(
+        'id',t.id,'title',t.title,'project_id',t.project_id,
+        'employee_id',t.employee_id,'employee_name',ep.name,
+        'plan_date',t.plan_date,
+        'assignment_status',coalesce(t.accept_status,'pending'),
+        'acceptance_status',coalesce(a.status,'not_submitted'),
+        'criteria',a.criteria,'evidence',a.evidence,
+        'reviewer_id',a.reviewer_id,
+        'actions',jsonb_build_object(
+          'submit_acceptance',coalesce(t.accept_status,'pending')='accepted'
+            and coalesce(a.status,'not_submitted')<>'accepted'
+            and exists(select 1 from public.task_logs l where l.task_id=t.id)
+            and public._execution_can_submit_task(v_eid,v_uid,t.id),
+          'handoff',public._execution_can_handoff_task(v_eid,v_uid,t.id),
+          'dependency',public._execution_can_manage_task(v_eid,v_uid,t.id))
+      ) row,
+      t.plan_date,t.title
+      from public.tasks t
+      left join public.profiles ep on ep.id=t.employee_id
+      left join public.task_acceptance a on a.task_id=t.id
+      where public._execution_task_enterprise(t.id)=v_eid
+        and (v_management or t.boss_id=v_uid or t.employee_id=v_uid)
+      order by t.plan_date,t.title
+      limit 500
+    ) tasks;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'id',pr.id,'name',pr.name,'due_date',pr.due_date,
-    'status',pr.status
-  ) order by pr.name),'[]'::jsonb)
-  into v_projects
-  from public.projects pr
-  where exists(
-    select 1 from public.enterprise_members m
-     where m.enterprise_id=v_eid and m.profile_id=pr.boss_id
-       and m.status='active'
-  ) and (v_management or pr.boss_id=v_uid);
+  select coalesce(jsonb_agg(projects.row order by projects.name),'[]'::jsonb)
+    into v_projects
+    from (
+      select jsonb_build_object(
+        'id',pr.id,'name',pr.name,'due_date',pr.due_date,
+        'status',pr.status
+      ) row,
+      pr.name
+      from public.projects pr
+      where exists(
+        select 1 from public.enterprise_members m
+         where m.enterprise_id=v_eid and m.profile_id=pr.boss_id
+           and m.status='active'
+      ) and (v_management or pr.boss_id=v_uid)
+      order by pr.name
+      limit 500
+    ) projects;
 
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'id',m.profile_id,'name',p.name,'department',m.department,
-    'role_key',m.role_key
-  ) order by p.name),'[]'::jsonb)
-  into v_members
-  from public.enterprise_members m
-  join public.profiles p on p.id=m.profile_id
-  where m.enterprise_id=v_eid and m.status='active';
+  select coalesce(jsonb_agg(members.row order by members.name),'[]'::jsonb)
+    into v_members
+    from (
+      select jsonb_build_object(
+        'id',m.profile_id,'name',p.name,'department',m.department,
+        'role_key',m.role_key
+      ) row,
+      p.name
+      from public.enterprise_members m
+      join public.profiles p on p.id=m.profile_id
+      where m.enterprise_id=v_eid and m.status='active'
+      order by p.name
+      limit 500
+    ) members;
 
   return jsonb_build_object(
     'ok',true,
@@ -1123,17 +1576,47 @@ begin
     'members',v_members,
     'access',jsonb_build_object(
       'management',v_management,
+      'read_only',v_read_only,
+      'can_submit_acceptance',not v_read_only and exists(
+        select 1 from public.tasks t
+         where public._execution_task_enterprise(t.id)=v_eid
+           and public._execution_can_submit_task(v_eid,v_uid,t.id)
+           and coalesce(t.accept_status,'pending')='accepted'
+           and exists(select 1 from public.task_logs l where l.task_id=t.id)),
       'can_review_acceptance',v_can_accept,
-      'can_manage_dependencies',v_management,
-      'can_create_handoff',v_management,
-      'can_manage_changes',v_management),
+      'can_manage_dependencies',v_can_dependencies,
+      'can_create_handoff',v_can_handoff or exists(
+        select 1 from public.tasks t
+         where public._execution_task_enterprise(t.id)=v_eid
+           and public._execution_can_handoff_task(v_eid,v_uid,t.id)),
+      'can_manage_changes',v_can_changes),
     'generated_at',now());
 end;
 $fn$;
 
 -- ---------------------------------------------------------- least privilege
 revoke all on function public._execution_risk(text) from public, anon, authenticated;
+revoke all on function public._execution_urgency(text) from public, anon, authenticated;
 revoke all on function public._execution_change_requires_approval(numeric,integer,text,boolean,text)
+  from public, anon, authenticated;
+revoke all on function public._execution_role_key(uuid,uuid) from public, anon, authenticated;
+revoke all on function public._execution_is_read_only_role(uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_has_project_permission(uuid,uuid,uuid,text[])
+  from public, anon, authenticated;
+revoke all on function public._execution_can_submit_task(uuid,uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_can_review_task(uuid,uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_can_manage_task(uuid,uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_can_handoff_task(uuid,uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_can_manage_change(uuid,uuid,uuid)
+  from public, anon, authenticated;
+revoke all on function public._execution_guard_task_log()
+  from public, anon, authenticated;
+revoke all on function public._execution_sync_change_from_decision()
   from public, anon, authenticated;
 revoke all on function public._execution_denied(uuid,uuid,text,text,text,text,jsonb)
   from public, anon, authenticated;
@@ -1167,6 +1650,11 @@ grant execute on function public.review_task_acceptance(uuid,text,text)
 revoke all on function public.upsert_task_dependency(uuid,uuid,integer,boolean)
   from public, anon, authenticated;
 grant execute on function public.upsert_task_dependency(uuid,uuid,integer,boolean)
+  to authenticated;
+
+revoke all on function public.delete_task_dependency(uuid,uuid)
+  from public, anon, authenticated;
+grant execute on function public.delete_task_dependency(uuid,uuid)
   to authenticated;
 
 revoke all on function public.create_task_handoff(uuid,uuid,text,text)

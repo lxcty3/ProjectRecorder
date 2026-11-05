@@ -4,12 +4,50 @@ from __future__ import annotations
 
 ACCEPTANCE_STATUSES = ("pending", "accepted", "rework")
 FINAL_ACCEPTANCE_STATUS = "accepted"
-HIGH_IMPACT_RISKS = ("severe", "risk", "严重", "风险")
-HIGH_URGENCIES = ("high", "urgent", "critical", "紧急", "严重")
+RISK_ALIASES = {
+    "severe": "severe",
+    "critical": "severe",
+    "serious": "severe",
+    "high": "severe",
+    "高风险": "severe",
+    "严重": "severe",
+    "risk": "risk",
+    "medium": "risk",
+    "warning": "risk",
+    "风险": "risk",
+    "attention": "attention",
+    "low": "attention",
+    "关注": "attention",
+    "healthy": "healthy",
+    "健康": "healthy",
+}
+URGENCY_ALIASES = {
+    "normal": "normal",
+    "普通": "normal",
+    "high": "high",
+    "高": "high",
+    "urgent": "urgent",
+    "紧急": "urgent",
+    "critical": "critical",
+    "emergency": "critical",
+    "严重": "critical",
+}
+HIGH_IMPACT_RISKS = ("severe", "risk")
+HIGH_URGENCIES = ("high", "urgent", "critical", "emergency")
 
 
 def _text(value):
     return str(value or "").strip()
+
+
+def normalize_risk(value):
+    text = _text(value).lower()
+    return RISK_ALIASES.get(text, "healthy")
+
+
+def normalize_urgency(value):
+    text = _text(value).lower()
+    return URGENCY_ALIASES.get(text, text)
 
 
 def acceptance_result(evidence, submitter, reviewer, criteria=None):
@@ -186,8 +224,8 @@ def change_requires_approval(
     cross_department=False,
     resource_impact="",
 ):
-    risk_text = _text(risk).lower()
-    urgency_text = _text(urgency).lower()
+    risk_text = normalize_risk(risk)
+    urgency_text = normalize_urgency(urgency)
     return bool(
         _number(amount) >= 50000
         or _number(days) > 3

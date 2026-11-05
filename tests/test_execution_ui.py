@@ -43,8 +43,14 @@ class ExecutionUiTest(unittest.TestCase):
                     {"task_id": "t2", "title": "F", "delay_days": 6}
                 ],
             }],
+            "tasks": [
+                {"id": "t1", "title": "A", "employee_name": "B"},
+                {"id": "t2", "title": "B", "employee_name": "C"},
+            ],
+            "projects": [{"id": "p1", "name": "Project"}],
             "access": {
                 "can_review_acceptance": True,
+                "can_manage_dependencies": True,
                 "can_manage_changes": True,
             },
         }
@@ -60,8 +66,8 @@ class ExecutionUiTest(unittest.TestCase):
         self.assertIn("5", page.change_table.item(0, 3).text())
         self.assertIn("60,000", page.change_table.item(0, 4).text())
         self.assertIn("two engineers", page.change_table.item(0, 5).text())
-        self.assertIn("4", page.dependency_table.item(0, 3).text())
-        self.assertIn("F", page.dependency_table.item(0, 5).text())
+        self.assertIn("4", page.dependency_table.item(0, 4).text())
+        self.assertIn("F", page.dependency_table.item(0, 6).text())
 
     def test_actions_follow_selected_server_capabilities(self):
         page = ExecutionPage(None)
@@ -77,6 +83,7 @@ class ExecutionUiTest(unittest.TestCase):
         self.assertTrue(page.handoff_reject_button.isEnabled())
         self.assertTrue(page.change_approve_button.isEnabled())
         self.assertTrue(page.change_return_button.isEnabled())
+        self.assertTrue(page.dependency_add_button.isEnabled())
 
     def test_desktop_actions_call_real_rpcs(self):
         page = ExecutionPage(None)
@@ -104,16 +111,39 @@ class ExecutionUiTest(unittest.TestCase):
             self.assertEqual(captured["work"](), {"ok": True})
             self.assertEqual(change.call_args.args[1], "c1")
 
+    def test_dependency_controls_call_real_rpcs(self):
+        page = ExecutionPage(None)
+        page.session = CommunitySession("token", expires_at=9999999999)
+        captured = {}
+        page._start_worker = lambda work, done=None, failed=None: captured.update(
+            work=work
+        )
+        with patch.object(
+            CommunityClient, "upsert_task_dependency", return_value={"ok": True}
+        ) as upsert:
+            page._execute_dependency("t1", "t2", 2, True)
+            self.assertEqual(captured["work"](), {"ok": True})
+            self.assertEqual(upsert.call_args.args[1:], ("t1", "t2", 2, True))
+        with patch.object(
+            CommunityClient, "delete_task_dependency", return_value={"ok": True}
+        ) as delete:
+            page._execute_dependency_removal("t1", "t2")
+            self.assertEqual(captured["work"](), {"ok": True})
+            self.assertEqual(delete.call_args.args[1:], ("t1", "t2"))
+
     def test_main_wires_execution_tab_only_for_advanced_management(self):
         source = Path("main.py").read_text(encoding="utf-8")
         self.assertIn("from execution_ui import ExecutionPage", source)
         self.assertIn("self.execution_tab = self.tabs.addTab(", source)
+        self.assertIn("def _execution_view", source)
         self.assertIn(
-            "self.tabs.setTabVisible(self.execution_tab, advanced and management)",
+            "self.tabs.setTabVisible(self.execution_tab, advanced and execution_view)",
             source,
         )
         self.assertIn("self.execution_page.refresh()", source)
         self.assertIn("self.execution_page.apply_account_session(session)", source)
+        self.assertIn("tasks.grade", source)
+        self.assertIn("_execution_view", source)
 
 
 if __name__ == "__main__":

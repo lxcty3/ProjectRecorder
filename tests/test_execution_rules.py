@@ -7,6 +7,8 @@ from execution_rules import (
     downstream_delay,
     downstream_impact,
     is_final_completion_allowed,
+    normalize_risk,
+    normalize_urgency,
     review_acceptance,
     validate_change_request,
 )
@@ -93,6 +95,17 @@ class ExecutionRulesTest(unittest.TestCase):
             )
         )
         self.assertFalse(change_requires_approval(1000, 0, "健康"))
+
+    def test_risk_and_urgency_aliases_normalize_before_impact_checks(self):
+        self.assertEqual(normalize_risk('高风险'), 'severe')
+        self.assertEqual(normalize_risk('严重'), 'severe')
+        self.assertEqual(normalize_risk('风险'), 'risk')
+        self.assertEqual(normalize_urgency('紧急'), 'urgent')
+        self.assertEqual(normalize_urgency('严重'), 'critical')
+        self.assertEqual(normalize_urgency('高'), 'high')
+        self.assertTrue(change_requires_approval(1, 0, '高风险'))
+        self.assertTrue(change_requires_approval(1, 0, '健康', urgency='紧急'))
+        self.assertTrue(change_requires_approval(1, 0, '健康', urgency='高'))
 
     def test_change_request_captures_all_required_impacts(self):
         self.assertFalse(

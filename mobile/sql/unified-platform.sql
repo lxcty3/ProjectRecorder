@@ -76,6 +76,14 @@ create unique index if not exists worklogs_idempotency_idx
   where idempotency_key is not null and idempotency_key <> '';
 
 -- ---------------------------------------------------------- merit settlement
+-- ---------------------------------------------------------- task grading
+alter table public.tasks
+  add column if not exists est_merit integer,
+  add column if not exists grade text,
+  add column if not exists merit_awarded integer,
+  add column if not exists graded_at timestamptz,
+  add column if not exists graded_by uuid references public.profiles(id) on delete set null;
+
 alter table public.merit_ledger
   add column if not exists status text not null default 'posted',
   add column if not exists settled_at timestamptz,
@@ -702,6 +710,12 @@ begin
   select * into v_task from public.tasks where id=p_task;
   if not found then raise exception 'no such task'; end if;
   if v_task.grade is not null then raise exception 'already graded'; end if;
+  if not exists(
+    select 1 from public.task_acceptance a
+     where a.task_id=p_task and a.status='accepted'
+  ) then
+    raise exception 'task acceptance required before grading';
+  end if;
 
   select coalesce(sum(hours),0) into v_hours
     from public.work_sessions where task_id=p_task and ended_at is not null;
@@ -760,7 +774,10 @@ begin
   if v_uid is null then raise exception 'not signed in'; end if;
   if v_grade not in('S','A','B','C') then raise exception 'invalid grade'; end if;
   select * into v_task from public.tasks where id=p_task;
-  if not found or v_task.boss_id is distinct from v_uid then raise exception 'not your task'; end if;
+  if not found then raise exception 'no such task'; end if;
+  if not public._execution_can_review_task(
+    public._execution_task_enterprise(p_task),v_uid,p_task
+  ) then raise exception 'tasks.grade authority required'; end if;
   if not exists(select 1 from public.task_logs where task_id=p_task) then
     raise exception 'task is not finished yet';
   end if;
@@ -787,6 +804,8 @@ begin
     select t.id from public.tasks t
      where t.boss_id=v_boss and t.grade is null
        and exists(select 1 from public.task_logs l where l.task_id=t.id)
+       and exists(select 1 from public.task_acceptance a
+                   where a.task_id=t.id and a.status='accepted')
        and coalesce(t.auto_settle_at,t.updated_at) <= now()-interval '7 days'
   loop
     begin

@@ -31,6 +31,7 @@ class OperationsSqlTest(unittest.TestCase):
             "get_worklog_dimensions",
             "upsert_performance_evidence",
             "get_my_performance_evidence",
+            "task_acceptance",
             "submit_performance_statement",
             "review_performance_evidence",
         ):
@@ -97,6 +98,9 @@ class OperationsSqlTest(unittest.TestCase):
             "submit_performance_statement",
             "review_performance_evidence",
             "get_my_performance_evidence",
+            "task_acceptance",
+            "accepted_count",
+            "rework_count",
         ):
             self.assertIn(fragment, self.lowered)
         for forbidden in (

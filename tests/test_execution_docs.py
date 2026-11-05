@@ -30,8 +30,19 @@ class ExecutionDocsTest(unittest.TestCase):
         ):
             self.assertIn(text, readme)
         self.assertLess(
-            readme.index("operations-economics-v1.sql"),
             readme.index("execution-tracking-v1.sql"),
+            readme.index("operations-economics-v1.sql"),
+        )
+        prerequisites = readme[readme.index("运行前按以下顺序在测试库执行："):]
+        for prerequisite in (
+            "setup-tables.sql", "migrate-notify.sql", "work-session.sql",
+            "merit-ledger.sql", "rewards-leave.sql", "unified-platform.sql",
+        ):
+            self.assertIn(prerequisite, prerequisites)
+        self.assertIn("mobile/sql/execution-tracking-v1.sql", prerequisites)
+        self.assertLess(
+            prerequisites.index("mobile/sql/execution-tracking-v1.sql"),
+            prerequisites.index("mobile/sql/operations-economics-v1.sql"),
         )
 
     def test_manifest_includes_phase_3_sources(self):
@@ -64,6 +75,8 @@ class ExecutionDocsTest(unittest.TestCase):
             "accept_task_handoff",
             "decide_change_request",
             "get_execution_board",
+            "delete_task_dependency",
+            "_execution_urgency",
         ):
             self.assertIn(text, installer)
         self.assertTrue(all(ord(ch) < 128 for ch in installer))

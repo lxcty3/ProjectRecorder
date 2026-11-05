@@ -61,6 +61,12 @@ begin
   if v_task.grade is not null then
     raise exception 'already graded';
   end if;
+  if not exists(
+    select 1 from public.task_acceptance a
+     where a.task_id=p_task and a.status='accepted'
+  ) then
+    raise exception 'task acceptance required before grading';
+  end if;
 
   if not exists (
     select 1 from public.task_logs where task_id = p_task

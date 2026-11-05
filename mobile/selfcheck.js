@@ -5175,8 +5175,9 @@ test("经营摘要：管理页、能力缺口和个人绩效依据完整接线",
 test("执行追踪：手机验收、交接、变更完整接线", () => {
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
   for (const id of [
-    "page-execution", "execution-acceptance", "execution-handoffs",
-    "execution-changes", "btn-execution-refresh", "nav-execution",
+    "page-execution", "execution-acceptance", "execution-dependencies",
+    "execution-handoffs", "execution-changes", "btn-execution-refresh",
+    "btn-execution-dependency", "nav-execution",
   ]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
@@ -5211,7 +5212,8 @@ test("执行追踪：手机验收、交接、变更完整接线", () => {
     "get_execution_board", "review_task_acceptance",
     "accept_task_handoff", "decide_change_request",
     "create_change_request", "submit_task_acceptance",
-    "data-execution-action", "execution-allowed",
+    "upsert_task_dependency", "delete_task_dependency",
+    "openDependencyCreate", "data-execution-action", "execution-allowed",
   ]) {
     if (execution.indexOf(text) === -1) {
       throw new Error(`execution.js 缺少 ${text}`);

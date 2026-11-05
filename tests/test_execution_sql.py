@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -10,10 +11,15 @@ class ExecutionSqlTest(unittest.TestCase):
         cls.path = Path("mobile/sql/execution-tracking-v1.sql")
         cls.sql = cls.path.read_text(encoding="utf-8")
         cls.lowered = cls.sql.lower()
+        cls.installer = Path("mobile/sql/install-unified.sql").read_text(
+            encoding="utf-8"
+        )
 
-    def test_parse_ascii(self):
+    def test_parse_ascii_and_no_escaped_newline_artifacts(self):
         pglast.parse_sql(self.sql)
         self.assertTrue(all(ord(ch) < 128 for ch in self.sql))
+        self.assertNotIn("`n", self.sql)
+        self.assertEqual(len(re.findall(r"\$fn\$", self.sql)) % 2, 0)
 
     def test_required_tables_and_rpcs(self):
         for name in (
@@ -25,6 +31,7 @@ class ExecutionSqlTest(unittest.TestCase):
             "submit_task_acceptance",
             "review_task_acceptance",
             "upsert_task_dependency",
+            "delete_task_dependency",
             "create_task_handoff",
             "accept_task_handoff",
             "create_change_request",
@@ -33,7 +40,7 @@ class ExecutionSqlTest(unittest.TestCase):
         ):
             self.assertIn(name, self.lowered)
 
-    def test_acceptance_contract_and_final_completion_gate(self):
+    def test_acceptance_contract_and_completion_gate(self):
         for fragment in (
             "criteria text not null",
             "evidence text not null",
@@ -46,11 +53,15 @@ class ExecutionSqlTest(unittest.TestCase):
             "evidence required",
             "task is not pending acceptance",
             "accepted record is final",
+            "assignment must be accepted before completion",
+            "task completion log required before acceptance",
+            "delete from public.task_logs",
+            "completion_logs_removed",
+            "reopened",
         ):
             self.assertIn(fragment, self.lowered)
-        self.assertIn("review_task_acceptance", self.lowered)
 
-    def test_dependencies_reject_cycles_and_calculate_impact(self):
+    def test_dependencies_reject_cycles_and_honor_optional_edges(self):
         for fragment in (
             "task_dependencies",
             "depends_on_task_id",
@@ -62,6 +73,8 @@ class ExecutionSqlTest(unittest.TestCase):
             "affected_tasks",
             "projected_date",
             "delay_days",
+            "coalesce(d.required,true)",
+            "delete_task_dependency",
         ):
             self.assertIn(fragment, self.lowered)
 
@@ -77,7 +90,7 @@ class ExecutionSqlTest(unittest.TestCase):
         ):
             self.assertIn(fragment, self.lowered)
 
-    def test_change_control_captures_scope_reason_urgency_and_impacts(self):
+    def test_change_control_normalizes_alias_values(self):
         for fragment in (
             "scope text not null",
             "reason text not null",
@@ -89,6 +102,10 @@ class ExecutionSqlTest(unittest.TestCase):
             "risk text not null default 'healthy'",
             "status in ('pending','approved','rejected','returned')",
             "scope, reason, urgency, schedule, cost, and resource impact are required",
+            "_execution_urgency",
+            "u&'\\4e25\\91cd'",
+            "u&'\\98ce\\9669'",
+            "u&'\\7d27\\6025'",
         ):
             self.assertIn(fragment, self.lowered)
         self.assertNotIn("update public.projects", self.lowered)
@@ -100,12 +117,12 @@ class ExecutionSqlTest(unittest.TestCase):
             "source_type",
             "'change'",
             "change_requires_approval",
-            "amount >= 50000",
-            "schedule_impact_days > 3",
-            "risk in ('severe','risk')",
+            "coalesce(amount,0) >= 50000",
+            "coalesce(schedule_impact_days,0) > 3",
             "cross_department",
             "decision_items",
             "decision_events",
+            "_execution_sync_change_from_decision",
         ):
             self.assertIn(fragment, self.lowered)
 
@@ -123,14 +140,13 @@ class ExecutionSqlTest(unittest.TestCase):
                 f"alter table public.{table} enable row level security",
                 self.lowered,
             )
-            self.assertIn(
-                f"revoke all on table public.{table}", self.lowered
-            )
+            self.assertIn(f"revoke all on table public.{table}", self.lowered)
         for rpc in (
             "get_execution_board",
             "submit_task_acceptance",
             "review_task_acceptance",
             "upsert_task_dependency",
+            "delete_task_dependency",
             "create_task_handoff",
             "accept_task_handoff",
             "create_change_request",
@@ -144,16 +160,65 @@ class ExecutionSqlTest(unittest.TestCase):
         self.assertIn("insert into public.enterprise_identity_audit", self.lowered)
         self.assertIn("'code','permission_denied'", self.lowered)
 
-
-    def test_board_exposes_scoped_task_project_and_member_sources(self):
+    def test_permissions_are_split_from_read_only_oversight(self):
         for fragment in (
-            "'tasks',v_tasks",
-            "'projects',v_projects",
-            "'members',v_members",
-            "public._execution_task_enterprise(t.id)=v_eid",
-            "m.enterprise_id=v_eid and m.status='active'",
+            "tasks.assign",
+            "tasks.grade",
+            "people.manage",
+            "projects.manage",
+            "can_manage_dependencies",
+            "can_create_handoff",
+            "can_manage_changes",
+            "read_only",
         ):
             self.assertIn(fragment, self.lowered)
+        self.assertNotIn("'can_manage_dependencies',v_management", self.lowered)
+        self.assertNotIn("'can_manage_changes',v_management", self.lowered)
+
+    def test_board_limits_before_aggregating_every_section(self):
+        for alias in (
+            "acceptance", "handoffs", "changes", "dependencies",
+            "tasks", "projects", "members",
+        ):
+            self.assertIn(f") {alias};\n", self.lowered)
+        self.assertGreaterEqual(self.lowered.count("from (\n"), 7)
+        self.assertNotIn("order by a.submitted_at desc\n  limit 100;", self.lowered)
+
+    def test_function_bodies_are_exercised_by_opt_in_database_tests(self):
+        integration = Path("tests/test_execution_integration.py").read_text(
+            encoding="utf-8"
+        )
+        for rpc in (
+            "submit_task_acceptance",
+            "review_task_acceptance",
+            "upsert_task_dependency",
+            "delete_task_dependency",
+            "create_task_handoff",
+            "accept_task_handoff",
+            "create_change_request",
+            "decide_change_request",
+            "get_execution_board",
+            "act_on_decision",
+            "grade_task",
+            "get_operations_dashboard",
+        ):
+            self.assertIn(rpc, integration)
+
+    def test_unified_installer_carries_remediated_bodies(self):
+        self.assertTrue(all(ord(ch) < 128 for ch in self.installer))
+        self.assertNotIn("`n", self.installer)
+        for fragment in (
+            "_execution_urgency",
+            "assignment must be accepted before completion",
+            "delete from public.task_logs",
+            "delete_task_dependency",
+            "_execution_sync_change_from_decision",
+            ") acceptance;\n",
+            ") handoffs;\n",
+            ") changes;\n",
+            ") dependencies;\n",
+        ):
+            self.assertIn(fragment, self.installer.lower())
 
 
 if __name__ == "__main__":
