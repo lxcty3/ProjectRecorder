@@ -175,8 +175,10 @@ function showPage(name) {
   PAGES.forEach(key => {
     $("page-" + key).classList.toggle("hidden", key !== target);
   });
+  const morePages = ["dash", "team", "assist", "identity", "community", "today", "me"];
   document.querySelectorAll("#nav button").forEach(button => {
-    button.classList.toggle("on", button.dataset.page === target);
+    const isMore = button.dataset.page === "more" && morePages.indexOf(target) !== -1;
+    button.classList.toggle("on", button.dataset.page === target || isMore);
   });
 
   /* 登录页不显示底部导航——还没登录，那些页面一个都进不去。
@@ -504,13 +506,40 @@ function closeSheet() {
   sheetSubmit = null;
 }
 
+function openNavMore() {
+  const items = [
+    ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
+    ["identity", "治理"], ["community", "星球"],
+    ["today", "今天"], ["me", "我的"],
+  ];
+  openSheet("更多功能", `
+    <div id="nav-more-grid" class="nav-more-grid">
+      ${items.map(([page, label]) => `
+        <button class="btn ghost nav-more-item" data-more-page="${page}">${label}</button>
+      `).join("")}
+    </div>
+  `, [{ label: "关闭", onClick: closeSheet }]);
+  $("nav-more-grid").onclick = event => {
+    const button = event.target.closest("[data-more-page]");
+    if (!button) return;
+    closeSheet();
+    showPage(button.dataset.morePage);
+  };
+}
+
 function bindGlobalEvents() {
   $("sheet").addEventListener("click", event => {
     if (event.target.dataset.close) closeSheet();
   });
 
   document.querySelectorAll("#nav button").forEach(button => {
-    button.onclick = () => showPage(button.dataset.page);
+    button.onclick = () => {
+      if (button.dataset.page === "more") {
+        openNavMore();
+        return;
+      }
+      showPage(button.dataset.page);
+    };
   });
 
   /* 社区的两个固定按钮在这里统一接线。 */

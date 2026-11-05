@@ -2546,3 +2546,33 @@ nav {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
+
+
+/* Bottom navigation: fewer primary destinations, more breathing room. */
+.page .body {
+  padding-bottom: calc(var(--nav-h) + 56px);
+}
+
+nav {
+  background: var(--panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+nav button {
+  padding: 14px 0 9px;
+  font-size: 12px;
+}
+
+.nav-more-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.nav-more-item {
+  min-height: 58px;
+  justify-content: flex-start;
+  padding: 0 16px;
+  font-size: 15px;
+}

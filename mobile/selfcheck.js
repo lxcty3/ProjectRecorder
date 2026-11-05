@@ -4777,6 +4777,7 @@ test("每个页面都有入口（不能只能靠代码跳）", () => {
        · 底部导航按钮（data-page="xxx"）
        · 某个按钮的 data-back="xxx"（返回按钮）
        · 代码里有 showPage("xxx") 调用
+       · 「更多」面板里的入口数组（["xxx", "名称"]）
        · 登录页是特例（启动时直接进） */
   const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
   const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
@@ -4795,7 +4796,9 @@ test("每个页面都有入口（不能只能靠代码跳）", () => {
     /* showPage("name") 或 showPage('name') 的调用 */
     const viaCode = new RegExp(
       "showPage\\(\\s*[\"']" + name + "[\"']").test(allCode);
-    if (!viaNav && !viaBack && !viaCode) {
+    const viaMore = new RegExp(
+      "\\[\"" + name + "\",\\s*\"").test(allCode);
+    if (!viaNav && !viaBack && !viaCode && !viaMore) {
       unreachable.push(name);
     }
   });
