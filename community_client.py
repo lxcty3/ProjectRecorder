@@ -669,3 +669,131 @@ class CommunityClient:
                 "p_data": dict(data or {}),
             },
         )
+
+    # ---------------------------------------------------------- execution
+    def execution_board(self, session, enterprise_id=None):
+        body = {}
+        if enterprise_id:
+            body["p_enterprise"] = str(enterprise_id)
+        data = _request(
+            "POST", "/rest/v1/rpc/get_execution_board",
+            token=session.access_token, body=body,
+        )
+        return data if isinstance(data, dict) else {}
+
+    def submit_task_acceptance(self, session, task_id, criteria, evidence,
+                               reviewer_id, note=""):
+        criteria = str(criteria or "").strip()
+        evidence = str(evidence or "").strip()
+        reviewer_id = str(reviewer_id or "").strip()
+        if not criteria:
+            raise ValueError("acceptance criteria required")
+        if not evidence:
+            raise ValueError("evidence required")
+        if not reviewer_id:
+            raise ValueError("reviewer required")
+        return _request(
+            "POST", "/rest/v1/rpc/submit_task_acceptance",
+            token=session.access_token,
+            body={
+                "p_task": str(task_id),
+                "p_criteria": criteria,
+                "p_evidence": evidence,
+                "p_reviewer": reviewer_id,
+                "p_note": str(note or ""),
+            },
+        )
+
+    def review_task_acceptance(self, session, task_id, decision, note=""):
+        normalized = str(decision or "").strip().lower()
+        if normalized not in ("accepted", "rework"):
+            raise ValueError("decision must be accepted or rework")
+        return _request(
+            "POST", "/rest/v1/rpc/review_task_acceptance",
+            token=session.access_token,
+            body={
+                "p_task": str(task_id),
+                "p_decision": normalized,
+                "p_note": str(note or ""),
+            },
+        )
+
+    def upsert_task_dependency(self, session, task_id, depends_on_task_id,
+                               lag_days=0, required=True):
+        try:
+            lag_days = max(int(lag_days or 0), 0)
+        except (TypeError, ValueError) as error:
+            raise ValueError("lag days must be a non-negative integer") from error
+        return _request(
+            "POST", "/rest/v1/rpc/upsert_task_dependency",
+            token=session.access_token,
+            body={
+                "p_task": str(task_id),
+                "p_depends_on": str(depends_on_task_id),
+                "p_lag_days": lag_days,
+                "p_required": bool(required),
+            },
+        )
+
+    def create_task_handoff(self, session, task_id, to_profile_id, artifact,
+                            note=""):
+        artifact = str(artifact or "").strip()
+        if not artifact:
+            raise ValueError("handoff artifact required")
+        return _request(
+            "POST", "/rest/v1/rpc/create_task_handoff",
+            token=session.access_token,
+            body={
+                "p_task": str(task_id),
+                "p_to": str(to_profile_id),
+                "p_artifact": artifact,
+                "p_note": str(note or ""),
+            },
+        )
+
+    def accept_task_handoff(self, session, handoff_id, decision, note=""):
+        normalized = str(decision or "").strip().lower()
+        if normalized not in ("accepted", "rejected"):
+            raise ValueError("decision must be accepted or rejected")
+        return _request(
+            "POST", "/rest/v1/rpc/accept_task_handoff",
+            token=session.access_token,
+            body={
+                "p_handoff": str(handoff_id),
+                "p_decision": normalized,
+                "p_note": str(note or ""),
+            },
+        )
+
+    def create_change_request(self, session, project_id, data):
+        from execution_rules import validate_change_request
+
+        payload = dict(data or {})
+        validation = validate_change_request(payload)
+        if not validation["valid"]:
+            raise ValueError(validation["reason"])
+        return _request(
+            "POST", "/rest/v1/rpc/create_change_request",
+            token=session.access_token,
+            body={
+                "p_project": str(project_id),
+                "p_data": payload,
+            },
+        )
+
+    def decide_change_request(self, session, change_id, decision, note="",
+                              idempotency_key=""):
+        normalized = str(decision or "").strip().lower()
+        if normalized not in ("approved", "rejected", "returned"):
+            raise ValueError("decision must be approved, rejected, or returned")
+        key = idempotency_key or self.new_idempotency_key("change")
+        return _request(
+            "POST", "/rest/v1/rpc/decide_change_request",
+            token=session.access_token,
+            body={
+                "p_change": str(change_id),
+                "p_decision": normalized,
+                "p_note": str(note or ""),
+                "p_idempotency_key": key,
+            },
+        )
