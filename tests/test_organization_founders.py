@@ -49,6 +49,8 @@ class OrganizationFounderContractTest(unittest.TestCase):
         self.assertIn("founder_unanimous", self.sql)
         self.assertIn("employee_pool", self.sql)
         self.assertIn("share_transfer", self.sql)
+        self.assertIn("p_preserve_original", self.sql)
+        self.assertIn("v_original_units:=least", self.sql)
         self.assertNotIn("using (true)", self.sql.lower())
 
     def test_clients_and_both_uis_are_wired(self):

@@ -624,15 +624,26 @@ end;
 $fn$;
 
 create or replace function public._organization_apply_allocations(
-  p_eid uuid,p_allocations jsonb,p_original boolean
+  p_eid uuid,p_allocations jsonb,p_original boolean,
+  p_preserve_original boolean default false
 ) returns void language plpgsql security definer
 set search_path=public,auth,pg_temp as $fn$
 declare
   v_row jsonb;
   v_profile uuid;
   v_units numeric;
+  v_original_units numeric;
+  v_existing_original numeric;
+  v_original_map jsonb:='{}'::jsonb;
   v_founder boolean;
 begin
+  select coalesce(jsonb_object_agg(owner_profile_id,total),'{}'::jsonb)
+    into v_original_map
+    from (select owner_profile_id,sum(units) total
+      from public.organization_share_lots
+      where enterprise_id=p_eid and status='active'
+        and share_class='original' and owner_profile_id is not null
+      group by owner_profile_id) original_rows;
   delete from public.organization_share_lots
    where enterprise_id=p_eid and status='active'
      and share_class in ('original','ordinary');
@@ -643,16 +654,28 @@ begin
     v_founder:=exists(select 1 from public.organization_founders f
       where f.enterprise_id=p_eid and f.profile_id=v_profile
         and f.status='active');
-    insert into public.organization_share_lots(
-      enterprise_id,owner_profile_id,share_class,units,
-      voting_weight,economic_weight
-    ) values(
-      p_eid,v_profile,
-      case when v_founder and p_original then 'original' else 'ordinary' end,
-      v_units,
-      case when v_founder and p_original then 1.1 else 1.0 end,
-      1.0
-    );
+    v_original_units:=0;
+    if v_founder and p_original then
+      if p_preserve_original then
+        v_existing_original:=coalesce(
+          (v_original_map->>v_profile::text)::numeric,0);
+        v_original_units:=least(v_units,v_existing_original);
+      else
+        v_original_units:=v_units;
+      end if;
+    end if;
+    if v_original_units>0 then
+      insert into public.organization_share_lots(
+        enterprise_id,owner_profile_id,share_class,units,
+        voting_weight,economic_weight
+      ) values(p_eid,v_profile,'original',v_original_units,1.1,1.0);
+    end if;
+    if v_units>v_original_units then
+      insert into public.organization_share_lots(
+        enterprise_id,owner_profile_id,share_class,units,
+        voting_weight,economic_weight
+      ) values(p_eid,v_profile,'ordinary',v_units-v_original_units,1.0,1.0);
+    end if;
   end loop;
   perform public._organization_rebuild_shareholders(p_eid);
 end;
@@ -674,14 +697,14 @@ begin
   v_payload:=coalesce(v_m.payload,'{}'::jsonb);
   if v_m.kind='initial_split' then
     perform public._organization_apply_allocations(
-      v_m.enterprise_id,v_payload->'allocations',true
+      v_m.enterprise_id,v_payload->'allocations',true,false
     );
     update public.organization_foundations set status='active',
       finalized_at=now(),updated_at=now()
      where enterprise_id=v_m.enterprise_id;
   elsif v_m.kind='share_change' then
     perform public._organization_apply_allocations(
-      v_m.enterprise_id,v_payload->'allocations',true
+      v_m.enterprise_id,v_payload->'allocations',true,true
     );
   elsif v_m.kind='founder_add' then
     v_profile:=(v_payload->>'profile_id')::uuid;
@@ -1040,7 +1063,7 @@ revoke all on function public._organization_active_enterprise(uuid) from public,
 revoke all on function public._organization_is_founder(uuid,uuid) from public,anon,authenticated;
 revoke all on function public._organization_can_manage(uuid,uuid) from public,anon,authenticated;
 revoke all on function public._organization_rebuild_shareholders(uuid) from public,anon,authenticated;
-revoke all on function public._organization_apply_allocations(uuid,jsonb,boolean) from public,anon,authenticated;
+revoke all on function public._organization_apply_allocations(uuid,jsonb,boolean,boolean) from public,anon,authenticated;
 revoke all on function public._organization_apply_motion(uuid) from public,anon,authenticated;
 
 revoke all on function public.list_my_organizations() from public,anon,authenticated;

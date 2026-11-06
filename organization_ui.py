@@ -309,10 +309,14 @@ class OrganizationFoundationPage(QWidget):
         enterprise_id = self.org_combo.currentData()
         if not enterprise_id:
             return
-        self._run_action(
-            lambda session: self.client.set_active_organization(session, enterprise_id),
-            "Active organization switched",
-        )
+
+        def action(session):
+            data = self.client.set_active_organization(session, enterprise_id)
+            if data.get("owner_profile_id"):
+                session.profile["boss_id"] = data["owner_profile_id"]
+            return data
+
+        self._run_action(action, "Active organization switched")
 
     def propose_initial_split(self):
         founders = [item for item in (self.state.get("founders") or [])
