@@ -31,7 +31,25 @@ function todayTaskRows() {
   });
 }
 
-function todayTaskCard(task) {
+function todayStreakDays() {
+  const dates = new Set((Array.isArray(DB.habitLogs) ? DB.habitLogs : [])
+    .map(log => String((log && log.log_date) || "").slice(0, 10))
+    .filter(Boolean));
+  if (!dates.size) return 0;
+  const cursor = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  let streak = 0;
+  while (streak < 366) {
+    const key = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${
+      pad(cursor.getDate())}`;
+    if (!dates.has(key)) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function todayTaskCard(task, index) {
   const log = typeof taskLogFor === "function" ? taskLogFor(task.id) : null;
   const done = !!log;
   const pending = typeof taskPendingAccept === "function"
@@ -43,12 +61,16 @@ function todayTaskCard(task) {
   const state = done ? "今天完成"
     : pending ? "等待你接受" : rejected ? "已拒绝，等待处理"
     : started ? "已开始" : "待开始";
-  return `<div class="today-task-route">
+  const questNo = String(index + 1).padStart(2, "0");
+  const tone = done ? " is-done" : pending ? " is-pending" : "";
+  return `<div class="today-task-route game-quest${tone}">
+    <span class="quest-node" aria-hidden="true">${done ? "✓" : questNo}</span>
     <div class="today-task-copy">
+      <span class="quest-project">${escapeHtml(task.project_name || "今日行动")}</span>
       <b>${escapeHtml(task.title || "任务")}</b>
-      <span>${escapeHtml(task.project_name || "今日任务")} · ${state}</span>
+      <span class="quest-state">${state}</span>
     </div>
-    <button class="btn ${done ? "ghost" : ""}" data-today-task="${
+    <button class="btn quest-action${done ? " ghost" : ""}" data-today-task="${
       escapeHtml(task.id)
     }" ${done ? "disabled" : ""}>${action}</button>
   </div>`;
@@ -74,22 +96,62 @@ function renderToday() {
   sub.textContent = DB.profile
     ? `${DB.profile.name}，今天先完成 ${pending.length} 项`
     : "登录后查看今天的工作";
-  summary.innerHTML = `<div class="identity-me-head">
-    <div>
-      <div class="identity-eyebrow">我的今日进度</div>
-      <div class="identity-role-line"><b>${
-        pending.length ? "继续推进" : "今天已完成"
-      }</b>${me && me.role_key
-        ? `<span class="identity-owner">${escapeHtml(identityRoleLabel(me.role_key))}</span>`
-        : ""}</div>
+  const completed = Math.max(0, tasks.length - pending.length);
+  const completion = tasks.length
+    ? Math.round(completed * 100 / tasks.length) : 0;
+  const streak = todayStreakDays();
+  const displayName = String((DB.profile && DB.profile.name) || "行动者");
+  const initial = displayName.trim().slice(0, 1) || "我";
+  const roleKey = me && me.role_key
+    ? me.role_key : (DB.profile && DB.profile.role);
+  const roleLabel = roleKey && typeof identityRoleLabel === "function"
+    ? identityRoleLabel(roleKey) : "企业成员";
+  const shares = me ? num(me.shares) : 0;
+  summary.innerHTML = `<div class="game-hud">
+    <div class="game-avatar" aria-hidden="true">
+      <span>${escapeHtml(initial)}</span>
+      <i>${completion}%</i>
     </div>
-    <div class="identity-weight"><b>${num(points.balance)}</b><span>可用积分</span></div>
+    <div class="game-hud-main">
+      <span class="game-kicker">今日行动档案</span>
+      <div class="game-name-row">
+        <b>${escapeHtml(displayName)}</b>
+        <span class="game-role">${escapeHtml(roleLabel)}</span>
+      </div>
+      <div class="game-status-line">
+        <span class="game-live-dot${pending.length ? " is-live" : ""}"></span>
+        ${pending.length
+          ? `还有 ${pending.length} 个行动等你处理`
+          : "今日行动已经全部完成"}
+      </div>
+    </div>
+    <div class="game-points">
+      <span aria-hidden="true">◆</span>
+      <b>${num(points.balance)}</b>
+      <small>可用积分</small>
+    </div>
+  </div>
+  <div class="game-progress">
+    <div class="game-progress-head">
+      <span>今日完成度</span><b>${completed} / ${tasks.length}</b>
+    </div>
+    <div class="game-progress-track"
+         role="progressbar" aria-valuemin="0" aria-valuemax="100"
+         aria-valuenow="${completion}">
+      <span style="width:${completion}%"></span>
+    </div>
+  </div>
+  <div class="game-quick-stats">
+    <div><b>${pending.length}</b><span>待处理</span></div>
+    <div><b>${completed}</b><span>已完成</span></div>
+    <div><b>${streak}</b><span>连续打卡</span></div>
+    ${shares ? `<div><b>${num(shares)}</b><span>持股</span></div>` : ""}
   </div>`;
   count.textContent = `${pending.length} 项待处理`;
   taskList.innerHTML = tasks.length
     ? tasks.slice(0, 5).map(todayTaskCard).join("")
-    : '<div class="identity-empty"><b>今天没有待办</b>'
-      + '<span>可以查看知识星球，或为明天留一点余地。</span></div>';
+    : '<div class="identity-empty game-empty"><b>今日没有待办</b>'
+      + '<span>去星球补充情报，或者为明天留一点余地。</span></div>';
   pointsLabel.textContent = `${num(points.balance)} 积分 · 永久有效`;
 
   const pool = points.pool || null;

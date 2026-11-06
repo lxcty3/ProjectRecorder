@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>项目记录器 · 手机版预览</title>
+  <title>项目记录器 · 工作冒险手账</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -11,49 +11,137 @@
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: radial-gradient(circle at 50% 0%, #24313a, #10151a 70%);
-      color: #dce5e8;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(200,154,75,.14), transparent 30%),
+        radial-gradient(circle at 82% 68%, rgba(63,143,123,.20), transparent 34%),
+        linear-gradient(rgba(175,206,194,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(175,206,194,.035) 1px, transparent 1px),
+        #0d1716;
+      background-size: auto, auto, 30px 30px, 30px 30px, auto;
+      color: #eaf2ed;
       font: 14px/1.4 "Microsoft YaHei UI", "PingFang SC", sans-serif;
     }
-    .wrap { display: grid; gap: 14px; justify-items: center; padding: 20px; }
-    .caption { font-size: 13px; color: #aebdc3; letter-spacing: .04em; }
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      border: 1px solid rgba(222,190,119,.12);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    body::before {
+      width: 520px;
+      height: 520px;
+      left: -240px;
+      top: -220px;
+      box-shadow: 0 0 0 44px rgba(255,255,255,.012),
+                  0 0 0 92px rgba(200,154,75,.012);
+    }
+    body::after {
+      width: 420px;
+      height: 420px;
+      right: -200px;
+      bottom: -210px;
+      box-shadow: 0 0 0 38px rgba(111,184,162,.018);
+    }
+    .wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 14px;
+      justify-items: center;
+      padding: 20px;
+    }
+    .caption {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #d6e2dc;
+      font-size: 12px;
+      letter-spacing: .08em;
+    }
+    .caption::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d9b568;
+      box-shadow: 0 0 0 4px rgba(217,181,104,.10);
+    }
+    .caption b {
+      color: #f5e6bd;
+      font-weight: 700;
+    }
     .phone {
       width: min(390px, 96vw);
       height: min(844px, calc(100vh - 100px));
-      padding: 12px;
+      padding: 10px;
       overflow: hidden;
-      border-radius: 34px;
-      background: #e5ece8;
-      box-shadow: 0 28px 80px rgba(0,0,0,.55), 0 0 0 1px #3a454b;
+      border-radius: 38px;
+      border: 1px solid rgba(221,190,122,.25);
+      background: linear-gradient(145deg, #2b403a, #14211e 52%, #2b251c);
+      box-shadow:
+        0 38px 100px rgba(0,0,0,.66),
+        0 0 0 1px rgba(255,255,255,.05),
+        inset 0 0 0 1px rgba(255,255,255,.05);
       position: relative;
     }
     .phone::before {
       content: "";
       position: absolute;
       z-index: 2;
-      top: 13px;
+      top: 11px;
       left: 50%;
-      width: 110px;
+      width: 108px;
       height: 22px;
       transform: translateX(-50%);
       border-radius: 0 0 14px 14px;
-      background: #0b0d0f;
+      background: #090d0c;
+      box-shadow: 0 4px 12px rgba(0,0,0,.34);
+    }
+    .phone::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: 22px;
+      left: calc(50% + 34px);
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #213a33;
+      box-shadow: inset 0 0 2px rgba(255,255,255,.2);
     }
     iframe {
       width: 116.279%;
       height: 116.279%;
       border: 0;
-      border-radius: 23px;
-      background: #f4f5f7;
+      border-radius: 28px;
+      background: #f2f6f3;
       transform: scale(.86);
       transform-origin: top left;
+    }
+    .hint {
+      color: #718b82;
+      font-size: 10px;
+      letter-spacing: .04em;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .phone { animation: settle .55s cubic-bezier(.22,1,.36,1) both; }
+      @keyframes settle {
+        from { opacity: 0; transform: translateY(14px) scale(.985); }
+        to { opacity: 1; transform: none; }
+      }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="caption">项目记录器 · 手机版界面预览</div>
-    <div class="phone"><iframe src="./" title="项目记录器手机版"></iframe></div>
+    <div class="caption"><b>工作冒险手账</b> · 手机界面预览</div>
+    <div class="phone">
+      <iframe src="./?v=game-ui-2" title="项目记录器手机版"></iframe>
+    </div>
+    <div class="hint">在手机尺寸下查看真实交互</div>
   </div>
 </body>
 </html>

@@ -20,100 +20,132 @@ __all__ = ["THEMES", "theme_names", "palette", "current_theme", "set_theme",
            "render_stylesheet", "series_colors", "level_colors"]
 
 LIGHT = {
-    # 底色
-    "bg_win": "#f4f5f7",        # 窗口底：极浅的冷灰
-    "bg_panel": "#ffffff",      # 面板 / 卡片 / 表格
-    "bg_read": "#fafbfc",       # 大块留白区（预测结论那种），比面板略暗一点点
-    "bg_read_line": "#e8ebef",
-    "bg_chart": "#ffffff",
+    # 底色：暖纸 + 柔和青绿，像一本摊开的工作冒险手账
+    "bg_win": "#f4f5ee",
+    "bg_panel": "#fffdf7",
+    "bg_read": "#f6f7ef",
+    "bg_read_line": "#e8e6d9",
+    "bg_chart": "#fffdf7",
 
     # 文字：五档明度
-    "fg": "#2f3540",            # 正文
-    "fg_strong": "#1b2028",     # 标题与关键数字
-    "fg_soft": "#4d5563",       # 次要信息
-    "fg_dim": "#78828f",        # 说明文字
-    "fg_faint": "#a2aab5",      # 状态栏提示
-    "fg_read": "#333a45",
+    "fg": "#36434a",
+    "fg_strong": "#20323c",
+    "fg_soft": "#566a71",
+    "fg_dim": "#78898e",
+    "fg_faint": "#a3b1b3",
+    "fg_read": "#394b52",
 
     # 线条
-    "line": "#e3e6ea",
-    "line_soft": "#eceef1",
-    "line_hair": "#f1f3f5",
-    "line_input": "#d8dce2",
+    "line": "#e4e7de",
+    "line_soft": "#eef0e8",
+    "line_hair": "#f4f5ef",
+    "line_input": "#d5ddd7",
 
-    # 交互：石青蓝，低饱和
-    "accent": "#7c93ad",
-    "accent_dim": "#5f7893",
-    "accent_deep": "#4d647c",
-    "accent_wash": "#e9eef4",
-    "accent_edge": "#b6c5d4",
-    "hover": "#eef1f4",
-    "pressed": "#e5e9ee",
+    # 交互：深翡翠主色 + 黄铜高光
+    "accent": "#4b9b8d",
+    "accent_dim": "#347b70",
+    "accent_deep": "#28645a",
+    "accent_wash": "#e4f2ec",
+    "accent_edge": "#bee0d5",
+    "hover": "#eef6f2",
+    "pressed": "#e5eee9",
 
     # 控件底色
-    "btn_bg": "#ffffff",
-    "btn_bg_off": "#f4f5f7",
-    "field_bg": "#ffffff",
-    "field_line": "#e0e3e8",
-    "field_focus": "#b6c5d4",
-    "disabled_fg": "#bcc2cb",
-    "muted_fg": "#78828f",
+    "btn_bg": "#fffdf7",
+    "btn_bg_off": "#f3f5ef",
+    "field_bg": "#fffdf7",
+    "field_line": "#dce2dc",
+    "field_focus": "#79b8aa",
+    "disabled_fg": "#b6c1be",
+    "muted_fg": "#78898e",
 
     # 其它
-    "selection": "#d5e0ea",
-    "menu_hover": "#eef1f4",
-    "track": "#eceef1",
-    "scroll": "#d5d9df",
-    "scroll_hover": "#bcc2cb",
-    "tooltip_bg": "#2f3540",
-    "tooltip_fg": "#f4f5f7",
+    "selection": "#cfe9e2",
+    "menu_hover": "#eef6f2",
+    "track": "#e8ece7",
+    "scroll": "#c9d5d1",
+    "scroll_hover": "#aebfba",
+    "tooltip_bg": "#20323c",
+    "tooltip_fg": "#fffdf7",
     "warn": "#b06a5a",
+
+    # 工作冒险主题
+    "ink": "#2d4555",
+    "ink_soft": "#416d76",
+    "ink_line": "#6a948e",
+    "gold": "#e3a56c",
+    "gold_soft": "#f9e6d2",
+    "gold_edge": "#efcda8",
+    "on_ink": "#fffdf7",
+    "on_ink_dim": "#dcebe5",
+    "hero_start": "#355f6d",
+    "hero_end": "#5c8f86",
+    "top_start": "#edf6f1",
+    "top_end": "#fbebdb",
+    "top_text": "#20323c",
+    "top_dim": "#647a80",
 }
 
 DARK = {
-    "bg_win": "#191b1f",
-    "bg_panel": "#22252a",
-    "bg_read": "#1d2024",
-    "bg_read_line": "#2c3036",
-    "bg_chart": "#22252a",
+    "bg_win": "#101817",
+    "bg_panel": "#182521",
+    "bg_read": "#141f1c",
+    "bg_read_line": "#27352f",
+    "bg_chart": "#182521",
 
-    "fg": "#ccd2da",
-    "fg_strong": "#e8ecf1",
-    "fg_soft": "#aab2bd",
-    "fg_dim": "#8b939f",
-    "fg_faint": "#666d78",
-    "fg_read": "#c3c9d2",
+    "fg": "#d9e4df",
+    "fg_strong": "#f3f7f4",
+    "fg_soft": "#b3c4bc",
+    "fg_dim": "#82968d",
+    "fg_faint": "#61726b",
+    "fg_read": "#c9d8d1",
 
-    "line": "#2e3238",
-    "line_soft": "#282b31",
-    "line_hair": "#262930",
-    "line_input": "#3a3f46",
+    "line": "#2a3933",
+    "line_soft": "#23312c",
+    "line_hair": "#1f2c28",
+    "line_input": "#3a4b44",
 
-    # 暗底上强调色要提亮，否则一片糊
-    "accent": "#8ea8c4",
-    "accent_dim": "#a3bcd6",
-    "accent_deep": "#b6cce3",
-    "accent_wash": "#252b33",
-    "accent_edge": "#3c4653",
-    "hover": "#282c32",
-    "pressed": "#30343b",
+    # 暗底上强调色提亮，黄铜高光保留暖意
+    "accent": "#6fb8a2",
+    "accent_dim": "#8fd1bd",
+    "accent_deep": "#a9e0ce",
+    "accent_wash": "#213730",
+    "accent_edge": "#396356",
+    "hover": "#202c28",
+    "pressed": "#293731",
 
-    "btn_bg": "#282b31",
-    "btn_bg_off": "#23262b",
-    "field_bg": "#1e2125",
-    "field_line": "#32363d",
-    "field_focus": "#4d5a68",
-    "disabled_fg": "#565c66",
-    "muted_fg": "#8b939f",
+    "btn_bg": "#1d2c27",
+    "btn_bg_off": "#17231f",
+    "field_bg": "#15211d",
+    "field_line": "#30413a",
+    "field_focus": "#5e9f8b",
+    "disabled_fg": "#596963",
+    "muted_fg": "#82968d",
 
-    "selection": "#2f3a46",
-    "menu_hover": "#282c32",
-    "track": "#282b31",
-    "scroll": "#363a41",
-    "scroll_hover": "#484d55",
-    "tooltip_bg": "#e8ecf1",
-    "tooltip_fg": "#191b1f",
-    "warn": "#cc8b7a",
+    "selection": "#2b443b",
+    "menu_hover": "#202c28",
+    "track": "#24332e",
+    "scroll": "#35453e",
+    "scroll_hover": "#495c54",
+    "tooltip_bg": "#eaf2ee",
+    "tooltip_fg": "#101817",
+    "warn": "#d58d7b",
+
+    # 工作冒险主题
+    "ink": "#1f303d",
+    "ink_soft": "#2c4c57",
+    "ink_line": "#56787a",
+    "gold": "#e5ad78",
+    "gold_soft": "#4a392c",
+    "gold_edge": "#88694e",
+    "on_ink": "#f3faf6",
+    "on_ink_dim": "#a8c0b6",
+    "hero_start": "#243d4a",
+    "hero_end": "#416c6b",
+    "top_start": "#182521",
+    "top_end": "#2d2924",
+    "top_text": "#f3f7f4",
+    "top_dim": "#a8bcb6",
 }
 
 THEMES = {"light": LIGHT, "dark": DARK}

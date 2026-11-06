@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QHBoxLayout, QListWidget, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QFrame, QHBoxLayout, QListWidget, QProgressBar, QPushButton,
+    QVBoxLayout, QWidget,
+)
 
 from widgets import StatCard, label, muted
 
@@ -18,7 +22,57 @@ class TodayPage(QWidget):
         root.setContentsMargins(24, 20, 24, 18)
         root.setSpacing(10)
         root.addWidget(label("今天", "KnowledgeTitle"))
-        root.addWidget(muted("先完成今天的事，再决定下一步。"))
+        root.addWidget(muted("和伙伴一起，把今天的事一件件完成。"))
+
+        self.hud = QFrame()
+        self.hud.setObjectName("GameHud")
+        self.hud.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        hud_root = QVBoxLayout(self.hud)
+        hud_root.setContentsMargins(18, 15, 18, 14)
+        hud_root.setSpacing(10)
+
+        hud_top = QHBoxLayout()
+        hud_top.setSpacing(13)
+        self.hud_emblem = label("我", "GameEmblem")
+        self.hud_emblem.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hud_emblem.setFixedSize(54, 54)
+        hud_top.addWidget(self.hud_emblem)
+
+        hud_copy = QVBoxLayout()
+        hud_copy.setSpacing(2)
+        hud_copy.addWidget(label("今日冒险手账", "GameKicker"))
+        self.hud_name = label("行动者，准备出发", "GameHudTitle")
+        hud_copy.addWidget(self.hud_name)
+        self.hud_status = label("先完成今天的事，再决定下一步。", "GameHudStatus")
+        hud_copy.addWidget(self.hud_status)
+        hud_top.addLayout(hud_copy, 1)
+
+        hud_side = QVBoxLayout()
+        hud_side.setSpacing(0)
+        hud_side.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.hud_rank = label("企业成员", "GameRank")
+        self.hud_rank.setAlignment(Qt.AlignmentFlag.AlignRight)
+        hud_side.addWidget(self.hud_rank)
+        self.hud_points = label("0", "GamePoints")
+        self.hud_points.setAlignment(Qt.AlignmentFlag.AlignRight)
+        hud_side.addWidget(self.hud_points)
+        hud_side.addWidget(label("可用积分", "GamePointsLabel"))
+        hud_top.addLayout(hud_side)
+        hud_root.addLayout(hud_top)
+
+        progress_row = QHBoxLayout()
+        progress_row.setSpacing(10)
+        self.hud_progress = QProgressBar()
+        self.hud_progress.setObjectName("MissionProgress")
+        self.hud_progress.setRange(0, 100)
+        self.hud_progress.setValue(0)
+        self.hud_progress.setTextVisible(False)
+        self.hud_progress.setFixedHeight(8)
+        progress_row.addWidget(self.hud_progress, 1)
+        self.hud_progress_text = label("0 / 0", "GameHudProgressText")
+        progress_row.addWidget(self.hud_progress_text)
+        hud_root.addLayout(progress_row)
+        root.addWidget(self.hud)
 
         cards = QHBoxLayout()
         cards.setSpacing(12)
@@ -89,8 +143,28 @@ class TodayPage(QWidget):
         self.card_done.update_values(f"{done}/{total}", "", "任务完成情况")
 
         state = getattr(self.window, "identity_state", {}) or {}
+        me = state.get("me") or {}
+        session = getattr(self.window, "account_session", None)
+        display_name = getattr(session, "name", "") if session else ""
+        display_name = display_name or me.get("name") or "行动者"
+        role_name = me.get("role_name") or "企业成员"
+        remaining = max(0, total - done)
+        self.hud_emblem.setText(str(display_name)[:1] or "我")
+        self.hud_name.setText(
+            f"{display_name}，今日行动已完成" if total and not remaining
+            else f"{display_name}，准备出发"
+        )
+        self.hud_status.setText(
+            "今天没有待办，去星球补充情报或规划下一步。"
+            if not remaining else f"还有 {remaining} 个行动等你处理。"
+        )
+        self.hud_rank.setText(str(role_name))
+        self.hud_progress.setValue(int(done * 100 / total) if total else 0)
+        self.hud_progress_text.setText(f"{done} / {total}")
+
         point_state = state.get("point_state") or {}
         points = point_state.get("balance", 0)
+        self.hud_points.setText(str(points))
         self.card_points.update_values(str(points), "分", "永久有效")
         pool = point_state.get("pool") or {}
         if pool:

@@ -736,3 +736,542 @@ QLineEdit:disabled, QTextEdit:disabled, QComboBox:disabled {
     background-color: $btn_bg_off;
     color: $disabled_fg;
 }
+
+
+/* =============================================================
+   工作冒险主题 · 桌面指挥舱
+   -------------------------------------------------------------
+   深翡翠顶栏 + 暖纸内容区 + 黄铜状态高光。
+   功能层级保持不变，只把导航、行动档案、任务卡和状态反馈
+   统一成一张“企业行动地图”的视觉语言。
+   ============================================================= */
+
+QMainWindow, #Root {
+    background-color: $bg_win;
+}
+
+QMenuBar {
+    background-color: $bg_panel;
+    color: $fg_soft;
+    border-bottom: 1px solid $line;
+    padding: 2px 10px;
+}
+QMenuBar::item {
+    background: transparent;
+    color: $fg_soft;
+    padding: 7px 13px;
+    border-radius: 7px;
+}
+QMenuBar::item:selected {
+    background-color: $accent_wash;
+    color: $accent_dim;
+}
+QMenu {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-radius: 12px;
+    padding: 7px;
+}
+QMenu::item {
+    padding: 8px 28px 8px 15px;
+    border-radius: 7px;
+    color: $fg;
+}
+QMenu::item:selected {
+    background-color: $accent_wash;
+    color: $fg_strong;
+}
+
+#ToolBar {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 $top_start,
+        stop: 0.62 $accent_wash,
+        stop: 1 $top_end
+    );
+    border: none;
+    border-bottom: 1px solid $line;
+}
+#ToolMode {
+    background-color: $gold_soft;
+    color: $accent_dim;
+    border: 1px solid $gold_edge;
+    border-radius: 10px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+#ToolTitle {
+    color: $top_text;
+    font-size: 21px;
+    font-weight: 700;
+}
+#ToolMeta {
+    color: $top_dim;
+    font-size: 11.5px;
+}
+#ToolBar QPushButton#AccountButton {
+    background-color: $bg_panel;
+    color: $accent_dim;
+    border: 1px solid $accent_edge;
+    border-radius: 9px;
+    padding: 8px 13px;
+    font-weight: 600;
+}
+#ToolBar QPushButton#AccountButton:hover {
+    background-color: $accent;
+    color: $on_ink;
+}
+#ToolBar QPushButton#GhostButton {
+    background-color: rgba(255, 255, 255, 82);
+    color: $fg_soft;
+    border: 1px solid $line;
+}
+#ToolBar QPushButton#GhostButton:hover {
+    background-color: $bg_panel;
+    border-color: $accent_edge;
+    color: $accent_dim;
+}
+#ToolBar QPushButton#PrimaryButton {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 $accent,
+        stop: 1 $accent_dim
+    );
+    color: $on_ink;
+    border: 1px solid $accent_edge;
+    border-radius: 10px;
+    padding: 9px 19px;
+    font-weight: 700;
+}
+#ToolBar QPushButton#PrimaryButton:hover {
+    background: $accent_dim;
+}
+#ToolBar QPushButton#PrimaryButton:pressed {
+    background: $accent_deep;
+}
+#ToolBar #Badge {
+    border: 1px solid $gold_edge;
+}
+
+QTabWidget#RootTabs::pane {
+    background-color: $bg_win;
+    border: none;
+}
+QTabWidget#RootTabs QTabBar {
+    background-color: $bg_win;
+    border: none;
+    border-bottom: 1px solid $line;
+}
+QTabWidget#RootTabs QTabBar::tab {
+    background-color: $bg_panel;
+    color: $fg_soft;
+    padding: 9px 10px;
+    margin: 6px 1px 8px;
+    border: 1px solid $line;
+    border-radius: 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+QTabWidget#RootTabs QTabBar::tab:hover {
+    background-color: $accent_wash;
+    color: $accent_dim;
+    border-color: $accent_edge;
+}
+QTabWidget#RootTabs QTabBar::tab:selected {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 $accent,
+        stop: 1 $ink_soft
+    );
+    color: $on_ink;
+    border-color: $accent_edge;
+    font-weight: 700;
+}
+QTabWidget#RootTabs QTabBar::scroller {
+    width: 30px;
+}
+QTabWidget#RootTabs QTabBar QToolButton {
+    background-color: $ink_soft;
+    color: $gold_soft;
+    border: 1px solid $ink_line;
+    border-radius: 7px;
+    margin: 8px 2px;
+    min-width: 20px;
+}
+
+QTabWidget#InnerTabs::pane {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-radius: 14px;
+    top: -1px;
+}
+QTabWidget#InnerTabs QTabBar::tab {
+    background-color: transparent;
+    color: $fg_dim;
+    padding: 9px 17px;
+    margin-right: 4px;
+    border-radius: 9px 9px 0 0;
+}
+QTabWidget#InnerTabs QTabBar::tab:hover {
+    background-color: $hover;
+    color: $fg;
+}
+QTabWidget#InnerTabs QTabBar::tab:selected {
+    background-color: $accent_wash;
+    color: $accent_dim;
+    border-bottom: 2px solid $gold;
+    font-weight: 700;
+}
+
+QPushButton#PrimaryButton {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 $accent,
+        stop: 1 $accent_dim
+    );
+    color: $on_ink;
+    border: 1px solid $accent_edge;
+    border-radius: 10px;
+    padding: 10px 22px;
+    font-weight: 700;
+}
+QPushButton#PrimaryButton:hover {
+    background: $accent_dim;
+}
+QPushButton#PrimaryButton:pressed {
+    background: $accent_deep;
+}
+
+QPushButton#GhostButton {
+    background-color: $btn_bg;
+    color: $fg_soft;
+    border: 1px solid $field_line;
+    border-radius: 10px;
+    padding: 8px 18px;
+}
+QPushButton#GhostButton:hover {
+    background-color: $accent_wash;
+    border-color: $accent_edge;
+    color: $accent_dim;
+}
+
+QPushButton#AccountButton {
+    background-color: $accent_wash;
+    color: $accent_dim;
+    border: 1px solid $accent_edge;
+    border-radius: 10px;
+    padding: 7px 13px;
+    font-weight: 600;
+}
+
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox,
+QComboBox, QDateEdit {
+    background-color: $field_bg;
+    color: $fg;
+    border: 1px solid $field_line;
+    border-radius: 10px;
+    padding: 8px 11px;
+    selection-background-color: $selection;
+    selection-color: $fg_strong;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QDateEdit:focus {
+    border: 1px solid $field_focus;
+}
+
+QToolButton#TextButton {
+    background-color: $btn_bg;
+    color: $fg_soft;
+    border: 1px solid $line;
+    border-radius: 10px;
+    padding: 7px 14px;
+}
+QToolButton#TextButton:hover {
+    background-color: $accent_wash;
+    border-color: $accent_edge;
+    color: $accent_dim;
+}
+QToolButton#TextButton:checked {
+    background-color: $accent;
+    border-color: $accent_dim;
+    color: $on_ink;
+}
+
+/* 今日行动档案 */
+#GameHud {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 $hero_start,
+        stop: 0.64 $ink_soft,
+        stop: 1 $hero_end
+    );
+    border: 1px solid $accent_edge;
+    border-radius: 18px;
+}
+#GameEmblem {
+    background-color: rgba(255, 255, 255, 28);
+    color: $gold_soft;
+    border: 1px solid $gold_edge;
+    border-radius: 17px;
+    font-size: 22px;
+    font-weight: 700;
+}
+#GameKicker {
+    color: $gold_soft;
+    font-size: 10px;
+    font-weight: 700;
+}
+#GameHudTitle {
+    color: $on_ink;
+    font-size: 20px;
+    font-weight: 700;
+}
+#GameHudStatus {
+    color: $on_ink_dim;
+    font-size: 11.5px;
+}
+#GameRank {
+    background-color: rgba(255, 255, 255, 18);
+    color: $gold_soft;
+    border: 1px solid $gold_edge;
+    border-radius: 8px;
+    padding: 2px 8px;
+    font-size: 10.5px;
+    font-weight: 600;
+}
+#GamePoints {
+    color: $gold_soft;
+    font-size: 27px;
+    font-weight: 700;
+}
+#GamePointsLabel, #GameHudProgressText {
+    color: $on_ink_dim;
+    font-size: 10px;
+}
+QProgressBar#MissionProgress {
+    background-color: $ink_line;
+    border: none;
+    border-radius: 4px;
+}
+QProgressBar#MissionProgress::chunk {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 $accent,
+        stop: 1 $gold
+    );
+    border-radius: 4px;
+}
+
+/* 卡片与区块 */
+#Card {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-left: 3px solid $accent;
+    border-radius: 14px;
+}
+#Card:hover {
+    border-color: $accent_edge;
+    border-left-color: $gold;
+}
+#CardTitle {
+    color: $fg_dim;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+#CardValue {
+    color: $fg_strong;
+    font-size: 27px;
+    font-weight: 700;
+}
+#CardUnit {
+    color: $gold;
+    font-size: 11px;
+    font-weight: 600;
+}
+#CardNote {
+    color: $fg_dim;
+    font-size: 11px;
+}
+#PanelHeading {
+    color: $fg_strong;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 4px 2px 8px;
+}
+#PanelHint {
+    color: $fg_dim;
+    font-size: 11.5px;
+}
+#KnowledgeTitle {
+    color: $fg_strong;
+    font-size: 27px;
+    font-weight: 700;
+}
+#KnowledgeSubtitle {
+    color: $fg_dim;
+    font-size: 12px;
+}
+#KnowledgeSide, #KnowledgeMapFrame, #KnowledgeDetailPanel,
+#AdviceBox {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-radius: 14px;
+}
+#AdviceBox {
+    border-left: 3px solid $gold;
+    background-color: $bg_read;
+}
+#AdviceHeadline {
+    color: $fg_strong;
+    font-size: 15px;
+    font-weight: 700;
+}
+#AdviceReason {
+    color: $fg_read;
+    font-size: 12.5px;
+}
+#AdviceAction {
+    color: $accent_dim;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+/* 列表任务卡 */
+QListWidget {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+QListWidget::item {
+    background-color: $bg_panel;
+    border: 1px solid $line_soft;
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin: 3px 0;
+    color: $fg;
+}
+QListWidget::item:hover {
+    background-color: $hover;
+    border-color: $accent_edge;
+}
+QListWidget::item:selected {
+    background-color: $accent_wash;
+    border: 1px solid $accent_edge;
+    color: $fg_strong;
+}
+QListWidget#TodayTaskList::item {
+    border-left: 3px solid $accent;
+    padding: 11px 12px;
+}
+QListWidget#TodayTaskList::item:selected {
+    border-left-color: $gold;
+}
+QListWidget#TodayPointLedger::item {
+    background-color: $bg_read;
+    border: 1px solid $line_hair;
+    color: $fg_soft;
+}
+
+/* 表格 */
+QTableWidget, QTableView {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-radius: 13px;
+    gridline-color: transparent;
+    selection-background-color: $accent_wash;
+    selection-color: $fg_strong;
+}
+QTableWidget::item, QTableView::item {
+    padding: 7px 5px;
+    border-bottom: 1px solid $line_hair;
+}
+QTableWidget::item:hover, QTableView::item:hover {
+    background-color: $hover;
+}
+QTableWidget::item:selected, QTableView::item:selected {
+    background-color: $accent_wash;
+    color: $fg_strong;
+}
+QHeaderView::section {
+    background-color: $bg_read;
+    color: $fg_dim;
+    padding: 9px 6px;
+    border: none;
+    border-bottom: 1px solid $line;
+    font-size: 11.5px;
+    font-weight: 700;
+}
+QTableCornerButton::section {
+    background-color: $bg_read;
+    border: none;
+}
+
+#SidePanel {
+    background-color: $bg_read;
+    border: 1px solid $line;
+    border-radius: 14px;
+}
+
+#TimerBar {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 $accent_wash,
+        stop: 1 $bg_read
+    );
+    border-top: 1px solid $line;
+}
+#TimerBar QLabel {
+    color: $fg_soft;
+}
+#TimerBar QLabel#TimerClock {
+    color: $accent_dim;
+    font-size: 18px;
+    font-weight: 700;
+}
+#TimerBar QPushButton#PrimaryButton {
+    padding: 7px 16px;
+}
+#TimerBar QPushButton#GhostButton {
+    background-color: $bg_panel;
+    color: $fg_soft;
+    border-color: $line;
+}
+
+#StatusBar {
+    background-color: $bg_panel;
+    border-top: 1px solid $line;
+}
+#StatusFile {
+    color: $fg_soft;
+    font-size: 11.5px;
+}
+#StatusMeta {
+    color: $fg_dim;
+    font-size: 11.5px;
+}
+#StatusHint {
+    color: $fg_faint;
+    font-size: 10.5px;
+}
+
+#Badge {
+    border-radius: 8px;
+    padding: 2px 9px;
+    font-size: 10.5px;
+    font-weight: 700;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: $scroll;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: $accent;
+}
+
+QSplitter::handle:hover {
+    background-color: $gold_edge;
+}

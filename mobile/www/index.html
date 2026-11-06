@@ -25,8 +25,10 @@
 <section id="page-login" class="page hidden">
   <div class="body">
     <div class="login-hero">
+      <span class="login-world-chip">工作冒险手账</span>
       <img class="hero-art sticker" src="icons/09_暗中观察@hero.webp" alt="">
       <h1>项目记录器</h1>
+      <p class="login-tagline">和伙伴一起，把每个项目变成一段可回看的冒险。</p>
     </div>
 
     <div id="login-cloud"></div>
@@ -92,7 +94,10 @@
 <!-- ====================== 今日工位（简单模式） ====================== -->
 <section id="page-today" class="page hidden">
   <div class="topbar">
-    <div class="grow"><h1>今天</h1><div class="sub" id="today-sub"></div></div>
+    <div class="grow">
+      <span class="topbar-kicker">今日冒险手账</span>
+      <h1>今天</h1><div class="sub" id="today-sub"></div>
+    </div>
     <button class="icon-btn hidden" id="btn-mode-toggle" title="切换模式">⇄</button>
   </div>
   <div class="body">
@@ -522,6 +527,15 @@
     <button class="icon-btn" id="btn-community-refresh" title="刷新">↻</button>
   </div>
   <div class="body">
+    <div class="planet-signal" aria-label="知识星球社区状态">
+      <div class="planet-orb" aria-hidden="true"><span>✦</span></div>
+      <div class="planet-signal-copy">
+        <span>伙伴分享站</span>
+        <b>每个人都能看到，也都能发声</b>
+        <small>分享经验、提出问题，或发布一条值得全员留意的情报。</small>
+      </div>
+      <i>在线</i>
+    </div>
     <div class="card community-composer">
       <div class="card-head">
         <h3>发到星球</h3>
@@ -658,18 +672,18 @@
      员工只有两个入口——给他看一堆用不上的按钮只会让人困惑。 -->
 <nav id="nav">
   <span id="nav-simple" class="nav-group">
-    <button data-page="today" class="on"><b>今天</b></button>
-    <button data-page="intake"><b>需求</b></button>
-    <button data-page="execution" id="nav-execution-simple"><b>执行</b></button>
-    <button data-page="community"><b>星球</b></button>
-    <button data-page="me"><b>我的</b></button>
+    <button data-page="today" data-icon="◉" class="on"><b>今天</b></button>
+    <button data-page="intake" data-icon="↗"><b>需求</b></button>
+    <button data-page="execution" data-icon="⚔" id="nav-execution-simple"><b>执行</b></button>
+    <button data-page="community" data-icon="✦"><b>星球</b></button>
+    <button data-page="me" data-icon="◇"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
-    <button data-page="decisions"><b>决策</b></button>
-    <button data-page="operations" id="nav-operations"><b>经营</b></button>
-    <button data-page="intake"><b>需求</b></button>
-    <button data-page="execution" id="nav-execution"><b>执行</b></button>
-    <button data-page="more" id="nav-more-advanced"><b>更多</b></button>
+    <button data-page="decisions" data-icon="⚖"><b>决策</b></button>
+    <button data-page="operations" data-icon="◫" id="nav-operations"><b>经营</b></button>
+    <button data-page="intake" data-icon="↗"><b>需求</b></button>
+    <button data-page="execution" data-icon="⚔" id="nav-execution"><b>执行</b></button>
+    <button data-page="more" data-icon="⋯" id="nav-more-advanced"><b>更多</b></button>
   </span>
 </nav>
 
