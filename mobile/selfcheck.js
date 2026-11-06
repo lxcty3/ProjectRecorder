@@ -5051,6 +5051,23 @@ test("企业治理：今日工位存在", () => {
   }
 });
 
+test("社区 v2.1：板块、评论、通知和审核完整接线", () => {
+  const community = fs.readFileSync(path.join(HERE, "community.js"), "utf8");
+  const markup = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const marker of [
+    "get_community_boards", "list_community_posts_v2",
+    "get_community_post", "add_community_comment",
+    "toggle_community_like", "toggle_community_bookmark",
+    "report_community_content", "get_community_notifications",
+    "create_community_board", "moderate_community_post",
+    "community-board-select", "community-notifications-panel",
+  ]) {
+    if (!community.includes(marker) && !markup.includes(marker)) {
+      throw new Error("社区 v2.1 缺少接线：" + marker);
+    }
+  }
+});
+
 test("企业治理：积分与模式有本地缓存", () => {
   fresh();
   if (run("DB.uiMode") !== "simple") throw new Error("uiMode 默认应为 simple");

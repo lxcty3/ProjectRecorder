@@ -1275,3 +1275,67 @@ QScrollBar::handle:horizontal:hover {
 QSplitter::handle:hover {
     background-color: $gold_edge;
 }
+
+
+/* ===== 知识星球 v2.1 板块与互动 ===== */
+#CommunityFeedPanel, #CommunitySidePanel {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-radius: 14px;
+}
+#CommunityMessageCard {
+    background-color: $bg_panel;
+    border: 1px solid $line;
+    border-left: 3px solid $accent;
+    border-radius: 13px;
+}
+#CommunityMessageCard:hover {
+    border-color: $accent_edge;
+    border-left-color: $gold;
+}
+#CommunityActionButton {
+    background-color: transparent;
+    color: $fg_dim;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 11px;
+}
+#CommunityActionButton:hover, #CommunityActionButton[active="true"] {
+    background-color: $accent_wash;
+    border-color: $accent_edge;
+    color: $accent_dim;
+}
+#CommunityStatePinned, #CommunityStateFeatured,
+#CommunityStateRequired, #CommunityStateCost {
+    border-radius: 7px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+}
+#CommunityStatePinned {
+    background-color: $gold_soft;
+    color: $accent_deep;
+}
+#CommunityStateFeatured {
+    background-color: $accent_wash;
+    color: $accent_dim;
+}
+#CommunityStateRequired {
+    background-color: $gold_soft;
+    color: $accent_deep;
+}
+#CommunityStateCost {
+    background-color: $bg_read;
+    color: $fg_soft;
+}
+#CommunityAuthor { color: $fg_strong; font-weight: 700; }
+#CommunityMeta { color: $fg_dim; font-size: 10.5px; }
+#CommunityMessageBody { color: $fg; font-size: 12.5px; line-height: 1.7; }
+#CommunityEmptyCard {
+    background-color: $bg_read;
+    border: 1px dashed $line;
+    border-radius: 12px;
+}
+#CommunityEmptyTitle { color: $fg_strong; font-size: 14px; font-weight: 700; }
+#CommunityEmptyBody { color: $fg_dim; font-size: 11.5px; }

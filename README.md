@@ -49,6 +49,8 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 
 第一次使用前，管理员需要把 [`mobile/sql/community.sql`](mobile/sql/community.sql) 整个文件粘贴到 Supabase SQL Editor 运行一次。该脚本会创建社区表、权限策略和发帖/删除函数。
 
+v2.1 社区底座是在旧社区表上的增量升级。安装完 `community.sql` 后，再运行 [`mobile/sql/community-forum-v1.sql`](mobile/sql/community-forum-v1.sql)。它会增加板块、评论、点赞、收藏、举报、关注、通知、搜索、分页、板块管理和社区数据统计；旧帖子会自动迁入「综合讨论」，旧 RPC 继续保留以便回滚。
+
 #### 我的知识库（本地）
 
 把个人散落的经验、直觉、失败和客户反馈，做成一张会生长的认知地图。
@@ -146,6 +148,7 @@ mobile/sql/shareholder-meetings-v1.sql
 ```text
 mobile/sql/enterprise-identity.sql
 mobile/sql/community.sql
+mobile/sql/community-forum-v1.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql

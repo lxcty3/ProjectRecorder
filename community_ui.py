@@ -6,9 +6,10 @@ import time
 from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
-    QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton,
+    QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTextEdit, QVBoxLayout,
+    QWidget,
 )
 
 import theme
@@ -161,8 +162,13 @@ class CommunityLoginDialog(QDialog):
 class CommunityMessageCard(QFrame):
     delete_requested = pyqtSignal(str)
     unlock_requested = pyqtSignal(str)
+    like_requested = pyqtSignal(str)
+    bookmark_requested = pyqtSignal(str)
+    comments_requested = pyqtSignal(str)
+    report_requested = pyqtSignal(str)
+    moderation_requested = pyqtSignal(str)
 
-    def __init__(self, post, is_mine=False, parent=None):
+    def __init__(self, post, is_mine=False, can_manage=False, parent=None):
         super().__init__(parent)
         self.post = dict(post)
         self.setObjectName("CommunityMessageCard")
@@ -198,10 +204,25 @@ class CommunityMessageCard(QFrame):
         name_row.addStretch()
         identity.addLayout(name_row)
         topic = str(post.get("topic") or "分享")
+        board_name = str(post.get("board_name") or "综合讨论")
         identity.addWidget(label(
-            f"{topic} · {_friendly_time(post.get('created_at'))}",
+            f"{board_name} · {topic} · {_friendly_time(post.get('created_at'))}",
             "CommunityMeta",
         ))
+        tags = QHBoxLayout()
+        tags.setSpacing(5)
+        if post.get("pinned"):
+            tags.addWidget(label("置顶", "CommunityStatePinned"))
+        if post.get("featured"):
+            tags.addWidget(label("精选", "CommunityStateFeatured"))
+        if post.get("is_required"):
+            tags.addWidget(label("必读", "CommunityStateRequired"))
+        if int(post.get("unlock_cost") or 0) > 0:
+            tags.addWidget(label(
+                f"{int(post.get('unlock_cost'))} 积分", "CommunityStateCost"
+            ))
+        tags.addStretch()
+        identity.addLayout(tags)
         head.addLayout(identity, 1)
 
         if is_mine:
@@ -238,6 +259,46 @@ class CommunityMessageCard(QFrame):
             access.addWidget(unlock_button)
             layout.addLayout(access)
 
+        actions = QHBoxLayout()
+        actions.setSpacing(5)
+        like_button = QPushButton(f"喜欢 {int(post.get('like_count') or 0)}")
+        like_button.setObjectName("CommunityActionButton")
+        like_button.setProperty("active", bool(post.get("liked")))
+        like_button.clicked.connect(
+            lambda: self.like_requested.emit(str(self.post.get("id")))
+        )
+        actions.addWidget(like_button)
+        comments_button = QPushButton(f"评论 {int(post.get('comment_count') or 0)}")
+        comments_button.setObjectName("CommunityActionButton")
+        comments_button.clicked.connect(
+            lambda: self.comments_requested.emit(str(self.post.get("id")))
+        )
+        actions.addWidget(comments_button)
+        bookmark_button = QPushButton(
+            "已收藏" if post.get("bookmarked") else "收藏"
+        )
+        bookmark_button.setObjectName("CommunityActionButton")
+        bookmark_button.setProperty("active", bool(post.get("bookmarked")))
+        bookmark_button.clicked.connect(
+            lambda: self.bookmark_requested.emit(str(self.post.get("id")))
+        )
+        actions.addWidget(bookmark_button)
+        report_button = QPushButton("举报")
+        report_button.setObjectName("CommunityActionButton")
+        report_button.clicked.connect(
+            lambda: self.report_requested.emit(str(self.post.get("id")))
+        )
+        actions.addWidget(report_button)
+        if can_manage:
+            moderate_button = QPushButton("管理")
+            moderate_button.setObjectName("CommunityActionButton")
+            moderate_button.clicked.connect(
+                lambda: self.moderation_requested.emit(str(self.post.get("id")))
+            )
+            actions.addWidget(moderate_button)
+        actions.addStretch()
+        layout.addLayout(actions)
+
 class CommunityPage(QWidget):
     """共享社区：消息保存在 Supabase，所有成员看到同一份数据。"""
 
@@ -249,6 +310,11 @@ class CommunityPage(QWidget):
         self.client = CommunityClient()
         self.session = self._load_session()
         self.posts = []
+        self.boards = []
+        self.current_board = ""
+        self.search_text = ""
+        self.bookmarked_only = False
+        self.can_manage = False
         self._workers = []
         self._busy = False
         self._last_refresh = 0.0
@@ -279,6 +345,14 @@ class CommunityPage(QWidget):
         hero.addStretch()
         self.identity_label = label("尚未登录", "CommunityIdentity")
         hero.addWidget(self.identity_label)
+        self.notifications_button = QPushButton("通知")
+        self.notifications_button.setObjectName("GhostButton")
+        self.notifications_button.clicked.connect(self.open_notifications)
+        hero.addWidget(self.notifications_button)
+        self.boards_button = QPushButton("板块")
+        self.boards_button.setObjectName("GhostButton")
+        self.boards_button.clicked.connect(self.open_board_manager)
+        hero.addWidget(self.boards_button)
         self.refresh_button = QPushButton("刷新")
         self.refresh_button.setObjectName("GhostButton")
         self.refresh_button.clicked.connect(lambda: self.refresh_posts(force=True))
@@ -303,7 +377,26 @@ class CommunityPage(QWidget):
         feed_layout.setContentsMargins(15, 13, 15, 13)
         feed_layout.setSpacing(8)
         feed_head = QHBoxLayout()
-        feed_head.addWidget(SectionTitle("全员消息"))
+        feed_head.addWidget(SectionTitle("板块讨论"))
+        feed_head.addWidget(self._make_board_filter())
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("搜索帖子")
+        self.search_edit.setFixedWidth(150)
+        self.search_edit.returnPressed.connect(
+            lambda: self.refresh_posts(force=True)
+        )
+        feed_head.addWidget(self.search_edit)
+        self.search_button = QPushButton("搜索")
+        self.search_button.setObjectName("GhostButton")
+        self.search_button.clicked.connect(lambda: self.refresh_posts(force=True))
+        feed_head.addWidget(self.search_button)
+        self.bookmark_button = QPushButton("收藏")
+        self.bookmark_button.setObjectName("GhostButton")
+        self.bookmark_button.setCheckable(True)
+        self.bookmark_button.toggled.connect(
+            lambda checked: self._set_bookmark_filter(checked)
+        )
+        feed_head.addWidget(self.bookmark_button)
         feed_head.addStretch()
         self.feed_status = label("登录后加载", "CommunityFeedStatus")
         feed_head.addWidget(self.feed_status)
@@ -338,7 +431,11 @@ class CommunityPage(QWidget):
         self.profile_role.setWordWrap(True)
         side_layout.addWidget(self.profile_role)
 
-        side_layout.addWidget(SectionTitle("发到星球"))
+        side_layout.addWidget(SectionTitle("发布讨论"))
+        side_layout.addWidget(label("发布到板块", "CommunityFieldLabel"))
+        self.board_box = QComboBox()
+        self.board_box.currentIndexChanged.connect(self._board_compose_changed)
+        side_layout.addWidget(self.board_box)
         self.topic_box = QComboBox()
         self.topic_box.addItems(TOPIC_LABELS)
         side_layout.addWidget(self.topic_box)
@@ -360,6 +457,13 @@ class CommunityPage(QWidget):
         self.required_box = QCheckBox("设为必读")
         access_row.addWidget(self.required_box)
         side_layout.addLayout(access_row)
+        admin_row = QHBoxLayout()
+        self.pinned_box = QCheckBox("置顶")
+        self.featured_box = QCheckBox("精选")
+        admin_row.addWidget(self.pinned_box)
+        admin_row.addWidget(self.featured_box)
+        admin_row.addStretch()
+        side_layout.addLayout(admin_row)
         row = QHBoxLayout()
         self.char_label = label("0 / 2000", "CommunityCharCount")
         row.addWidget(self.char_label)
@@ -430,13 +534,72 @@ class CommunityPage(QWidget):
         if session is not None and self.isVisible():
             self.refresh_posts(force=True)
 
+    def _make_board_filter(self):
+        self.board_filter = QComboBox()
+        self.board_filter.addItem("全部板块", "")
+        self.board_filter.setMinimumWidth(125)
+        self.board_filter.currentIndexChanged.connect(
+            self._board_filter_changed
+        )
+        return self.board_filter
+
+    def _populate_boards(self):
+        current = str(self.current_board or "")
+        self.board_filter.blockSignals(True)
+        self.board_filter.clear()
+        self.board_filter.addItem("全部板块", "")
+        for board in self.boards:
+            self.board_filter.addItem(
+                f"{board.get('icon') or '*'} {board.get('name') or '板块'}",
+                str(board.get("id") or ""),
+            )
+        index = self.board_filter.findData(current)
+        self.board_filter.setCurrentIndex(max(0, index))
+        self.board_filter.blockSignals(False)
+
+        compose_current = self.board_box.currentData() if self.board_box.count() else ""
+        self.board_box.blockSignals(True)
+        self.board_box.clear()
+        for board in self.boards:
+            if board.get("allow_posts"):
+                self.board_box.addItem(
+                    f"{board.get('icon') or '*'} {board.get('name') or '板块'}",
+                    str(board.get("id") or ""),
+                )
+        if compose_current:
+            compose_index = self.board_box.findData(compose_current)
+            if compose_index >= 0:
+                self.board_box.setCurrentIndex(compose_index)
+        self.board_box.blockSignals(False)
+
+    def _board_filter_changed(self):
+        self.current_board = str(self.board_filter.currentData() or "")
+        self.refresh_posts(force=True)
+
+    def _board_compose_changed(self):
+        if self.board_box.currentData():
+            self.current_board = str(self.board_box.currentData())
+            self._populate_boards()
+
+    def _set_bookmark_filter(self, checked):
+        self.bookmarked_only = bool(checked)
+        self.refresh_posts(force=True)
+
     def _set_identity(self):
         logged = self.session is not None
         self.login_button.setVisible(not logged)
         self.logout_button.setVisible(logged)
         self.message_edit.setEnabled(logged)
         self.topic_box.setEnabled(logged)
+        self.board_box.setEnabled(logged)
         self.publish_button.setEnabled(logged)
+        self.search_edit.setEnabled(logged)
+        self.search_button.setEnabled(logged)
+        self.bookmark_button.setEnabled(logged)
+        self.notifications_button.setEnabled(logged)
+        self.pinned_box.setVisible(logged and self.can_manage)
+        self.featured_box.setVisible(logged and self.can_manage)
+        self.boards_button.setVisible(logged and self.can_manage)
         if logged:
             self.identity_label.setText(f"{self.session.name} · 已登录")
             self.profile_name.setText(self.session.name)
@@ -490,7 +653,8 @@ class CommunityPage(QWidget):
             self.feed_layout.addWidget(self._empty_card(
                 "社区暂时没有加载出来", self._last_error
             ))
-            if "community.sql" in self._last_error:
+            if ("community.sql" in self._last_error
+                    or "community-forum-v1.sql" in self._last_error):
                 setup_button = QPushButton("复制安装 SQL")
                 setup_button.setObjectName("GhostButton")
                 setup_button.clicked.connect(self._copy_setup_sql)
@@ -514,9 +678,16 @@ class CommunityPage(QWidget):
             is_mine = bool(
                 self.session and post.get("author_id") == self.session.user_id
             )
-            card = CommunityMessageCard(post, is_mine=is_mine)
+            card = CommunityMessageCard(
+                post, is_mine=is_mine, can_manage=self.can_manage
+            )
             card.delete_requested.connect(self.delete_post)
             card.unlock_requested.connect(self.unlock_post)
+            card.like_requested.connect(self.toggle_like)
+            card.bookmark_requested.connect(self.toggle_bookmark)
+            card.comments_requested.connect(self.open_comments)
+            card.report_requested.connect(self.report_post)
+            card.moderation_requested.connect(self.open_moderation)
             self.feed_layout.addWidget(card)
         self.feed_layout.addStretch()
 
@@ -525,7 +696,7 @@ class CommunityPage(QWidget):
         if not sql:
             QMessageBox.warning(
                 self, "找不到安装脚本",
-                "请打开项目里的 mobile/sql/community.sql 并手动复制。",
+                "请打开项目里的 mobile/sql/community-forum-v1.sql 并手动复制。",
             )
             return
         QApplication.clipboard().setText(sql)
@@ -564,6 +735,400 @@ class CommunityPage(QWidget):
             if worker.isRunning():
                 worker.wait(12000)
 
+    def _refresh_after(self, session, board_id=None, search="", bookmarked=False):
+        return (
+            session,
+            self.client.boards(session),
+            self.client.list_posts_v2(
+                session, board_id=board_id, search=search, limit=50,
+                bookmarked=bookmarked,
+            ),
+        )
+
+    def toggle_like(self, post_id):
+        if self.session is None or self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+        board_id = self.current_board or None
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            self.client.toggle_like(session, post_id)
+            return self._refresh_after(session, board_id, search, bookmarked)
+
+        self._spawn(
+            work, lambda result: self._on_posts_loaded(*result),
+            self._on_publish_failed,
+        )
+
+    def toggle_bookmark(self, post_id):
+        if self.session is None or self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+        board_id = self.current_board or None
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            self.client.toggle_bookmark(session, post_id)
+            return self._refresh_after(session, board_id, search, bookmarked)
+
+        self._spawn(
+            work, lambda result: self._on_posts_loaded(*result),
+            self._on_publish_failed,
+        )
+
+    def report_post(self, post_id):
+        if self.session is None:
+            return
+        reason, ok = QInputDialog.getText(
+            self, "举报内容", "举报原因（例如：垃圾内容、攻击、隐私泄露）："
+        )
+        if not ok or not reason.strip():
+            return
+        if self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            self.client.report_content(session, post_id=post_id, reason=reason)
+            return session
+
+        def done(session):
+            self._busy = False
+            self.session = session
+            QMessageBox.information(self, "举报已提交", "管理员会处理这条举报。")
+
+        self._spawn(work, done, self._on_publish_failed)
+
+    def open_comments(self, post_id):
+        if self.session is None or self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            return session, self.client.post_detail(session, post_id)
+
+        self._spawn(
+            work,
+            lambda result: self._show_comments(post_id, *result),
+            self._on_publish_failed,
+        )
+
+    def _show_comments(self, post_id, session, data):
+        self._busy = False
+        self.session = session
+        post = (data or {}).get("post") or {}
+        comments = (data or {}).get("comments") or []
+        dialog = QDialog(self)
+        dialog.setWindowTitle("评论 · " + str(post.get("author_name") or "帖子"))
+        dialog.setMinimumSize(560, 480)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(9)
+        layout.addWidget(label(str(post.get("preview") or ""), "CommunityMessageBody"))
+        comment_list = QListWidget()
+        for item in comments:
+            comment_list.addItem(
+                "{}  {}：{}".format(
+                    _friendly_time(item.get("created_at")),
+                    item.get("author_name") or "成员",
+                    item.get("body") or "",
+                )
+            )
+        layout.addWidget(comment_list, 1)
+        editor = QTextEdit()
+        editor.setPlaceholderText("写下你的回复…")
+        editor.setMinimumHeight(80)
+        layout.addWidget(editor)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        close_button = QPushButton("关闭")
+        close_button.setObjectName("GhostButton")
+        close_button.clicked.connect(dialog.accept)
+        buttons.addWidget(close_button)
+        send_button = QPushButton("发送评论")
+        send_button.setObjectName("PrimaryButton")
+        buttons.addWidget(send_button)
+        layout.addLayout(buttons)
+
+        def send():
+            body = editor.toPlainText().strip()
+            if not body:
+                return
+            send_button.setEnabled(False)
+            old_session = self.session
+
+            def work():
+                session = old_session
+                if session.is_expired():
+                    session = self.client.refresh(session)
+                self.client.add_comment(session, post_id, body)
+                return session
+
+            def done(new_session):
+                self.session = new_session
+                send_button.setEnabled(True)
+                editor.clear()
+                comment_list.addItem(
+                    "刚刚  {}：{}".format(self.session.name, body)
+                )
+                item = next(
+                    (row for row in self.posts
+                     if str(row.get("id")) == str(post_id)), None
+                )
+                if item:
+                    item["comment_count"] = int(item.get("comment_count") or 0) + 1
+                self._render_feed()
+
+            self._spawn(work, done, self._on_publish_failed)
+
+        send_button.clicked.connect(send)
+        dialog.exec()
+
+    def open_moderation(self, post_id):
+        if not self.can_manage or self._busy:
+            return
+        post = next(
+            (row for row in self.posts if str(row.get("id")) == str(post_id)),
+            {},
+        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("管理内容")
+        dialog.setMinimumWidth(420)
+        layout = QVBoxLayout(dialog)
+        pinned = QCheckBox("置顶")
+        pinned.setChecked(bool(post.get("pinned")))
+        featured = QCheckBox("设为精选")
+        featured.setChecked(bool(post.get("featured")))
+        deleted = QCheckBox("隐藏这条内容")
+        layout.addWidget(pinned)
+        layout.addWidget(featured)
+        layout.addWidget(deleted)
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel = QPushButton("取消")
+        cancel.setObjectName("GhostButton")
+        cancel.clicked.connect(dialog.reject)
+        row.addWidget(cancel)
+        save = QPushButton("保存")
+        save.setObjectName("PrimaryButton")
+        row.addWidget(save)
+        layout.addLayout(row)
+
+        def commit():
+            old_session = self.session
+            board_id = self.current_board or None
+            search = self.search_edit.text().strip()
+            bookmarked = bool(self.bookmark_button.isChecked())
+
+            def work():
+                session = old_session
+                if session.is_expired():
+                    session = self.client.refresh(session)
+                self.client.moderate_post(
+                    session, post_id, pinned=pinned.isChecked(),
+                    featured=featured.isChecked(),
+                    deleted=deleted.isChecked(),
+                )
+                return self._refresh_after(session, board_id, search, bookmarked)
+
+            def done(result):
+                dialog.accept()
+                self._on_posts_loaded(*result)
+
+            self._spawn(work, done, self._on_publish_failed)
+
+        save.clicked.connect(commit)
+        dialog.exec()
+
+    def open_notifications(self):
+        if self.session is None or self._busy:
+            return
+        self._busy = True
+        old_session = self.session
+
+        def work():
+            session = old_session
+            if session.is_expired():
+                session = self.client.refresh(session)
+            return session, self.client.notifications(session, limit=50)
+
+        def done(result):
+            self._busy = False
+            session, data = result
+            self.session = session
+            dialog = QDialog(self)
+            dialog.setWindowTitle("社区通知")
+            dialog.setMinimumSize(520, 420)
+            layout = QVBoxLayout(dialog)
+            listing = QListWidget()
+            for item in (data or {}).get("notifications") or []:
+                listing.addItem(
+                    "{}  {}  {}".format(
+                        "" if item.get("read_at") else "●",
+                        item.get("title") or "社区通知",
+                        _friendly_time(item.get("created_at")),
+                    )
+                )
+            layout.addWidget(listing, 1)
+            row = QHBoxLayout()
+            row.addStretch()
+            read_all = QPushButton("全部标为已读")
+            read_all.setObjectName("GhostButton")
+            close = QPushButton("关闭")
+            close.setObjectName("PrimaryButton")
+            close.clicked.connect(dialog.accept)
+            row.addWidget(read_all)
+            row.addWidget(close)
+            layout.addLayout(row)
+
+            def mark_all():
+                try:
+                    self.client.mark_notifications_read(session)
+                    self.refresh_posts(force=True)
+                    dialog.accept()
+                except Exception as error:
+                    QMessageBox.warning(dialog, "操作失败", str(error))
+
+            read_all.clicked.connect(mark_all)
+            dialog.exec()
+
+        self._spawn(work, done, self._on_publish_failed)
+
+    def open_board_manager(self):
+        if not self.can_manage or self.session is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("管理社区板块")
+        dialog.setMinimumSize(520, 500)
+        layout = QVBoxLayout(dialog)
+        board_box = QComboBox()
+        board_box.addItem("新建板块", "")
+        for board in self.boards:
+            if board.get("can_edit"):
+                board_box.addItem(str(board.get("name") or "板块"), str(board.get("id")))
+        layout.addWidget(board_box)
+        name = QLineEdit()
+        slug = QLineEdit()
+        desc = QTextEdit()
+        desc.setMinimumHeight(80)
+        visibility = QComboBox()
+        visibility.addItem("公开", "public")
+        visibility.addItem("按权限", "restricted")
+        permissions = QLineEdit()
+        permissions.setPlaceholderText("例如 finance.view,audit.read")
+        layout.addWidget(label("板块名称", "CommunityFieldLabel"))
+        layout.addWidget(name)
+        layout.addWidget(label("板块短名", "CommunityFieldLabel"))
+        layout.addWidget(slug)
+        layout.addWidget(label("说明", "CommunityFieldLabel"))
+        layout.addWidget(desc)
+        layout.addWidget(label("可见范围", "CommunityFieldLabel"))
+        layout.addWidget(visibility)
+        layout.addWidget(label("所需权限（逗号分隔）", "CommunityFieldLabel"))
+        layout.addWidget(permissions)
+
+        def load_board(_index=None):
+            board = next(
+                (row for row in self.boards
+                 if str(row.get("id") or "") == str(board_box.currentData() or "")),
+                None,
+            )
+            name.setText(str((board or {}).get("name") or ""))
+            slug.setText(str((board or {}).get("slug") or ""))
+            slug.setEnabled(not bool(board))
+            desc.setPlainText(str((board or {}).get("description") or ""))
+            visibility.setCurrentIndex(
+                visibility.findData(str((board or {}).get("visibility") or "public"))
+            )
+            permissions.setText(",".join((board or {}).get("required_permissions") or []))
+
+        board_box.currentIndexChanged.connect(load_board)
+        load_board()
+        row = QHBoxLayout()
+        stats_button = QPushButton("社区数据")
+        stats_button.setObjectName("GhostButton")
+        cancel = QPushButton("关闭")
+        cancel.setObjectName("GhostButton")
+        cancel.clicked.connect(dialog.reject)
+        save = QPushButton("保存板块")
+        save.setObjectName("PrimaryButton")
+        row.addWidget(stats_button)
+        row.addStretch()
+        row.addWidget(cancel)
+        row.addWidget(save)
+        layout.addLayout(row)
+
+        def save_board():
+            selected = str(board_box.currentData() or "")
+            perms = [item.strip() for item in permissions.text().split(",") if item.strip()]
+            old_session = self.session
+
+            def work():
+                session = old_session
+                if session.is_expired():
+                    session = self.client.refresh(session)
+                if selected:
+                    result = self.client.update_board(
+                        session, selected, name.text(), desc.toPlainText(),
+                        visibility.currentData(), perms, "*", False,
+                    )
+                else:
+                    result = self.client.create_board(
+                        session, name.text(), slug.text(), desc.toPlainText(),
+                        visibility.currentData(), perms, "*",
+                    )
+                return session, result
+
+            def done(result):
+                session, _payload = result
+                self.session = session
+                dialog.accept()
+                self.refresh_posts(force=True)
+                if hasattr(self.window, "flash"):
+                    self.window.flash("社区板块已保存")
+
+            self._spawn(work, done, self._on_publish_failed)
+
+        def show_stats():
+            old_session = self.session
+
+            def work():
+                session = old_session
+                if session.is_expired():
+                    session = self.client.refresh(session)
+                return self.client.admin_stats(session)
+
+            def done(data):
+                QMessageBox.information(
+                    dialog, "社区数据",
+                    json.dumps(data.get("stats") or {}, ensure_ascii=False, indent=2),
+                )
+
+            self._spawn(work, done, self._on_publish_failed)
+
+        save.clicked.connect(save_board)
+        stats_button.clicked.connect(show_stats)
+        dialog.exec()
+
     def refresh_posts(self, force=True):
         if self.session is None:
             self._render_feed()
@@ -578,11 +1143,20 @@ class CommunityPage(QWidget):
         self.feed_status.setText("同步中…")
         old_session = self.session
 
+        board_id = str(self.current_board or "") or None
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
+
         def work():
             session = old_session
             if session.is_expired():
                 session = self.client.refresh(session)
-            return session, self.client.list_posts(session)
+            boards = self.client.boards(session)
+            posts = self.client.list_posts_v2(
+                session, board_id=board_id, search=search,
+                limit=50, bookmarked=bookmarked,
+            )
+            return session, boards, posts
 
         self._spawn(
             work,
@@ -590,7 +1164,7 @@ class CommunityPage(QWidget):
             self._on_posts_failed,
         )
 
-    def _on_posts_loaded(self, session, posts):
+    def _on_posts_loaded(self, session, board_data, post_data):
         self._busy = False
         self._last_refresh = time.time()
         self._last_error = ""
@@ -598,7 +1172,20 @@ class CommunityPage(QWidget):
         if hasattr(self.window, "account_session"):
             self.window.account_session = session
         self._save_session()
-        self.posts = list(posts or [])
+        board_data = board_data if isinstance(board_data, dict) else {}
+        post_data = post_data if isinstance(post_data, dict) else {}
+        self.boards = list(board_data.get("boards") or [])
+        self.can_manage = bool(
+            (board_data.get("access") or {}).get("can_manage")
+        )
+        self.posts = list(post_data.get("posts") or [])
+        self._populate_boards()
+        self.notifications_button.setText(
+            f"通知 {int(board_data.get('unread_count') or 0)}"
+        )
+        self.boards_button.setVisible(self.can_manage)
+        self.pinned_box.setVisible(self.can_manage)
+        self.featured_box.setVisible(self.can_manage)
         self.feed_status.setText(f"{len(self.posts)} 条 · 刚刚更新")
         self._set_identity()
         self._render_feed()
@@ -606,6 +1193,15 @@ class CommunityPage(QWidget):
 
     def _on_posts_failed(self, message):
         self._busy = False
+        message = str(message or "")
+        if (("get_community_boards" in message
+             or "list_community_posts_v2" in message
+             or "community_boards" in message)
+                and any(marker in message.lower()
+                        for marker in ("does not exist", "could not find",
+                                       "not found"))):
+            message = ("社区 v2.1 数据尚未安装。请在 Supabase SQL Editor 运行 "
+                       "mobile/sql/community-forum-v1.sql，然后点刷新。")
         self._last_error = message
         if "重新登录" in message:
             if hasattr(self.window, "account_session_expired"):
@@ -663,6 +1259,10 @@ class CommunityPage(QWidget):
         if len(content) > 2000:
             QMessageBox.information(self, "消息太长", "请控制在 2000 字以内。")
             return
+        board_id = str(self.board_box.currentData() or "")
+        if not board_id:
+            QMessageBox.information(self, "先选板块", "请选择要发布到的板块。")
+            return
         if self._busy:
             return
         self._busy = True
@@ -670,16 +1270,32 @@ class CommunityPage(QWidget):
         self.publish_button.setEnabled(False)
         self.publish_button.setText("发送中…")
         old_session = self.session
-
         cost = self.unlock_cost.value()
         required = self.required_box.isChecked()
+        pinned = bool(self.pinned_box.isChecked() and self.can_manage)
+        featured = bool(self.featured_box.isChecked() and self.can_manage)
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
 
         def work():
             session = old_session
             if session.is_expired():
                 session = self.client.refresh(session)
-            self.client.publish(session, content, topic, cost, required)
-            return session, self.client.list_posts(session)
+            result = self.client.publish_v2(
+                session, content, board_id=board_id, topic=topic,
+                unlock_cost=cost, is_required=required,
+            )
+            post_id = (result or {}).get("id")
+            if post_id and (pinned or featured):
+                self.client.moderate_post(
+                    session, post_id, pinned=pinned, featured=featured
+                )
+            boards = self.client.boards(session)
+            posts = self.client.list_posts_v2(
+                session, board_id=board_id or None, search=search,
+                limit=50, bookmarked=bookmarked,
+            )
+            return session, boards, posts
 
         self._spawn(
             work,
@@ -687,24 +1303,18 @@ class CommunityPage(QWidget):
             self._on_publish_failed,
         )
 
-    def _on_published(self, session, posts):
+    def _on_published(self, session, board_data, post_data):
         self._busy = False
-        self.session = session
-        if hasattr(self.window, "account_session"):
-            self.window.account_session = session
-        self._save_session()
-        self.posts = list(posts or [])
         self.message_edit.clear()
         self.unlock_cost.setValue(0)
         self.required_box.setChecked(False)
+        self.pinned_box.setChecked(False)
+        self.featured_box.setChecked(False)
         self.publish_button.setEnabled(True)
         self.publish_button.setText("发布消息")
-        self._set_identity()
-        self.feed_status.setText(f"{len(self.posts)} 条 · 刚刚更新")
-        self._render_feed()
-        self.feed_scroll.verticalScrollBar().setValue(0)
+        self._on_posts_loaded(session, board_data, post_data)
         if hasattr(self.window, "flash"):
-            self.window.flash("消息已发布，所有成员都能看到")
+            self.window.flash("讨论已发布到板块")
 
     def _on_publish_failed(self, message):
         self._busy = False
@@ -742,13 +1352,16 @@ class CommunityPage(QWidget):
             return
         self._busy = True
         old_session = self.session
+        board_id = self.current_board or None
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
 
         def work():
             session = old_session
             if session.is_expired():
                 session = self.client.refresh(session)
             self.client.unlock_knowledge(session, post_id)
-            return session, self.client.list_posts(session)
+            return self._refresh_after(session, board_id, search, bookmarked)
 
         self._spawn(
             work,
@@ -768,13 +1381,16 @@ class CommunityPage(QWidget):
             return
         self._busy = True
         old_session = self.session
+        board_id = self.current_board or None
+        search = self.search_edit.text().strip()
+        bookmarked = bool(self.bookmark_button.isChecked())
 
         def work():
             session = old_session
             if session.is_expired():
                 session = self.client.refresh(session)
             self.client.delete_post(session, post_id)
-            return session, self.client.list_posts(session)
+            return self._refresh_after(session, board_id, search, bookmarked)
 
         self._spawn(
             work,

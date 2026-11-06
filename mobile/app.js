@@ -544,7 +544,11 @@ function bindGlobalEvents() {
   });
 
   /* 社区的两个固定按钮在这里统一接线。 */
-  $("btn-community-refresh").onclick = () => loadCommunityPosts(true);
+  $("btn-community-refresh").onclick = async () => {
+    await loadCommunityBoards(true);
+    await loadCommunityPosts(true);
+    loadCommunityNotifications(true);
+  };
   $("btn-identity-refresh").onclick = () => refreshIdentity(true);
   $("btn-decisions-refresh").onclick = () => loadDecisionCenter(true);
   if (typeof bindDecisionCenter === "function") bindDecisionCenter();

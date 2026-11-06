@@ -522,7 +522,7 @@
   <div class="topbar">
     <div class="grow">
       <h1>知识星球</h1>
-      <div class="sub" id="community-sub">所有成员共享同一条消息流</div>
+      <div class="sub" id="community-sub">板块、讨论与伙伴经验都在这里</div>
     </div>
     <button class="icon-btn" id="btn-community-refresh" title="刷新">↻</button>
   </div>
@@ -531,26 +531,54 @@
       <div class="planet-orb" aria-hidden="true"><span>✦</span></div>
       <div class="planet-signal-copy">
         <span>伙伴分享站</span>
-        <b>每个人都能看到，也都能发声</b>
-        <small>分享经验、提出问题，或发布一条值得全员留意的情报。</small>
+        <b>每个成员都能看到，也都能发声</b>
+        <small>按板块讨论，提问、复盘、分享和必读知识都不再混成一条消息流。</small>
       </div>
       <i>在线</i>
     </div>
+
+    <div class="card community-toolbar">
+      <div class="community-search-row">
+        <input id="community-search" placeholder="搜索讨论、经验或问题"
+               autocomplete="off">
+        <button class="btn ghost" id="btn-community-search">搜索</button>
+      </div>
+      <div class="community-board-chips" id="community-boards"></div>
+      <div class="community-filter-row">
+        <button class="chip" id="btn-community-bookmarks">只看收藏</button>
+        <button class="chip" id="btn-community-notifications">
+          通知 <span id="community-unread" class="community-unread">0</span>
+        </button>
+        <button class="chip hidden" id="btn-community-manage">管理板块</button>
+      </div>
+    </div>
+
+    <div id="community-notifications-panel" class="card hidden"></div>
+
     <div class="card community-composer">
       <div class="card-head">
-        <h3>发到星球</h3>
+        <h3>发布讨论</h3>
         <span class="meta" id="community-me">尚未登录</span>
       </div>
+      <label for="community-board-select">发布到</label>
+      <select id="community-board-select"></select>
       <div class="chips community-topics" id="community-topics"></div>
       <textarea id="community-input" maxlength="2000"
-        placeholder="写一条所有成员都能看到的消息。&#10;可以提问、分享经验、同步判断或发出一条灵感。"></textarea>
+        placeholder="把问题、经验或判断写清楚。&#10;需要全公司留下记录的内容，可以设为必读。"></textarea>
       <div class="row2">
         <div><label for="community-unlock-cost">解锁积分（0 = 免费）</label>
           <input id="community-unlock-cost" type="number" min="0" value="0"></div>
-        <label class="community-required">
-          <input id="community-required" type="checkbox">
-          设为必读
-        </label>
+        <div class="community-checks">
+          <label class="community-required">
+            <input id="community-required" type="checkbox"> 设为必读
+          </label>
+          <label class="community-required community-admin-only hidden">
+            <input id="community-pinned" type="checkbox"> 置顶
+          </label>
+          <label class="community-required community-admin-only hidden">
+            <input id="community-featured" type="checkbox"> 精选
+          </label>
+        </div>
       </div>
       <div class="community-compose-foot">
         <span class="meta" id="community-count">0 / 2000</span>
@@ -559,12 +587,16 @@
     </div>
 
     <div class="section-head">
-      <span>全员消息</span>
+      <span id="community-filter-label">最新讨论</span>
       <span class="meta" id="community-status">登录后加载</span>
     </div>
     <div id="community-feed"></div>
+    <div id="community-load-more-wrap" class="community-load-more hidden">
+      <button class="btn ghost" id="btn-community-load-more">加载更多</button>
+    </div>
     <div class="community-note">
-      社区消息对全部成员可见。请勿发送密码、密钥和他人隐私。
+      默认实名展示，公共板块全员可参与；敏感板块按身份权限隔离。
+      请勿发送密码、密钥、工资、客户隐私或未公开财务数据。
     </div>
   </div>
 </section>

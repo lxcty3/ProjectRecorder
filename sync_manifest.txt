@@ -139,3 +139,4 @@ tests/test_meeting_docs.py
 mobile/meeting.js
 mobile/www/meeting.js
 mobile/sql/shareholder-meetings-v1.sql
+mobile/sql/community-forum-v1.sql

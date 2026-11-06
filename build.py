@@ -34,6 +34,7 @@ BUNDLED = [
     ("README.md", "."),
     ("preview.html", "."),
     ("mobile/sql/community.sql", "."),
+    ("mobile/sql/community-forum-v1.sql", "."),
     ("mobile/sql/unified-platform.sql", "."),
     ("mobile/sql/work-intake-v1.sql", "."),
     ("mobile/sql/shareholder-meetings-v1.sql", "."),

@@ -317,6 +317,180 @@ class CommunityClient:
             body={"p_post_id": str(post_id)},
         )
 
+    # ------------------------------------------------------ community foundation
+    def boards(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_community_boards",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def list_posts_v2(self, session, board_id=None, search="", before=None,
+                      limit=20, bookmarked=False):
+        data = _request(
+            "POST", "/rest/v1/rpc/list_community_posts_v2",
+            token=session.access_token,
+            body={
+                "p_board": str(board_id) if board_id else None,
+                "p_search": str(search or "").strip(),
+                "p_before": before,
+                "p_limit": max(1, min(50, int(limit or 20))),
+                "p_bookmarked": bool(bookmarked),
+            },
+        )
+        return data if isinstance(data, dict) else {}
+
+    def post_detail(self, session, post_id):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_community_post",
+            token=session.access_token,
+            body={"p_post": str(post_id)},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def publish_v2(self, session, content, board_id=None, topic="share",
+                   unlock_cost=0, is_required=False):
+        content = str(content or "").strip()
+        if not content:
+            raise CommunityError("先写点内容再发送。")
+        if len(content) > 2000:
+            raise CommunityError("消息太长了，请控制在 2000 字以内。")
+        return _request(
+            "POST", "/rest/v1/rpc/post_community_message_v2",
+            token=session.access_token,
+            body={
+                "p_content": content,
+                "p_topic": str(topic or "share"),
+                "p_unlock_cost": max(0, int(unlock_cost or 0)),
+                "p_is_required": bool(is_required),
+                "p_board": str(board_id) if board_id else None,
+            },
+        )
+
+    def add_comment(self, session, post_id, body, parent_id=None):
+        body = str(body or "").strip()
+        if not body:
+            raise CommunityError("先写评论再发送。")
+        if len(body) > 4000:
+            raise CommunityError("评论请控制在 4000 字以内。")
+        return _request(
+            "POST", "/rest/v1/rpc/add_community_comment",
+            token=session.access_token,
+            body={
+                "p_post": str(post_id),
+                "p_body": body,
+                "p_parent": str(parent_id) if parent_id else None,
+            },
+        )
+
+    def toggle_like(self, session, post_id):
+        return _request(
+            "POST", "/rest/v1/rpc/toggle_community_like",
+            token=session.access_token,
+            body={"p_post": str(post_id)},
+        )
+
+    def toggle_bookmark(self, session, post_id):
+        return _request(
+            "POST", "/rest/v1/rpc/toggle_community_bookmark",
+            token=session.access_token,
+            body={"p_post": str(post_id)},
+        )
+
+    def follow_board(self, session, board_id, follow=True):
+        return _request(
+            "POST", "/rest/v1/rpc/follow_community_board",
+            token=session.access_token,
+            body={"p_board": str(board_id), "p_follow": bool(follow)},
+        )
+
+    def report_content(self, session, post_id=None, comment_id=None,
+                       reason="", detail=""):
+        return _request(
+            "POST", "/rest/v1/rpc/report_community_content",
+            token=session.access_token,
+            body={
+                "p_post": str(post_id) if post_id else None,
+                "p_comment": str(comment_id) if comment_id else None,
+                "p_reason": str(reason or "").strip(),
+                "p_detail": str(detail or "").strip(),
+            },
+        )
+
+    def notifications(self, session, limit=20):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_community_notifications",
+            token=session.access_token,
+            body={"p_limit": max(1, min(50, int(limit or 20)))},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def mark_notifications_read(self, session, notification_id=None):
+        return _request(
+            "POST", "/rest/v1/rpc/mark_community_notifications_read",
+            token=session.access_token,
+            body={"p_notification": str(notification_id) if notification_id else None},
+        )
+
+    def create_board(self, session, name, slug, description="",
+                     visibility="public", permissions=None, icon="*"):
+        return _request(
+            "POST", "/rest/v1/rpc/create_community_board",
+            token=session.access_token,
+            body={
+                "p_name": str(name or "").strip(),
+                "p_slug": str(slug or "").strip().lower(),
+                "p_description": str(description or "").strip(),
+                "p_visibility": str(visibility or "public"),
+                "p_required_permissions": list(permissions or []),
+                "p_icon": str(icon or "*"),
+            },
+        )
+
+    def update_board(self, session, board_id, name, description="",
+                     visibility="public", permissions=None, icon="*",
+                     archived=False):
+        return _request(
+            "POST", "/rest/v1/rpc/update_community_board",
+            token=session.access_token,
+            body={
+                "p_board": str(board_id),
+                "p_name": str(name or "").strip(),
+                "p_description": str(description or "").strip(),
+                "p_visibility": str(visibility or "public"),
+                "p_required_permissions": list(permissions or []),
+                "p_icon": str(icon or "*"),
+                "p_archived": bool(archived),
+            },
+        )
+
+    def admin_stats(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_community_admin_stats",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def moderate_post(self, session, post_id, pinned=False, featured=False,
+                      deleted=False):
+        return _request(
+            "POST", "/rest/v1/rpc/moderate_community_post",
+            token=session.access_token,
+            body={
+                "p_post": str(post_id),
+                "p_pinned": bool(pinned),
+                "p_featured": bool(featured),
+                "p_deleted": bool(deleted),
+            },
+        )
+
+    def resolve_report(self, session, report_id, status="resolved"):
+        return _request(
+            "POST", "/rest/v1/rpc/resolve_community_report",
+            token=session.access_token,
+            body={"p_report": str(report_id), "p_status": str(status)},
+        )
+
     # ------------------------------------------------------ enterprise identity
     def identity_state(self, session):
         """Return the current enterprise, member roles, shares and motions."""
