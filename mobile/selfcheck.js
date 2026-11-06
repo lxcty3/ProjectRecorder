@@ -5068,6 +5068,21 @@ test("社区 v2.1：板块、评论、通知和审核完整接线", () => {
   }
 });
 
+test("组织股权：创始人、1.1 权重和解散规则完整接线", () => {
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  const markup = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const marker of [
+    "get_organization_state", "create_organization",
+    "propose_initial_split", "cast_equity_vote",
+    "share_transfer", "employee_pool", "dissolution",
+    "identity-organization",
+  ]) {
+    if (!identity.includes(marker) && !markup.includes(marker)) {
+      throw new Error("组织股权缺少接线：" + marker);
+    }
+  }
+});
+
 test("企业治理：积分与模式有本地缓存", () => {
   fresh();
   if (run("DB.uiMode") !== "simple") throw new Error("uiMode 默认应为 simple");

@@ -27,12 +27,13 @@ from PyQt6.QtWidgets import (
 from community_client import CommunityClient
 from community_ui import CommunityWorker
 from meeting_ui import ShareholderMeetingPage
+from organization_ui import OrganizationFoundationPage
 from role_templates_ui import RoleTemplatePage
 from widgets import SectionTitle, StatCard, label, muted
 
 __all__ = [
-    "IdentityPage", "RoleMotionDialog", "BoardPointPage",
-    "PointPoolMotionDialog", "AwardPointsDialog",
+    "IdentityPage", "OrganizationFoundationPage", "RoleMotionDialog",
+    "BoardPointPage", "PointPoolMotionDialog", "AwardPointsDialog",
 ]
 
 ROLE_LABELS = {
@@ -331,6 +332,8 @@ class IdentityPage(QWidget):
         self.member_hint.setWordWrap(True)
         member_layout.addWidget(self.member_hint)
         self.tabs.addTab(member_page, "成员与身份")
+        self.organization_page = OrganizationFoundationPage(self)
+        self.tabs.addTab(self.organization_page, "组织与股权")
 
         motion_page = QWidget()
         motion_layout = QVBoxLayout(motion_page)
@@ -635,6 +638,8 @@ class IdentityPage(QWidget):
         self.role_template_page.render()
         if hasattr(self, "board_point_page"):
             self.board_point_page.apply_snapshot(state)
+        if hasattr(self, "organization_page"):
+            self.organization_page.refresh(force=False)
 
         me_permissions = me.get("permissions") or []
         self.propose_button.setEnabled("identity.propose" in me_permissions)

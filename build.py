@@ -35,6 +35,7 @@ BUNDLED = [
     ("preview.html", "."),
     ("mobile/sql/community.sql", "."),
     ("mobile/sql/community-forum-v1.sql", "."),
+    ("mobile/sql/organization-founders-v1.sql", "."),
     ("mobile/sql/unified-platform.sql", "."),
     ("mobile/sql/work-intake-v1.sql", "."),
     ("mobile/sql/shareholder-meetings-v1.sql", "."),
@@ -60,7 +61,7 @@ HIDDEN = [
     "server", "server_pages", "submit", "timer", "timer_ui",
     "knowledge_planet", "community_client", "community_ui",
     "cloud_integration", "collaboration", "intake_rules", "intake_ui",
-    "meeting_rules", "meeting_ui", "qrcode", "PIL",
+    "meeting_rules", "meeting_ui", "organization_ui", "qrcode", "PIL",
 ]
 
 

@@ -491,6 +491,103 @@ class CommunityClient:
             body={"p_report": str(report_id), "p_status": str(status)},
         )
 
+    # ---------------------------------------------------- organization equity
+    def organization_state(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/get_organization_state",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def organizations(self, session):
+        data = _request(
+            "POST", "/rest/v1/rpc/list_my_organizations",
+            token=session.access_token, body={},
+        )
+        return data if isinstance(data, dict) else {}
+
+    def create_organization(self, session, name, founder_codes=None):
+        return _request(
+            "POST", "/rest/v1/rpc/create_organization",
+            token=session.access_token,
+            body={
+                "p_name": str(name or "").strip(),
+                "p_founder_codes": list(founder_codes or []),
+            },
+        )
+
+    def invite_organization_founder(self, session, enterprise_id, code):
+        return _request(
+            "POST", "/rest/v1/rpc/invite_organization_founder",
+            token=session.access_token,
+            body={"p_enterprise": str(enterprise_id), "p_code": str(code or "").strip()},
+        )
+
+    def respond_organization_founder_invite(self, session, invite_id, accept):
+        return _request(
+            "POST", "/rest/v1/rpc/respond_organization_founder_invite",
+            token=session.access_token,
+            body={"p_invite": str(invite_id), "p_accept": bool(accept)},
+        )
+
+    def set_active_organization(self, session, enterprise_id):
+        return _request(
+            "POST", "/rest/v1/rpc/set_active_organization",
+            token=session.access_token,
+            body={"p_enterprise": str(enterprise_id)},
+        )
+
+    def propose_initial_split(self, session, allocations, reason="",
+                              closes_at=None):
+        return _request(
+            "POST", "/rest/v1/rpc/propose_initial_split",
+            token=session.access_token,
+            body={
+                "p_allocations": list(allocations or []),
+                "p_reason": str(reason or "").strip(),
+                "p_closes_at": closes_at,
+            },
+        )
+
+    def create_equity_motion(self, session, kind, payload, reason="",
+                             closes_at=None):
+        return _request(
+            "POST", "/rest/v1/rpc/create_equity_motion",
+            token=session.access_token,
+            body={
+                "p_kind": str(kind or ""),
+                "p_payload": dict(payload or {}),
+                "p_reason": str(reason or "").strip(),
+                "p_closes_at": closes_at,
+            },
+        )
+
+    def cast_equity_vote(self, session, motion_id, choice):
+        return _request(
+            "POST", "/rest/v1/rpc/cast_equity_vote",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_choice": str(choice)},
+        )
+
+    def cancel_equity_motion(self, session, motion_id, reason=""):
+        return _request(
+            "POST", "/rest/v1/rpc/cancel_equity_motion",
+            token=session.access_token,
+            body={"p_motion": str(motion_id), "p_reason": str(reason or "")},
+        )
+
+    def grant_employee_equity(self, session, profile_id, units,
+                              vesting_start=None):
+        return _request(
+            "POST", "/rest/v1/rpc/grant_employee_equity",
+            token=session.access_token,
+            body={
+                "p_profile": str(profile_id),
+                "p_units": float(units),
+                "p_vesting_start": vesting_start,
+            },
+        )
+
     # ------------------------------------------------------ enterprise identity
     def identity_state(self, session):
         """Return the current enterprise, member roles, shares and motions."""

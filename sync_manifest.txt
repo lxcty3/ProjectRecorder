@@ -140,3 +140,4 @@ mobile/meeting.js
 mobile/www/meeting.js
 mobile/sql/shareholder-meetings-v1.sql
 mobile/sql/community-forum-v1.sql
+mobile/sql/organization-founders-v1.sql
