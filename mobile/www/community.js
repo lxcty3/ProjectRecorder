@@ -87,13 +87,17 @@ async function hydrateCommunityAuthors(rows) {
       const result = await cloudClient.rpc("get_community_author_cards", {
         p_profiles: missing,
       });
-      if (!result.error) {
+      if (result.error) {
+        console.warn("社区作者卡加载失败", result.error.message || result.error);
+      } else {
         const authors = result.data && result.data.authors;
         (Array.isArray(authors) ? authors : []).forEach(item => {
           communityAuthorCardCache[String(item.profile_id)] = item;
         });
       }
-    } catch (_) {}
+    } catch (error) {
+      console.warn("社区作者卡加载失败", error.message || error);
+    }
   }
   list.forEach(item => {
     const card = communityAuthorCard(item.author_id);

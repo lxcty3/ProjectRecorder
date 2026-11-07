@@ -37,14 +37,18 @@ begin
           from public.enterprise_members m
           join public.enterprises e on e.id=m.enterprise_id
           left join lateral (
-            select a.role_key
+            select t.key role_key,t.name role_name,ar.rank role_rank
               from public.enterprise_role_assignments a
-              join public.enterprise_role_catalog ar on ar.key=a.role_key
+              join public.enterprise_role_template_versions tv
+                on tv.id=a.template_version_id
+              join public.enterprise_role_templates t
+                on t.id=tv.template_id
+              join public.enterprise_role_catalog ar on ar.key=t.key
              where a.enterprise_id=m.enterprise_id
                and a.profile_id=p.id and a.status='active'
                and a.starts_at<=now()
                and (a.ends_at is null or a.ends_at>now())
-             order by ar.rank desc
+             order by ar.rank desc,t.name
              limit 1
           ) assigned on true
           join public.enterprise_role_catalog r
