@@ -126,6 +126,40 @@
       font-size: 10px;
       letter-spacing: .04em;
     }
+    .preview-tools {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .preview-tools button {
+      border: 1px solid rgba(221,190,122,.28);
+      border-radius: 999px;
+      background: rgba(255,255,255,.06);
+      color: #d7e4de;
+      padding: 7px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .preview-tools button.on {
+      background: #4b9b8d;
+      border-color: #89c9b9;
+      color: #fff;
+    }
+    body.desktop .phone {
+      width: min(1240px, 94vw);
+      height: min(780px, calc(100vh - 120px));
+      padding: 0;
+      border-radius: 16px;
+      background: #14211e;
+    }
+    body.desktop .phone::before,
+    body.desktop .phone::after { display: none; }
+    body.desktop iframe {
+      width: 100%;
+      height: 100%;
+      border-radius: 16px;
+      transform: none;
+    }
     @media (prefers-reduced-motion: no-preference) {
       .phone { animation: settle .55s cubic-bezier(.22,1,.36,1) both; }
       @keyframes settle {
@@ -137,12 +171,28 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="caption"><b>工作冒险手账</b> · 手机界面预览</div>
+    <div class="caption"><b>工作冒险手账</b> · 界面预览</div>
+    <div class="preview-tools">
+      <button type="button" data-preview-mode="mobile" class="on">手机预览</button>
+      <button type="button" data-preview-mode="desktop">桌面预览</button>
+    </div>
     <div class="phone">
-      <iframe src="./?v=mobile-four-tabs-live" title="项目记录器手机版"></iframe>
+      <iframe src="./?v=community-identity-v1" title="项目记录器手机版"></iframe>
     </div>
     <div class="hint">在手机尺寸下查看真实交互</div>
   </div>
+  <script>
+    document.querySelectorAll("[data-preview-mode]").forEach(button => {
+      button.onclick = () => {
+        const mode = button.dataset.previewMode;
+        document.body.classList.toggle("desktop", mode === "desktop");
+        document.querySelectorAll("[data-preview-mode]").forEach(item => {
+          item.classList.toggle("on", item === button);
+        });
+      };
+    });
+  </script>
 </body>
 </html>
+
 
