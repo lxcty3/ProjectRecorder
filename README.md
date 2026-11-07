@@ -154,6 +154,7 @@ mobile/sql/enterprise-identity.sql
 mobile/sql/community.sql
 mobile/sql/community-forum-v1.sql
 mobile/sql/organization-founders-v1.sql
+mobile/sql/platform-stability-v1.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql
 mobile/sql/decision-approvals-v1.sql

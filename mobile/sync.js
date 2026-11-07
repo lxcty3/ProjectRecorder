@@ -1566,6 +1566,24 @@ async function pushDimensionQueue() {
   return { pushed: done.length, failed: failed };
 }
 
+async function ensureFreshCloudSession() {
+  if (!cloudClient || !DB.profile) return false;
+  try {
+    const current = await cloudClient.auth.getSession();
+    if (current.error) return false;
+    const session = current.data && current.data.session;
+    if (!session) return false;
+    const expiresAt = Number(session.expires_at || 0);
+    if (expiresAt && expiresAt - Math.floor(Date.now() / 1000) < 300) {
+      const refreshed = await cloudClient.auth.refreshSession();
+      return !refreshed.error && !!(refreshed.data && refreshed.data.session);
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function syncNow(reason) {
   /* 已经有同步在跑：等它，而不是返回中间状态 */
   if (syncInFlight) {
@@ -1591,6 +1609,16 @@ async function syncNow(reason) {
 
   syncInFlight = (async () => {
     syncBusy = 1;
+    const sessionFresh = await ensureFreshCloudSession();
+    if (!sessionFresh) {
+      DB.lastSync = {
+        at: nowISO(), ok: false, pending: pendingCount(),
+        message: "登录已过期，请重新登录后同步",
+      };
+      _save();
+      emitSync(syncStatus());
+      return syncStatus();
+    }
     emitSync(syncStatus());
     try {
       syncBusy = 2;

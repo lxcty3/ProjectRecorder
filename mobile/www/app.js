@@ -19,6 +19,33 @@ window.addEventListener("error", event => {
     || event.message || String(event));
 });
 
+async function runSystemDiagnosis() {
+  const box = $("system-health-result");
+  if (!box) return;
+  if (!DB.profile) { box.textContent = "请先登录账号。"; return; }
+  if (!initCloud()) { box.textContent = "云组件未加载，无法运行诊断。"; return; }
+  box.textContent = "正在检查账号、数据库和功能迁移…";
+  try {
+    await ensureFreshCloudSession();
+    const { data, error } = await cloudClient.rpc("get_platform_health");
+    if (error) throw error;
+    const checks = Array.isArray(data && data.checks) ? data.checks : [];
+    const failed = checks.filter(item => !item.ok);
+    const migrations = Array.isArray(data && data.migrations) ? data.migrations.length : 0;
+    box.innerHTML = (failed.length
+      ? '<div class="banner bad">缺少 ' + failed.length + ' 项数据库功能，请检查 SQL 迁移。</div>'
+      : '<div class="banner good">账号、数据库和核心功能检查通过。</div>')
+      + '<div class="meta" style="margin-top:8px">已登记迁移 ' + migrations
+      + ' 项 · 服务器时间 ' + escapeHtml(String(data && data.server_time || "")) + '</div>'
+      + checks.map(item => '<div class="today-ledger-row"><div><b>'
+        + escapeHtml(item.label || item.key) + '</b></div><strong>'
+        + (item.ok ? "正常" : "缺失") + '</strong></div>').join("");
+  } catch (error) {
+    box.innerHTML = '<div class="banner bad">诊断失败：'
+      + escapeHtml(String(error.message || error)) + '</div>';
+  }
+}
+
 function showBootError(title, detail) {
   const box = document.getElementById("boot-error");
   box.innerHTML = "<b>" + escapeHtml(title) + "</b>"
@@ -646,6 +673,7 @@ function bindGlobalEvents() {
         : (status.pending ? `还有 ${status.pending} 条待上传` : "已同步"));
     });
   };
+  $("btn-system-diagnose").onclick = runSystemDiagnosis;
   $("btn-me-logout").onclick = logout;
   /* 账号管理。两种身份都要用，所以放在 me-boss-extras 外面。 */
   $("btn-me-password").onclick = openChangePassword;
