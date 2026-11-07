@@ -469,6 +469,11 @@ function bindCommunityToolbar() {
     loadMore.dataset.bound = "1";
     $("btn-community-load-more").onclick = () => loadCommunityPosts(false, true);
   }
+  const profileButton = $("btn-community-profile");
+  if (profileButton && profileButton.dataset.bound !== "1") {
+    profileButton.dataset.bound = "1";
+    $("btn-community-profile").onclick = openCommunityProfileEditor;
+  }
   const boardSelect = $("community-board-select");
   if (boardSelect && boardSelect.dataset.bound !== "1") {
     boardSelect.dataset.bound = "1";
@@ -945,4 +950,42 @@ function ensureCommunitySubscription() {
   } catch (error) {
     communityChannel = null;
   }
+}
+
+
+async function openCommunityProfileEditor() {
+  if (!DB.profile || !initCloud()) return;
+  try {
+    const { data, error } = await cloudClient.rpc("get_my_community_profile");
+    if (error) throw error;
+    const profile = data || {};
+    openSheet("我的社区身份", `
+      <label for="community-alias">社区昵称</label>
+      <input id="community-alias" maxlength="20" value="${communityEscape(profile.alias_name || "")}">
+      <label for="community-avatar">头像图片地址</label>
+      <input id="community-avatar" value="${communityEscape(profile.avatar_url || "")}" placeholder="https://...">
+      <label for="community-bio">个人简介</label>
+      <textarea id="community-bio" maxlength="300">${communityEscape(profile.bio || "")}</textarea>
+      <label for="community-signature">个性签名</label>
+      <input id="community-signature" maxlength="120" value="${communityEscape(profile.signature || "")}">
+      <div class="hint">公开区域只显示昵称和头像，真实姓名不会展示。昵称每 30 天最多修改一次。</div>
+    `, [
+      { label: "取消", onClick: closeSheet },
+      { label: "保存身份", onClick: async () => {
+        try {
+          const result = await cloudClient.rpc("update_community_profile", {
+            p_alias: ($("community-alias") || {}).value || "",
+            p_avatar_url: ($("community-avatar") || {}).value || "",
+            p_bio: ($("community-bio") || {}).value || "",
+            p_signature: ($("community-signature") || {}).value || "",
+          });
+          if (result.error) throw result.error;
+          closeSheet();
+          communityLastLoad = 0;
+          await loadCommunityPosts(true);
+          toast("社区身份已更新");
+        } catch (error) { toast(communityErrorText(error)); }
+      }},
+    ]);
+  } catch (error) { toast(communityErrorText(error)); }
 }
