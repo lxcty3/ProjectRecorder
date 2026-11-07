@@ -290,7 +290,7 @@ function enableNavDrag() {
 function makeNavScrollable() {
   ["page-today", "page-decisions", "page-operations", "page-execution", "page-intake",
    "page-dash", "page-team",
-   "page-assist", "page-identity", "page-tasks", "page-community",
+   "page-assist", "page-identity", "page-companies", "page-tasks", "page-community",
    "page-me"].forEach(id => {
     $(id).classList.add("has-nav");
   });
@@ -300,7 +300,7 @@ function makeNavScrollable() {
 /*: 所有页面。加新页面必须登记在这里——
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
 const PAGES = ["login", "today", "decisions", "operations", "execution", "intake", "dash",
-               "project", "tasks", "team", "assist", "identity",
+               "project", "tasks", "team", "assist", "identity", "companies",
                "community", "assign", "staff", "me"];
 
 function showPage(name) {
@@ -308,7 +308,7 @@ function showPage(name) {
   PAGES.forEach(key => {
     $("page-" + key).classList.toggle("hidden", key !== target);
   });
-  const morePages = ["dash", "team", "assist", "identity", "community", "today", "me"];
+  const morePages = ["dash", "team", "assist", "identity", "companies", "community", "today", "me"];
   document.querySelectorAll("#nav button").forEach(button => {
     const isMore = button.dataset.page === "more" && morePages.indexOf(target) !== -1;
     button.classList.toggle("on", button.dataset.page === target || isMore);
@@ -357,6 +357,7 @@ function showPage(name) {
     if (typeof refreshIdentity === "function") refreshIdentity(false);
     if (typeof loadShareholderMeetings === "function") loadShareholderMeetings(false);
   }
+  if (target === "companies") renderMyCompanies();
   if (target === "community") renderCommunity();
   if (target === "me") renderMe();
   if (target === "login") renderLogin();
@@ -642,7 +643,7 @@ function closeSheet() {
 
 function openNavMore() {
   const items = [
-    ["shares", "股份"], ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
+    ["shares", "股份"], ["companies", "我的公司"], ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
     ["identity", "治理"], ["community", "星球"],
     ["today", "今天"], ["me", "我的"],
   ];
@@ -667,6 +668,10 @@ function openNavMore() {
 }
 
 function bindGlobalEvents() {
+  if ($("btn-my-companies-refresh")) {
+    $("btn-my-companies-refresh").onclick = () => loadMyCompanies(true);
+  }
+
   if ($("btn-check-update")) {
     $("btn-check-update").onclick = () => checkForAppUpdate(true);
   }

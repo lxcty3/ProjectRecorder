@@ -27,7 +27,7 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "today.js",
+               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js",
                "app.js"];
@@ -5115,6 +5115,9 @@ test("阶段一：主公司、公司邀请、今日四块和版本检查完整�
   ]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
+  for (const id of ["page-companies", "my-company-primary", "my-company-list", "my-company-people"]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
   const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
   for (const marker of [
     "get_primary_company", "set_primary_company",
@@ -5126,6 +5129,15 @@ test("阶段一：主公司、公司邀请、今日四块和版本检查完整�
   const update = fs.readFileSync(path.join(HERE, "update.js"), "utf8");
   if (update.indexOf("latest.json") === -1 || update.indexOf("versionCode") === -1) {
     throw new Error("版本检查没有接上 latest.json");
+  }
+  const companies = fs.readFileSync(path.join(HERE, "companies.js"), "utf8");
+  for (const marker of ["get_my_companies", "get_company_people", "data-company-primary"]) {
+    if (companies.indexOf(marker) === -1) throw new Error(`我的公司缺少 ${marker}`);
+  }
+  const companiesSql = fs.readFileSync(
+    path.join(HERE, "sql", "phase1-my-companies-v1.sql"), "utf8");
+  for (const marker of ["get_my_companies", "get_company_people", "can_view_sensitive"]) {
+    if (companiesSql.indexOf(marker) === -1) throw new Error(`我的公司 SQL 缺少 ${marker}`);
   }
   const sql = fs.readFileSync(
     path.join(HERE, "sql", "phase1-primary-company-member-invites-v1.sql"), "utf8");

@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="项目记录器">
 <title>项目记录器</title>
-<link rel="stylesheet" href="style.css?v=20261107-phase1-1">
+<link rel="stylesheet" href="style.css?v=20261107-companies-1">
 </head>
 <body>
 
@@ -410,6 +410,32 @@
   </div>
 </section>
 
+<!-- ====================== 我的公司 ====================== -->
+<section id="page-companies" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>我的公司</h1>
+      <div class="sub" id="my-companies-sub">主公司与其他成员关系</div>
+    </div>
+    <button class="icon-btn" id="btn-my-companies-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div id="my-company-primary"></div>
+
+    <div class="section-head"><span>我加入的公司</span>
+      <span class="meta">主公司必须保留</span></div>
+    <div id="my-company-list"></div>
+
+    <div class="section-head"><span>公司成员</span>
+      <span class="meta" id="my-company-people-count"></span></div>
+    <div id="my-company-people"></div>
+
+    <div class="community-note">
+      成员信息按权限分级显示。普通成员只看到角色、部门和职务；管理身份才显示账号、持股和成员状态。
+    </div>
+  </div>
+</section>
+
 <!-- ====================== 经营决策（高级管理） ====================== -->
 <section id="page-decisions" class="page hidden">
   <div class="topbar">
@@ -799,15 +825,16 @@
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
 <script src="meeting.js?v=20261107-phase1-1"></script>
-<script src="update.js?v=20261107-phase1-1"></script>
-<script src="identity.js?v=20261107-phase1-1"></script>
+<script src="update.js?v=20261107-companies-1"></script>
+<script src="identity.js?v=20261107-companies-1"></script>
+<script src="companies.js?v=20261107-companies-1"></script>
 <script src="today.js"></script>
 <script src="decision.js"></script>
 <script src="operations.js"></script>
 <script src="execution.js"></script>
 <script src="intake.js"></script>
-<script src="account.js?v=20261107-phase1-1"></script>
+<script src="account.js?v=20261107-companies-1"></script>
 <script src="community.js"></script>
-<script src="app.js?v=20261107-phase1-1"></script>
+<script src="app.js?v=20261107-companies-1"></script>
 </body>
 </html>
