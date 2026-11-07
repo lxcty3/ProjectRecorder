@@ -71,9 +71,12 @@ function communityAuthorAvatarHtml(profileId, name, role) {
 
 function communityAuthorRoleText(profileId, fallbackRole) {
   const card = communityAuthorCard(profileId);
-  if (card && card.primary_company_name) {
-    return card.primary_company_name + " · "
-      + (card.role_name || card.role_key || communityRoleLabel(fallbackRole));
+  const companyName = card && (card.company_name || card.primary_company_name);
+  if (companyName) {
+    const roleText = card.role_key && typeof identityRoleLabel === "function"
+      ? identityRoleLabel(card.role_key)
+      : (card.role_name || card.role_key || communityRoleLabel(fallbackRole));
+    return companyName + " · " + roleText;
   }
   return communityRoleLabel(fallbackRole);
 }
