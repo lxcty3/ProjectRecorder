@@ -99,7 +99,10 @@ function renderMyCompanies() {
     peopleBox.innerHTML = '<div class="identity-empty"><b>选择一家公司</b><span>点击上面的「查看」读取你有权限看到的成员信息。</span></div>';
   } else {
     const access = myCompaniesState.access || {};
-    peopleBox.innerHTML = `<div class="hint" style="margin-bottom:10px">${escapeHtml(access.message || "成员信息按权限显示")}</div>`
+    const accessMessage = access.full
+      ? "可查看成员角色、部门、账号、成员状态和持股信息"
+      : "只显示成员的公开角色、部门和职务";
+    peopleBox.innerHTML = `<div class="hint" style="margin-bottom:10px">${escapeHtml(accessMessage)}</div>`
       + (people.length ? people.map(person => `
         <div class="identity-member">
           <div class="identity-member-main">
