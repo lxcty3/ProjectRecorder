@@ -638,7 +638,7 @@ function closeSheet() {
 
 function openNavMore() {
   const items = [
-    ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
+    ["shares", "股份"], ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
     ["identity", "治理"], ["community", "星球"],
     ["today", "今天"], ["me", "我的"],
   ];
@@ -652,8 +652,13 @@ function openNavMore() {
   $("nav-more-grid").onclick = event => {
     const button = event.target.closest("[data-more-page]");
     if (!button) return;
+    const page = button.dataset.morePage;
     closeSheet();
-    showPage(button.dataset.morePage);
+    if (page === "shares") {
+      if (typeof openShareDashboard === "function") openShareDashboard();
+      return;
+    }
+    showPage(page);
   };
 }
 

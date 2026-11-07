@@ -5000,7 +5000,8 @@ test("企业治理：今日工位存在", () => {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
   for (const script of ["today.js", "identity.js"]) {
-    if (html.indexOf(`src="${script}"`) === -1) {
+    const loaded = new RegExp(`src="${script.replace(".", "\\.")}(?:\\?[^"]*)?"`).test(html);
+    if (!loaded) {
       throw new Error(`index.html 没有加载 ${script}`);
     }
   }
@@ -5081,6 +5082,29 @@ test("组织股权：创始人、1.1 权重和解散规则完整接线", () => {
       throw new Error("组织股权缺少接线：" + marker);
     }
   }
+});
+
+test("组织管理：改名、添加成员和股份板块完整接线", () => {
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  const sql = fs.readFileSync(path.join(HERE, "sql", "organization-management-v1.sql"), "utf8");
+  for (const marker of [
+    "rename_organization", "add_organization_member",
+    "btn-org-rename", "btn-org-add-member", "openShareDashboard",
+  ]) {
+    if (!identity.includes(marker) && !app.includes(marker)) {
+      throw new Error("组织管理缺少接线：" + marker);
+    }
+  }
+  for (const marker of [
+    "rename_organization", "add_organization_member",
+    "security definer", "organization.renamed", "organization.member_added",
+  ]) {
+    if (!sql.toLowerCase().includes(marker)) {
+      throw new Error("组织管理 SQL 缺少：" + marker);
+    }
+  }
+  if (!app.includes('["shares", "股份"]')) throw new Error("更多菜单缺少股份板块");
 });
 
 test("企业治理：积分与模式有本地缓存", () => {
