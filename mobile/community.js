@@ -953,25 +953,124 @@ function ensureCommunitySubscription() {
 }
 
 
+function communityProfileAvatarMarkup(url, name) {
+  const safeUrl = String(url || "").trim();
+  if (safeUrl) {
+    return `<img src="${communityEscape(safeUrl)}" alt="">`;
+  }
+  return `<span>${communityEscape(String(name || "社").slice(0, 1))}</span>`;
+}
+
+function refreshCommunityProfilePreview() {
+  const alias = String(($("community-alias") || {}).value || "社区成员");
+  const signature = String(($("community-signature") || {}).value || "");
+  const avatar = String(($("community-avatar") || {}).value || "");
+  const preview = $("community-profile-avatar-preview");
+  const name = $("community-profile-name-preview");
+  const sign = $("community-profile-sign-preview");
+  if (preview) preview.innerHTML = communityProfileAvatarMarkup(avatar, alias);
+  if (name) name.textContent = alias || "社区成员";
+  if (sign) sign.textContent = signature || "还没有个性签名";
+}
+
+function communityProfileImageData(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type || "")) {
+      reject(new Error("请选择图片文件"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("图片格式无法识别"));
+      image.onload = () => {
+        const size = 320;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const scale = Math.max(size / image.width, size / image.height);
+        const width = image.width * scale;
+        const height = image.height * scale;
+        ctx.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+        resolve(canvas.toDataURL("image/jpeg", .84));
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function openCommunityProfileEditor() {
   if (!DB.profile || !initCloud()) return;
   try {
     const { data, error } = await cloudClient.rpc("get_my_community_profile");
     if (error) throw error;
     const profile = data || {};
-    openSheet("我的社区身份", `
-      <label for="community-alias">社区昵称</label>
-      <input id="community-alias" maxlength="20" value="${communityEscape(profile.alias_name || "")}">
-      <label for="community-avatar">头像图片地址</label>
-      <input id="community-avatar" value="${communityEscape(profile.avatar_url || "")}" placeholder="https://...">
-      <label for="community-bio">个人简介</label>
-      <textarea id="community-bio" maxlength="300">${communityEscape(profile.bio || "")}</textarea>
-      <label for="community-signature">个性签名</label>
-      <input id="community-signature" maxlength="120" value="${communityEscape(profile.signature || "")}">
-      <div class="hint">公开区域只显示昵称和头像，真实姓名不会展示。昵称每 30 天最多修改一次。</div>
+    const alias = profile.alias_name || (DB.profile && DB.profile.name) || "社区成员";
+    const signature = profile.signature || "";
+    const avatar = profile.avatar_url || "";
+    const shortId = String((DB.profile && DB.profile.id) || "").replace(/-/g, "").slice(0, 8).toUpperCase() || "—";
+
+    openSheet("账号资料", `
+      <div class="community-profile-editor">
+        <div class="community-profile-hero">
+          <div class="community-profile-avatar-preview" id="community-profile-avatar-preview">
+            ${communityProfileAvatarMarkup(avatar, alias)}
+          </div>
+          <div class="community-profile-hero-copy">
+            <b id="community-profile-name-preview">${communityEscape(alias)}</b>
+            <span id="community-profile-sign-preview">${communityEscape(signature || "还没有个性签名")}</span>
+            <small>社区 ID · ${communityEscape(shortId)}</small>
+          </div>
+        </div>
+
+        <div class="community-account-list">
+          <label class="community-account-row community-account-avatar-row">
+            <span>头像</span>
+            <div class="community-account-row-value">
+              <span>从相册选择</span><i>›</i>
+            </div>
+            <input type="file" id="community-avatar-file" accept="image/*" hidden>
+          </label>
+
+          <label class="community-account-row">
+            <span>社区昵称</span>
+            <input id="community-alias" maxlength="20" value="${communityEscape(profile.alias_name || alias)}" placeholder="设置社区昵称">
+            <i>›</i>
+          </label>
+
+          <div class="community-account-row">
+            <span>社区 ID</span>
+            <strong>${communityEscape(shortId)}</strong>
+          </div>
+
+          <label class="community-account-row">
+            <span>头像地址</span>
+            <input id="community-avatar" value="${communityEscape(profile.avatar_url || "")}" placeholder="https://...">
+            <i>›</i>
+          </label>
+
+          <label class="community-account-row">
+            <span>个性签名</span>
+            <input id="community-signature" maxlength="120" value="${communityEscape(profile.signature || "")}" placeholder="写一句状态或原则">
+            <i>›</i>
+          </label>
+
+          <label class="community-account-row community-account-bio-row">
+            <span>个人简介</span>
+            <textarea id="community-bio" maxlength="300" placeholder="介绍一下你的经验、关注方向或当前目标">${communityEscape(profile.bio || "")}</textarea>
+          </label>
+        </div>
+
+        <div class="community-profile-note">
+          公开区域只显示社区昵称和头像，真实姓名不会展示。昵称每 30 天最多修改一次。
+        </div>
+      </div>
     `, [
       { label: "取消", onClick: closeSheet },
-      { label: "保存身份", onClick: async () => {
+      { label: "保存资料", onClick: async () => {
         try {
           const result = await cloudClient.rpc("update_community_profile", {
             p_alias: ($("community-alias") || {}).value || "",
@@ -983,9 +1082,29 @@ async function openCommunityProfileEditor() {
           closeSheet();
           communityLastLoad = 0;
           await loadCommunityPosts(true);
-          toast("社区身份已更新");
+          toast("社区资料已更新");
         } catch (error) { toast(communityErrorText(error)); }
       }},
     ]);
+
+    ["community-alias", "community-signature", "community-avatar"].forEach(id => {
+      const input = $(id);
+      if (input) input.addEventListener("input", refreshCommunityProfilePreview);
+    });
+    const pick = $("community-avatar-file");
+    if (pick) {
+      pick.onchange = async () => {
+        const file = pick.files && pick.files[0];
+        if (!file) return;
+        try {
+          const dataUrl = await communityProfileImageData(file);
+          if ($("community-avatar")) $("community-avatar").value = dataUrl;
+          refreshCommunityProfilePreview();
+          toast("头像已准备好，保存资料后生效");
+        } catch (error) {
+          toast(error.message || "头像处理失败");
+        }
+      };
+    }
   } catch (error) { toast(communityErrorText(error)); }
 }

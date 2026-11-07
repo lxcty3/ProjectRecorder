@@ -3927,3 +3927,152 @@ nav.nav-dragging button {
 @supports not (background: color-mix(in srgb, red 50%, blue)) {
   .nav-scroll-cue { background: var(--game-paper); }
 }
+
+/* Community account profile: compact account-sheet layout. */
+.community-profile-editor {
+  display: grid;
+  gap: 14px;
+}
+.community-profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 112px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 88% 16%, var(--accent-wash), transparent 44%),
+    linear-gradient(145deg, var(--game-paper), var(--panel));
+}
+.community-profile-avatar-preview {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border: 3px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent-dim);
+  font-size: 28px;
+  font-weight: 700;
+  box-shadow: 0 8px 18px rgba(27, 52, 45, .13);
+}
+.community-profile-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.community-profile-hero-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.community-profile-hero-copy b {
+  color: var(--fg-strong);
+  font-size: 20px;
+}
+.community-profile-hero-copy span {
+  overflow: hidden;
+  color: var(--fg-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.community-profile-hero-copy small {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+}
+.community-account-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.community-account-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--fg);
+}
+.community-account-row:last-child { border-bottom: 0; }
+.community-account-row > span {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+.community-account-row input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  text-align: right;
+}
+.community-account-row input::placeholder { color: var(--fg-faint); }
+.community-account-row > strong {
+  color: var(--fg-soft);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
+}
+.community-account-row > i {
+  color: var(--fg-faint);
+  font-size: 19px;
+  font-style: normal;
+  text-align: right;
+}
+.community-account-row:focus-within {
+  background: var(--accent-wash);
+}
+.community-account-avatar-row {
+  cursor: pointer;
+}
+.community-account-avatar-row input[type="file"] {
+  display: none;
+}
+.community-account-row-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  color: var(--fg-soft);
+  font-size: 12px;
+}
+.community-account-bio-row {
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: start;
+}
+.community-account-bio-row textarea {
+  width: 100%;
+  min-height: 78px;
+  padding: 4px 0;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  background: transparent;
+  color: var(--fg-soft);
+  font: inherit;
+  line-height: 1.6;
+  text-align: right;
+}
+.community-profile-note {
+  padding: 10px 4px 0;
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.55;
+}
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .community-profile-avatar-preview { border-color: var(--accent-edge); }
+}
