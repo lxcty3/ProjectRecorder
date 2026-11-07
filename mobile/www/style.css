@@ -1693,6 +1693,14 @@ input[type="date"], input[type="number"] {
 }
 .community-avatar.boss { background: var(--accent); }
 .community-avatar.staff { background: #8fa487; }
+.community-avatar,
+.community-comment-avatar { overflow: hidden; }
+.community-avatar img,
+.community-comment-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .community-author-row {
   display: flex;
   align-items: center;

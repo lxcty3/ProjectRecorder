@@ -27,6 +27,7 @@ let communitySeenNotifications = new Set();
 let communityNotificationTimer = null;
 let communityAdminEditing = "";
 let communityAdminStats = null;
+let communityAuthorCardCache = {};
 
 function communityEscape(value) {
   return escapeHtml(String(value == null ? "" : value));
@@ -49,6 +50,60 @@ function communityTime(value) {
 
 function communityRoleLabel(role) {
   return role === "boss" ? "老板" : "成员";
+}
+
+function communityAuthorCard(profileId) {
+  return communityAuthorCardCache[String(profileId || "")] || null;
+}
+
+function communityAuthorAvatarHtml(profileId, name, role) {
+  const card = communityAuthorCard(profileId) || {};
+  const url = String(card.avatar_url || "").trim();
+  const className = role === "boss" ? "boss" : "staff";
+  if (url) {
+    return '<span class="community-avatar ' + className + ' has-image">'
+      + '<img src="' + communityEscape(url) + '" alt=""></span>';
+  }
+  return '<span class="community-avatar ' + className + '">'
+    + communityEscape(String(name || "成").slice(0, 1)) + '</span>';
+}
+
+function communityAuthorRoleText(profileId, fallbackRole) {
+  const card = communityAuthorCard(profileId);
+  if (card && card.primary_company_name) {
+    return card.primary_company_name + " · "
+      + (card.role_name || card.role_key || communityRoleLabel(fallbackRole));
+  }
+  return communityRoleLabel(fallbackRole);
+}
+
+async function hydrateCommunityAuthors(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const ids = Array.from(new Set(list.map(item => String(item.author_id || ""))
+    .filter(Boolean)));
+  const missing = ids.filter(id => !communityAuthorCardCache[id]);
+  if (missing.length && initCloud()) {
+    try {
+      const result = await cloudClient.rpc("get_community_author_cards", {
+        p_profiles: missing,
+      });
+      if (!result.error) {
+        const authors = result.data && result.data.authors;
+        (Array.isArray(authors) ? authors : []).forEach(item => {
+          communityAuthorCardCache[String(item.profile_id)] = item;
+        });
+      }
+    } catch (_) {}
+  }
+  list.forEach(item => {
+    const card = communityAuthorCard(item.author_id);
+    if (!card) return;
+    item.author_avatar_url = card.avatar_url || "";
+    item.author_primary_company_name = card.company_name || "";
+    item.author_role_key = card.role_key || "";
+    item.author_role_name = card.role_name || "";
+  });
+  return list;
 }
 
 function communityCurrentBoardRow() {
@@ -252,9 +307,13 @@ function communityPostTags(post) {
 }
 
 function communityCommentHtml(postId, comment) {
+  const commentCard = communityAuthorCard(comment.author_id) || {};
+  const commentAvatar = String(commentCard.avatar_url || "").trim();
   return '<div class="community-comment" data-comment-id="' + communityEscape(comment.id) + '">'
-    + '<span class="community-comment-avatar">'
-    + communityEscape(String(comment.author_name || "成").slice(0, 1)) + "</span>"
+    + '<span class="community-comment-avatar' + (commentAvatar ? ' has-image' : '') + '">'
+    + (commentAvatar
+      ? '<img src="' + communityEscape(commentAvatar) + '" alt="">'
+      : communityEscape(String(comment.author_name || "成").slice(0, 1))) + "</span>"
     + '<div><div class="community-comment-head"><b>'
     + communityEscape(comment.author_name || "成员") + "</b><span>"
     + communityTime(comment.created_at) + "</span></div><p>"
@@ -301,11 +360,12 @@ function renderCommunityPost(post) {
       + (post.featured ? "1" : "0") + '">管理</button>'
     : "";
   return '<article class="community-post" data-post-id="' + communityEscape(post.id) + '">'
-    + '<div class="community-post-head"><span class="community-avatar '
-    + (post.author_role === "boss" ? "boss" : "staff") + '">' + initial + "</span>"
+    + '<div class="community-post-head">' + communityAuthorAvatarHtml(
+      post.author_id, post.author_name, post.author_role)
     + '<div class="grow"><div class="community-author-row"><b>'
     + communityEscape(post.author_name || "成员") + "</b>"
-    + '<span class="community-role">' + communityRoleLabel(post.author_role)
+    + '<span class="community-role">' + communityEscape(
+      communityAuthorRoleText(post.author_id, post.author_role))
     + "</span>" + communityPostTags(post) + (mine ? '<span class="community-mine">我</span>' : "")
     + '</div><div class="community-meta">' + communityEscape(post.topic || "分享")
     + " · " + communityTime(post.created_at) + "</div></div>"
@@ -551,6 +611,7 @@ async function loadCommunityPosts(force, append) {
     if (result.error) throw result.error;
     const data = result.data || {};
     const rows = Array.isArray(data.posts) ? data.posts : [];
+    await hydrateCommunityAuthors(rows);
     communityPosts = append ? communityPosts.concat(rows) : rows;
     communityCursor = data.next_cursor || null;
     communityHasMore = !!data.has_more;
@@ -681,7 +742,10 @@ async function openCommunityComments(postId) {
   try {
     const result = await cloudClient.rpc("get_community_post", { p_post: postId });
     if (result.error) throw result.error;
-    communityCommentCache[postId] = result.data || {};
+    const detail = result.data || {};
+    await hydrateCommunityAuthors([detail].concat(
+      Array.isArray(detail.comments) ? detail.comments : []));
+    communityCommentCache[postId] = detail;
     renderCommunityCommentBox(postId);
   } catch (error) {
     box.innerHTML = communityEmpty("评论没有加载出来", communityErrorText(error));
@@ -708,7 +772,12 @@ async function submitCommunityComment(postId) {
     if (result.error) throw result.error;
     delete communityReplyParent[postId];
     const detail = await cloudClient.rpc("get_community_post", { p_post: postId });
-    if (!detail.error) communityCommentCache[postId] = detail.data || {};
+    if (!detail.error) {
+      const payload = detail.data || {};
+      await hydrateCommunityAuthors([payload].concat(
+        Array.isArray(payload.comments) ? payload.comments : []));
+      communityCommentCache[postId] = payload;
+    }
     renderCommunityCommentBox(postId);
     communityLastLoad = 0;
     await loadCommunityPosts(true);

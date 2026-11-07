@@ -5057,7 +5057,7 @@ test("社区 v2.1：板块、评论、通知和审核完整接线", () => {
   const markup = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
   for (const marker of [
     "get_community_boards", "list_community_posts_v2",
-    "get_community_post", "add_community_comment",
+    "get_community_author_cards", "get_community_post", "add_community_comment",
     "toggle_community_like", "toggle_community_bookmark",
     "report_community_content", "get_community_notifications",
     "create_community_board", "moderate_community_post",

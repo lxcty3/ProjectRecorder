@@ -63,6 +63,8 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 
 v2.1 社区底座是在旧社区表上的增量升级。安装完 `community.sql` 后，再运行 [`mobile/sql/community-forum-v1.sql`](mobile/sql/community-forum-v1.sql)。它会增加板块、评论、点赞、收藏、举报、关注、通知、搜索、分页、板块管理和社区数据统计；旧帖子会自动迁入「综合讨论」，旧 RPC 继续保留以便回滚。
 
+社区作者头像和主公司职业由 [`mobile/sql/community-author-cards-v1.sql`](mobile/sql/community-author-cards-v1.sql) 提供。帖子与评论显示作者设置的社区头像，并优先显示主公司的最高职级职业。
+
 #### 我的知识库（本地）
 
 把个人散落的经验、直觉、失败和客户反馈，做成一张会生长的认知地图。
