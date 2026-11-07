@@ -477,9 +477,6 @@ function applyRoleUI() {
   if ($("nav-execution")) {
     $("nav-execution").classList.toggle("hidden", !profile);
   }
-  if ($("nav-execution-simple")) {
-    $("nav-execution-simple").classList.toggle("hidden", !profile);
-  }
   if (profile && currentPageName() === "operations" && !management) {
     showPage(advanced ? "dash" : "today");
   }

@@ -3871,3 +3871,20 @@ nav button.on::after {
   font-size: 10px;
   white-space: pre-wrap;
 }
+
+
+/* Four primary navigation slots; additional advanced entries scroll horizontally. */
+nav {
+  overflow-x: auto;
+  overflow-y: hidden;
+  justify-content: flex-start;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+nav::-webkit-scrollbar { display: none; }
+nav button {
+  flex: 0 0 25%;
+  min-width: 25%;
+}
+nav .nav-badge { pointer-events: none; }
