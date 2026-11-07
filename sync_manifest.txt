@@ -139,6 +139,7 @@ tests/test_meeting_docs.py
 mobile/meeting.js
 mobile/www/meeting.js
 mobile/sql/shareholder-meetings-v1.sql
+mobile/sql/shareholder-meeting-verification-v1.sql
 mobile/sql/community-forum-v1.sql
 mobile/sql/organization-founders-v1.sql
 mobile/sql/organization-management-v1.sql

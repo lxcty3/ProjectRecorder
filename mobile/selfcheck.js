@@ -5090,7 +5090,7 @@ test("组织管理：改名、添加成员和股份板块完整接线", () => {
   const sql = fs.readFileSync(path.join(HERE, "sql", "organization-management-v1.sql"), "utf8");
   for (const marker of [
     "rename_organization", "add_organization_member",
-    "btn-org-rename", "btn-org-add-member", "openShareDashboard",
+    "btn-org-rename", "btn-org-add-member", "老板号", "openShareDashboard",
   ]) {
     if (!identity.includes(marker) && !app.includes(marker)) {
       throw new Error("组织管理缺少接线：" + marker);
@@ -5121,7 +5121,7 @@ test("股东大会：月度会议、临时会议和请假完整接线", () => {
   for (const id of ["identity-meetings", "identity-meeting-count"]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
-  if (html.indexOf('src="meeting.js"') === -1) throw new Error("没有加载 meeting.js");
+  if (!/src="meeting\.js(?:\?[^"]*)?"/.test(html)) throw new Error("没有加载 meeting.js");
   const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
   if (app.indexOf("loadShareholderMeetings") === -1) throw new Error("app.js 没有加载股东大会");
   const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
@@ -5129,11 +5129,20 @@ test("股东大会：月度会议、临时会议和请假完整接线", () => {
   const meeting = fs.readFileSync(path.join(HERE, "meeting.js"), "utf8");
   for (const text of [
     "get_shareholder_meetings", "initiate_shareholder_meeting",
-    "vote_shareholder_meeting", "record_shareholder_meeting_attendance",
-    "complete_shareholder_meeting", "请假必须填写原因",
+    "vote_shareholder_meeting", "record_shareholder_meeting_attendance_verified",
+    "complete_shareholder_meeting", "请假必须填写原因", "账号验证",
     "data-meeting-vote", "data-meeting-attend", "identity-meetings",
   ]) {
     if (meeting.indexOf(text) === -1) throw new Error(`meeting.js 缺少 ${text}`);
+  }
+  const verifySql = fs.readFileSync(
+    path.join(HERE, "sql", "shareholder-meeting-verification-v1.sql"), "utf8");
+  for (const text of [
+    "record_shareholder_meeting_attendance_verified",
+    "p_verification_code", "identity verification failed",
+    "revoke execute on function public.record_shareholder_meeting_attendance",
+  ]) {
+    if (verifySql.indexOf(text) === -1) throw new Error(`出席验证 SQL 缺少 ${text}`);
   }
   const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
   if (!/"meeting\.js"/.test(build)) throw new Error("build-www.js 没有打包 meeting.js");

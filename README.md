@@ -118,7 +118,7 @@ v2.1 社区底座是在旧社区表上的增量升级。安装完 `community.sql
 - **月度例行会议**：系统自动为当前月份建立一次例行股东大会，默认安排在本月最后一天 18:00（上海时区）；每月最多一场有效例行会议。
 - **临时股东大会**：持股股东可以发起临时会议，但必须填写特殊原因；本月只能存在一场有效临时会议。
 - **同意门槛**：临时会议的召集需要超过半数在册股东按人数同意，不按股份权重计算。发起人自动投赞成票。
-- **出席登记**：股东可以登记出席、缺席或请假；请假必须填写原因，并与对应会议绑定保存。
+- **出席登记**：股东可以登记出席、缺席或请假；登记前必须输入当前登录账号的员工号或老板号完成身份验证，请假还必须填写原因。
 - **会议纪要**：企业所有者、董事长或具备治理管理权限的身份可以结束会议并记录纪要。
 - **审计与权限**：会议、召集投票、出席和请假均由 SECURITY DEFINER RPC 写入企业审计；客户端不能直接写表。
 - **桌面和手机入口**：电脑端位于「企业身份 → 股东大会」，手机端位于「更多 → 治理 → 股东大会」。
@@ -129,6 +129,7 @@ v2.1 社区底座是在旧社区表上的增量升级。安装完 `community.sql
 mobile/sql/enterprise-identity.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/shareholder-meetings-v1.sql
+mobile/sql/shareholder-meeting-verification-v1.sql
 ```
 
 `install-unified.sql` 末尾包含受前置条件保护的股东大会区块。首次部署后打开治理页，系统会自动建立当前月例行会议。
@@ -535,6 +536,7 @@ mobile/sql/execution-tracking-v1.sql
 mobile/sql/operations-economics-v1.sql
 mobile/sql/work-intake-v1.sql
 mobile/sql/shareholder-meetings-v1.sql
+mobile/sql/shareholder-meeting-verification-v1.sql
 ```
 
 决策中心集成测试位于 `tests.test_decision_integration`，覆盖审批回写、幂等重复请求、事件/审计记录和越权拒绝。

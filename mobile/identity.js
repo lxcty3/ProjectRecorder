@@ -945,15 +945,15 @@ function openAddOrganizationMember() {
   if (!org) { toast("当前没有可管理的公司"); return; }
   if (!initCloud()) { toast("云服务连不上，检查网络后重试"); return; }
   openSheet("添加公司成员", `
-    <label for="org-member-lookup">成员员工号或姓名</label>
-    <input id="org-member-lookup" autocapitalize="off" placeholder="优先填写员工号，重名时必须填员工号">
+    <label for="org-member-lookup">员工号 / 老板号 / 姓名</label>
+    <input id="org-member-lookup" autocapitalize="off" placeholder="填员工号或老板号最准确；重名时必须填号码">
     <div class="row2">
       <div><label for="org-member-department">部门</label>
         <input id="org-member-department" placeholder="例如：产品部"></div>
       <div><label for="org-member-title">职务</label>
         <input id="org-member-title" placeholder="例如：产品经理"></div>
     </div>
-    <div class="hint">添加后该账号会成为普通员工成员。需要全新登录账号时，先到「团队 → 员工账号」创建。</div>
+    <div class="hint">员工账号和老板账号都可以添加，统一成为普通公司成员；需要全新登录账号时，先到「团队 → 员工账号」创建。</div>
   `, [
     { label: "取消", onClick: closeSheet },
     { label: "添加成员", onClick: async () => {

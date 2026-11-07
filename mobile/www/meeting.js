@@ -61,6 +61,12 @@ function meetingDefaultDateTime() {
 
 function meetingErrorText(error) {
   const text = String((error && (error.message || error.details || error.hint)) || error || "");
+  if (/record_shareholder_meeting_attendance_verified|shareholder-meeting-verification-v1/i.test(text)) {
+    return "出席验证服务还没安装，请运行 mobile/sql/shareholder-meeting-verification-v1.sql。";
+  }
+  if (/verification failed|identity verification failed|account code verification required/i.test(text)) {
+    return "身份验证失败：请输入当前登录账号的员工号或老板号。";
+  }
   if (/could not find the function|does not exist/i.test(text)) {
     return "股东大会服务还没安装，请运行 shareholder-meetings-v1.sql。";
   }
@@ -228,31 +234,47 @@ async function shareholderMeetingVote(id, choice) {
 }
 
 function shareholderMeetingAttendance(id, status) {
-  if (status === "leave") {
-    openSheet("登记请假", `
+  const data = shareholderMeetingState().data || {};
+  const meeting = (data.meetings || []).find(item => String(item.id) === String(id)) || {};
+  const labels = { attending: "出席", leave: "请假", absent: "缺席" };
+  const action = labels[status] || "出席登记";
+  const leave = status === "leave";
+  const name = (DB.profile && DB.profile.name) || "当前账号";
+
+  openSheet(`验证并登记${action}`, `
+    <div class="identity-motion open" style="margin-bottom:12px">
+      <div class="identity-motion-head"><div>
+        <div class="identity-eyebrow">${escapeHtml(meetingDate(meeting.scheduled_at))}</div>
+        <b>${escapeHtml(meeting.title || "股东大会")}</b>
+      </div><span class="identity-status open">需要身份验证</span></div>
+      <div class="identity-vote-line"><span>当前登录身份</span><span>${escapeHtml(name)}</span></div>
+    </div>
+    ${leave ? `
       <label for="meeting-leave-note">请假原因</label>
       <textarea id="meeting-leave-note" maxlength="500" placeholder="例如：外地出差、病假"></textarea>
-    `, [
-      { label: "取消", onClick: closeSheet },
-      { label: "提交", kind: "", onClick: async () => {
-        const note = $("meeting-leave-note").value.trim();
-        if (!note) { toast("请假必须填写原因"); return; }
-        try {
-          await meetingRpc("record_shareholder_meeting_attendance", {
-            p_meeting: id, p_status: "leave", p_note: note,
-          });
-          closeSheet(); toast("请假已记录"); await loadShareholderMeetings(true);
-        } catch (error) { toast(meetingErrorText(error)); }
-      } },
-    ]);
-    return;
-  }
-  meetingRpc("record_shareholder_meeting_attendance", {
-    p_meeting: id, p_status: status, p_note: "",
-  }).then(() => {
-    toast(status === "attending" ? "已登记出席" : "已登记缺席");
-    return loadShareholderMeetings(true);
-  }).catch(error => toast(meetingErrorText(error)));
+    ` : ""}
+    <label for="meeting-attendance-code">账号验证</label>
+    <input id="meeting-attendance-code" autocapitalize="off" autocomplete="off"
+           placeholder="输入你的员工号或老板号">
+    <div class="hint">这一步用于确认是本人登记${action}。验证码只用于本次校验，不会保存输入内容。</div>
+  `, [
+    { label: "取消", onClick: closeSheet },
+    { label: `验证并确认${action}`, kind: "", onClick: async () => {
+      const note = leave ? $("meeting-leave-note").value.trim() : "";
+      const code = $("meeting-attendance-code").value.trim();
+      if (leave && !note) { toast("请假必须填写原因"); return; }
+      if (!code) { toast("请输入当前账号的员工号或老板号"); return; }
+      try {
+        await meetingRpc("record_shareholder_meeting_attendance_verified", {
+          p_meeting: id, p_status: status, p_note: note,
+          p_verification_code: code,
+        });
+        closeSheet();
+        toast(`${action}已登记并通过身份验证`);
+        await loadShareholderMeetings(true);
+      } catch (error) { toast(meetingErrorText(error)); }
+    } },
+  ]);
 }
 
 function openShareholderMeetingComplete(id) {

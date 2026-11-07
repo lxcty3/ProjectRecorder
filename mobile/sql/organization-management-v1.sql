@@ -89,7 +89,7 @@ begin
     raise exception 'organization management permission required';
   end if;
   if v_lookup='' then
-    raise exception 'employee code or name is required';
+    raise exception 'account code or name is required';
   end if;
 
   -- Prefer an exact employee-code match. Fall back to an exact name,
@@ -111,7 +111,7 @@ begin
       raise exception 'member account not found';
     end if;
     if v_matches>1 then
-      raise exception 'more than one member has that name; use the employee code';
+      raise exception 'more than one account has that name; use the account code';
     end if;
     select p.id,p.name,p.code
       into v_profile,v_name,v_code
