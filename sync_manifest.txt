@@ -143,5 +143,13 @@ mobile/sql/shareholder-meeting-verification-v1.sql
 mobile/sql/community-forum-v1.sql
 mobile/sql/organization-founders-v1.sql
 mobile/sql/organization-management-v1.sql
+mobile/sql/phase1-primary-company-member-invites-v1.sql
 mobile/sql/platform-stability-v1.sql
 mobile/sql/community-identity-v1.sql
+latest.json
+mobile/version.json
+mobile/version.properties
+mobile/bump-version.js
+mobile/update.js
+mobile/www/version.json
+mobile/www/update.js

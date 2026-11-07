@@ -6,9 +6,10 @@
   "scripts": {
     "preflight": "node preflight-apk.js",
     "build:www": "node build-www.js",
+    "version:bump": "node bump-version.js",
     "sync": "node preflight-apk.js && node build-www.js && npx cap sync android",
     "open": "npx cap open android",
-    "apk": "node preflight-apk.js && node build-www.js && npx cap sync android && cd android && gradlew.bat assembleDebug"
+    "apk": "node bump-version.js && node preflight-apk.js && node build-www.js && npx cap sync android && cd android && gradlew.bat assembleDebug"
   },
   "comment": "依赖用 @latest 装（见 README 的打包步骤）。写死版本号的话，过一阵子就可能和当时的 Node / Gradle / AGP 对不上。",
   "dependencies": {

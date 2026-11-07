@@ -27,7 +27,7 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "meeting.js", "identity.js", "today.js",
+               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js",
                "app.js"];
@@ -5090,7 +5090,7 @@ test("组织管理：改名、添加成员和股份板块完整接线", () => {
   const sql = fs.readFileSync(path.join(HERE, "sql", "organization-management-v1.sql"), "utf8");
   for (const marker of [
     "rename_organization", "add_organization_member",
-    "btn-org-rename", "btn-org-add-member", "老板号", "openShareDashboard",
+    "btn-org-rename", "btn-org-invite-member", "老板号", "openShareDashboard",
   ]) {
     if (!identity.includes(marker) && !app.includes(marker)) {
       throw new Error("组织管理缺少接线：" + marker);
@@ -5105,6 +5105,40 @@ test("组织管理：改名、添加成员和股份板块完整接线", () => {
     }
   }
   if (!app.includes('["shares", "股份"]')) throw new Error("更多菜单缺少股份板块");
+});
+
+test("阶段一：主公司、公司邀请、今日四块和版本检查完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const id of [
+    "today-task-list", "today-pending-list", "today-working", "today-company-feed",
+    "app-update-card", "btn-check-update",
+  ]) {
+    if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
+  }
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  for (const marker of [
+    "get_primary_company", "set_primary_company",
+    "invite_organization_member", "respond_organization_member_invite",
+    "btn-org-primary", "btn-org-invite-member",
+  ]) {
+    if (identity.indexOf(marker) === -1) throw new Error(`主公司/邀请缺少 ${marker}`);
+  }
+  const update = fs.readFileSync(path.join(HERE, "update.js"), "utf8");
+  if (update.indexOf("latest.json") === -1 || update.indexOf("versionCode") === -1) {
+    throw new Error("版本检查没有接上 latest.json");
+  }
+  const sql = fs.readFileSync(
+    path.join(HERE, "sql", "phase1-primary-company-member-invites-v1.sql"), "utf8");
+  for (const marker of [
+    "primary_enterprise_id", "organization_member_invites",
+    "invite_organization_member", "respond_organization_member_invite",
+  ]) {
+    if (sql.indexOf(marker) === -1) throw new Error(`阶段一 SQL 缺少 ${marker}`);
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(HERE, "package.json"), "utf8"));
+  if (!/node bump-version\.js/.test(pkg.scripts.apk || "")) {
+    throw new Error("APK 构建没有自动递增版本");
+  }
 });
 
 test("企业治理：积分与模式有本地缓存", () => {

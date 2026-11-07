@@ -869,6 +869,14 @@ async function refreshOrganizationState(force) {
     const { data, error } = await cloudClient.rpc("get_organization_state");
     if (error) throw error;
     organizationState = data || {};
+    try {
+      const primary = await cloudClient.rpc("get_primary_company");
+      if (!primary.error && primary.data) organizationState.primary_company = primary.data;
+    } catch (_) {}
+    try {
+      const invites = await cloudClient.rpc("get_organization_member_invites");
+      if (!invites.error && invites.data) organizationState.member_invites = invites.data;
+    } catch (_) {}
     organizationError = "";
   } catch (error) {
     organizationError = String(error.message || error || "组织数据加载失败");
@@ -876,13 +884,17 @@ async function refreshOrganizationState(force) {
     organizationLastRefresh = Date.now();
     organizationBusy = false;
     renderOrganizationSection();
+    if (typeof renderToday === "function") renderToday();
   }
 }
 
 function organizationOptions(activeId) {
   const rows = (organizationState && organizationState.organizations) || [];
+  const primaryId = organizationState && organizationState.primary_company
+    ? organizationState.primary_company.primary_enterprise_id : null;
   return rows.map(row => '<button class="btn ghost" style="width:100%;margin-top:6px" '
     + 'data-org-switch="' + escapeHtml(row.id) + '">' + escapeHtml(row.name)
+    + (String(row.id) === String(primaryId) ? " · 主公司" : "")
     + (String(row.id) === String(activeId) ? " · 当前" : "") + "</button>").join("");
 }
 
@@ -940,11 +952,11 @@ function openRenameOrganization() {
   ]);
 }
 
-function openAddOrganizationMember() {
+function openInviteOrganizationMember() {
   const org = organizationState && organizationState.organization;
   if (!org) { toast("当前没有可管理的公司"); return; }
   if (!initCloud()) { toast("云服务连不上，检查网络后重试"); return; }
-  openSheet("添加公司成员", `
+  openSheet("邀请公司成员", `
     <label for="org-member-lookup">员工号 / 老板号 / 姓名</label>
     <input id="org-member-lookup" autocapitalize="off" placeholder="填员工号或老板号最准确；重名时必须填号码">
     <div class="row2">
@@ -953,16 +965,15 @@ function openAddOrganizationMember() {
       <div><label for="org-member-title">职务</label>
         <input id="org-member-title" placeholder="例如：产品经理"></div>
     </div>
-    <div class="hint">员工账号和老板账号都可以添加，统一成为普通公司成员；需要全新登录账号时，先到「团队 → 员工账号」创建。</div>
+    <div class="hint">对方接受后才会加入。加入新公司不会退出原公司，也不会迁移原公司的任务和工时。</div>
   `, [
     { label: "取消", onClick: closeSheet },
-    { label: "添加成员", onClick: async () => {
+    { label: "发出邀请", onClick: async () => {
       const lookup = String(($("org-member-lookup") || {}).value || "").trim();
-      if (!lookup) { toast("先填写员工号或姓名"); return; }
+      if (!lookup) { toast("先填写员工号、老板号或姓名"); return; }
       try {
-        const { data, error } = await cloudClient.rpc("add_organization_member", {
-          p_enterprise: org.id,
-          p_lookup: lookup,
+        const { data, error } = await cloudClient.rpc("invite_organization_member", {
+          p_enterprise: org.id, p_lookup: lookup,
           p_department: String(($("org-member-department") || {}).value || "").trim(),
           p_title: String(($("org-member-title") || {}).value || "").trim(),
         });
@@ -971,11 +982,37 @@ function openAddOrganizationMember() {
         await refreshOrganizationState(true);
         await refreshIdentity(true);
         toast(data && data.already_member
-          ? `${data.name || lookup} 已经在公司里`
-          : `${(data && data.name) || lookup} 已加入公司`);
+          ? `${data.name || lookup} 已经是公司成员`
+          : `已向 ${(data && data.name) || lookup} 发出邀请`);
       } catch (error) { toast(organizationErrorText(error)); }
     }},
   ]);
+}
+
+async function setPrimaryOrganization() {
+  const org = organizationState && organizationState.organization;
+  if (!org || !initCloud()) return;
+  try {
+    const { error } = await cloudClient.rpc("set_primary_company", { p_enterprise: org.id });
+    if (error) throw error;
+    await refreshOrganizationState(true);
+    await refreshIdentity(true);
+    toast("已设为你的主公司");
+  } catch (error) { toast(organizationErrorText(error)); }
+}
+
+async function respondOrganizationMemberInvite(inviteId, accept) {
+  if (!inviteId || !initCloud()) return;
+  try {
+    const { data, error } = await cloudClient.rpc("respond_organization_member_invite", {
+      p_invite: inviteId, p_accept: !!accept,
+    });
+    if (error) throw error;
+    if (data && data.ok === false) throw new Error(data.error || "邀请处理失败");
+    await refreshOrganizationState(true);
+    await refreshIdentity(true);
+    toast(accept ? `已加入 ${(data && data.organization_name) || "新公司"}` : "已拒绝公司邀请");
+  } catch (error) { toast(organizationErrorText(error)); }
 }
 
 async function switchOrganization(enterpriseId) {
@@ -996,6 +1033,12 @@ function organizationErrorText(error) {
   const lower = message.toLowerCase();
   if (lower.includes("not signed in") || lower.includes("jwt")) return "登录状态过期，请重新登录。";
   if (lower.includes("permission") || lower.includes("founder approval")) return "当前身份没有这项组织权限。";
+  if (lower.includes("get_primary_company") || lower.includes("set_primary_company")
+      || lower.includes("invite_organization_member")
+      || lower.includes("respond_organization_member_invite")
+      || lower.includes("organization_member_invites")) {
+    return "主公司与成员邀请 SQL 尚未安装，请运行 mobile/sql/phase1-primary-company-member-invites-v1.sql";
+  }
   if (lower.includes("rename_organization") || lower.includes("add_organization_member")
       || lower.includes("organization-management-v1")) {
     return "公司管理 SQL 尚未安装，请运行 mobile/sql/organization-management-v1.sql";
@@ -1079,6 +1122,39 @@ function organizationEmployeeHtml(canManage) {
     + (grants || '<div class="identity-empty"><b>还没有员工激励</b></div>')
     + (canManage ? '<button class="btn ghost" id="btn-org-grant" style="width:100%;margin-top:8px">授予员工激励</button>' : "")
     + '</div>';
+}
+
+function organizationMemberInvitesHtml() {
+  const data = (organizationState && organizationState.member_invites) || {};
+  const received = (data.received || []).filter(item => item.status === "invited");
+  const sent = (data.sent || []).filter(item => item.status === "invited");
+  const receivedHtml = received.map(item => `
+    <div class="identity-motion open">
+      <div class="identity-motion-head"><div>
+        <div class="identity-eyebrow">公司成员邀请</div>
+        <b>${escapeHtml(item.organization_name || "新公司")}</b>
+      </div><span class="identity-status open">待接受</span></div>
+      <div class="identity-vote-line">
+        <span>${escapeHtml(item.department || "未填部门")}</span>
+        <span>${escapeHtml(item.title || "普通成员")}</span>
+      </div>
+      <div class="identity-vote-actions">
+        <button class="btn ghost" data-member-invite-reject="${escapeHtml(item.id)}">拒绝</button>
+        <button class="btn" data-member-invite-accept="${escapeHtml(item.id)}">接受邀请</button>
+      </div>
+    </div>`).join("");
+  const sentHtml = sent.map(item => `
+    <div class="today-ledger-row">
+      <div><b>${escapeHtml(item.invitee_name || "成员")}</b>
+        <span>${escapeHtml(item.department || "未填部门")} · ${escapeHtml(item.title || "普通成员")}</span></div>
+      <strong>等待接受</strong>
+    </div>`).join("");
+  return (receivedHtml
+    ? '<div class="section-head"><span>待我处理</span><span class="meta">' + received.length + ' 个公司邀请</span></div>' + receivedHtml
+    : "")
+    + (sentHtml
+      ? '<div class="section-head"><span>已发出的成员邀请</span><span class="meta">' + sent.length + ' 个待接受</span></div><div class="card">' + sentHtml + '</div>'
+      : "");
 }
 
 async function openShareDashboard() {
@@ -1186,6 +1262,9 @@ function renderOrganizationSection() {
   const me = organizationState.me || {};
   const founders = organizationState.founders || [];
   const canManage = !!me.can_manage;
+  const primaryId = organizationState.primary_company
+    ? organizationState.primary_company.primary_enterprise_id : null;
+  const isPrimary = String(org.id) === String(primaryId);
   const founding = org.foundation_status === "founding";
   const pool = organizationState.employee_pool;
   box.innerHTML = '<div class="card identity-me-card">'
@@ -1193,6 +1272,8 @@ function renderOrganizationSection() {
     + '<div class="identity-role-line"><b>' + escapeHtml(org.name) + '</b>'
     + (me.is_founder ? '<span class="identity-owner">创始人</span>' : "")
     + '<span class="identity-share">' + escapeHtml(org.foundation_status) + '</span>'
+    + (isPrimary ? '<span class="identity-owner">主公司</span>' : "")
+    + (!isPrimary ? '<button class="identity-small-btn" id="btn-org-primary">设为主公司</button>' : "")
     + (canManage ? '<button class="identity-small-btn" id="btn-org-rename">改名</button>' : "")
     + '</div></div>'
     + '<div class="identity-weight"><b>' + num(organizationState.total_units)
@@ -1206,9 +1287,9 @@ function renderOrganizationSection() {
     + (founding && canManage
       ? '<div class="btn-row" style="margin-top:12px"><button class="btn ghost" id="btn-org-invite">邀请创始人</button>'
         + '<button class="btn" id="btn-org-initial-split">发起首次分股</button></div>'
-        + '<button class="btn ghost" id="btn-org-add-member" style="width:100%;margin-top:8px">添加公司成员</button>'
+        + '<button class="btn ghost" id="btn-org-invite-member" style="width:100%;margin-top:8px">邀请公司成员</button>'
       : canManage
-        ? '<div class="btn-row" style="margin-top:12px"><button class="btn ghost" id="btn-org-add-member">添加公司成员</button>'
+        ? '<div class="btn-row" style="margin-top:12px"><button class="btn ghost" id="btn-org-invite-member">邀请公司成员</button>'
           + '<button class="btn ghost" id="btn-org-transfer">股份转让</button></div>'
           + '<button class="btn ghost" id="btn-org-more" style="width:100%;margin-top:8px">更多股权操作</button>'
         : '<div class="btn-row" style="margin-top:12px"><button class="btn ghost" id="btn-org-transfer">股份转让</button></div>')
@@ -1216,6 +1297,7 @@ function renderOrganizationSection() {
       ? '<div class="identity-eyebrow" style="margin-top:14px">切换组织</div>'
         + organizationOptions(org.id) : "")
     + '</div>'
+    + organizationMemberInvitesHtml()
     + organizationInvitesHtml()
     + '<div class="section-head"><span>创始人</span><span class="meta">'
     + founders.length + ' 人</span></div><div class="card">' + organizationFoundersHtml() + '</div>'
@@ -1226,8 +1308,9 @@ function renderOrganizationSection() {
     + ' 项进行中</span></div><div>' + organizationMotionsHtml() + '</div>'
     + organizationEmployeeHtml(canManage);
   if ($("btn-org-create")) $("btn-org-create").onclick = openCreateOrganization;
+  if ($("btn-org-primary")) $("btn-org-primary").onclick = setPrimaryOrganization;
   if ($("btn-org-rename")) $("btn-org-rename").onclick = openRenameOrganization;
-  if ($("btn-org-add-member")) $("btn-org-add-member").onclick = openAddOrganizationMember;
+  if ($("btn-org-invite-member")) $("btn-org-invite-member").onclick = openInviteOrganizationMember;
   if ($("btn-org-invite")) $("btn-org-invite").onclick = inviteOrganizationFounder;
   if ($("btn-org-initial-split")) $("btn-org-initial-split").onclick = openInitialSplit;
   if ($("btn-org-transfer")) $("btn-org-transfer").onclick = openShareTransfer;
@@ -1244,6 +1327,12 @@ function renderOrganizationSection() {
   });
   box.querySelectorAll("[data-org-vote]").forEach(button => {
     button.onclick = () => castOrganizationVote(button.dataset.orgVote, button.dataset.choice);
+  });
+  box.querySelectorAll("[data-member-invite-accept]").forEach(button => {
+    button.onclick = () => respondOrganizationMemberInvite(button.dataset.memberInviteAccept, true);
+  });
+  box.querySelectorAll("[data-member-invite-reject]").forEach(button => {
+    button.onclick = () => respondOrganizationMemberInvite(button.dataset.memberInviteReject, false);
   });
 }
 

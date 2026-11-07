@@ -21,6 +21,14 @@ apply plugin: 'com.android.application'
    如果先用 debug 签名注册、以后换成正式签名，
    **所有厂商注册全部失效、要重来**。
    所以先建密钥库，用它的指纹去注册。 */
+def versionPropsFile = rootProject.file("version.properties")
+def versionProps = new Properties()
+if (versionPropsFile.exists()) {
+    versionPropsFile.withInputStream { versionProps.load(it) }
+}
+def appVersionCode = (versionProps.getProperty("versionCode") ?: "2") as Integer
+def appVersionName = versionProps.getProperty("versionName") ?: "2.0.0"
+
 def keystorePropsFile = rootProject.file("app/keystore.properties")
 def keystoreProps = new Properties()
 if (keystorePropsFile.exists()) {
@@ -34,8 +42,8 @@ android {
         applicationId "com.cj.projectrecorder"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "2.0"
+        versionCode appVersionCode
+        versionName appVersionName
         // Public app IDs are supplied locally; REST AppSecret never goes in the APK.
         manifestPlaceholders = [
             GETUI_APPID: (project.findProperty('GETUI_APPID') ?: System.getenv('GETUI_APPID') ?: ''),

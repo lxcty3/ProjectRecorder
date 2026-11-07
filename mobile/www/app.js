@@ -58,6 +58,10 @@ function boot() {
   applyTheme(getSetting("theme", "light"));
   makeNavScrollable();
   bindGlobalEvents();
+  if (typeof bindAppUpdateEvents === "function") bindAppUpdateEvents();
+  if (typeof checkForAppUpdate === "function") {
+    setTimeout(() => checkForAppUpdate(false), 1800);
+  }
 
   /* 进哪个页面：
 
@@ -663,6 +667,10 @@ function openNavMore() {
 }
 
 function bindGlobalEvents() {
+  if ($("btn-check-update")) {
+    $("btn-check-update").onclick = () => checkForAppUpdate(true);
+  }
+
   $("sheet").addEventListener("click", event => {
     if (event.target.dataset.close) closeSheet();
   });

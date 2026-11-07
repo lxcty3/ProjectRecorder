@@ -55,6 +55,10 @@ Python 3.9 以上（建议 3.11 / 3.12）。界面用 PyQt6；项目、员工和
 
 公司改名和「添加公司成员」由 [`mobile/sql/organization-management-v1.sql`](mobile/sql/organization-management-v1.sql) 安装。它提供受 `company.manage` / `governance.manage` 权限保护的组织改名与成员添加 RPC；客户端仍然不能直接写治理表。
 
+阶段一的「主公司 + 成员邀请」由 [`mobile/sql/phase1-primary-company-member-invites-v1.sql`](mobile/sql/phase1-primary-company-member-invites-v1.sql) 安装。它为已有成员自动补主公司，加入新公司不会退出原公司，普通成员必须接受邀请后才生效。
+
+今日工作台固定为四个板块：今日焦点、待我处理、正在工作、公司动态，每块最多显示三条。应用版本信息来自 `mobile/version.json`，更新检查读取仓库根目录的 `latest.json`，只提示下载，不自动安装。
+
 v2.1 社区底座是在旧社区表上的增量升级。安装完 `community.sql` 后，再运行 [`mobile/sql/community-forum-v1.sql`](mobile/sql/community-forum-v1.sql)。它会增加板块、评论、点赞、收藏、举报、关注、通知、搜索、分页、板块管理和社区数据统计；旧帖子会自动迁入「综合讨论」，旧 RPC 继续保留以便回滚。
 
 #### 我的知识库（本地）
@@ -158,6 +162,7 @@ mobile/sql/community.sql
 mobile/sql/community-forum-v1.sql
 mobile/sql/organization-founders-v1.sql
 mobile/sql/organization-management-v1.sql
+mobile/sql/phase1-primary-company-member-invites-v1.sql
 mobile/sql/platform-stability-v1.sql
 mobile/sql/enterprise-governance-v2.sql
 mobile/sql/task-accept-extension.sql

@@ -272,6 +272,8 @@ function profileFromUser(user, extra) {
     name: (extra && extra.name) || user.email || "",
     role: (extra && extra.role) || "boss",
     boss_id: (extra && extra.boss_id) || null,
+    active_enterprise_id: (extra && extra.active_enterprise_id) || null,
+    primary_enterprise_id: (extra && extra.primary_enterprise_id) || null,
     weekly_hours: num(extra && extra.weekly_hours) || 40,
     /* **真实的登录邮箱。**
 

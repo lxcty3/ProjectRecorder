@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="项目记录器">
 <title>项目记录器</title>
-<link rel="stylesheet" href="style.css?v=20261107-verify-1">
+<link rel="stylesheet" href="style.css?v=20261107-phase1-1">
 </head>
 <body>
 
@@ -102,16 +102,22 @@
   </div>
   <div class="body">
     <div class="identity-me-card" id="today-summary"></div>
-    <div class="section-head"><span>今日任务</span><span class="meta" id="today-count"></span></div>
+
+    <div class="section-head"><span>今日焦点</span><span class="meta" id="today-count"></span></div>
     <div id="today-task-list"></div>
     <div class="btn-row">
       <button class="btn ghost" id="btn-today-all-tasks"
               style="width:100%">查看全部任务</button>
     </div>
 
-    <div class="section-head"><span>积分与解锁</span><span class="meta" id="today-points"></span></div>
-    <div id="today-rewards"></div>
-    <div id="today-ledger"></div>
+    <div class="section-head"><span>待我处理</span><span class="meta" id="today-pending-count"></span></div>
+    <div id="today-pending-list"></div>
+
+    <div class="section-head"><span>正在工作</span><span class="meta" id="today-working-state"></span></div>
+    <div id="today-working"></div>
+
+    <div class="section-head"><span>公司动态</span><span class="meta" id="today-company-count"></span></div>
+    <div id="today-company-feed"></div>
     <button class="btn ghost" id="btn-today-community"
             style="width:100%;margin-top:10px">去知识星球</button>
   </div>
@@ -692,6 +698,14 @@
             style="width:100%;margin-top:8px">查看我的绩效依据</button>
     <div id="my-performance" class="hidden"></div>
 
+    <div class="section-head"><span>应用版本</span>
+      <span class="meta">更新不会自动安装</span></div>
+    <div class="card">
+      <div id="app-update-card"></div>
+      <button class="btn ghost" id="btn-check-update"
+              style="width:100%;margin-top:10px">检查更新</button>
+    </div>
+
     <div class="section-head"><span>系统诊断</span>
       <span class="meta">账号 · 数据库 · 功能迁移</span></div>
     <div class="card">
@@ -784,15 +798,16 @@
 <!-- notify.js 要在 app.js 之前：app.js 启动时会调
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
-<script src="meeting.js?v=20261107-verify-1"></script>
-<script src="identity.js?v=20261107-verify-1"></script>
+<script src="meeting.js?v=20261107-phase1-1"></script>
+<script src="update.js?v=20261107-phase1-1"></script>
+<script src="identity.js?v=20261107-phase1-1"></script>
 <script src="today.js"></script>
 <script src="decision.js"></script>
 <script src="operations.js"></script>
 <script src="execution.js"></script>
 <script src="intake.js"></script>
-<script src="account.js?v=20261107-verify-1"></script>
+<script src="account.js?v=20261107-phase1-1"></script>
 <script src="community.js"></script>
-<script src="app.js?v=20261107-verify-1"></script>
+<script src="app.js?v=20261107-phase1-1"></script>
 </body>
 </html>
