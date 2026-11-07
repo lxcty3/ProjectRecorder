@@ -83,7 +83,7 @@ function boot() {
   const status = syncStatus();
   if (status.signedIn) {
     resumeSession();
-    showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
+    const previewParams = new URLSearchParams(location.search); const requestedPage = previewParams.get("page"); const commentPreview = previewParams.get("v") === "comment-direct"; if (requestedPage === "community" || commentPreview) { showPage("community"); } else { showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today"); }
 
     /* **启动时核对一次登录会话。**
 
@@ -2667,3 +2667,5 @@ document.addEventListener("DOMContentLoaded", () => {
     showBootError("启动失败", error.message + "\n\n" + (error.stack || ""));
   }
 });
+
+
