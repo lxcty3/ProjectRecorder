@@ -28,6 +28,7 @@ let communityNotificationTimer = null;
 let communityAdminEditing = "";
 let communityAdminStats = null;
 let communityAuthorCardCache = {};
+let communityAuthorCardWarningShown = false;
 
 function communityEscape(value) {
   return escapeHtml(String(value == null ? "" : value));
@@ -89,6 +90,24 @@ async function hydrateCommunityAuthors(rows) {
       });
       if (result.error) {
         console.warn("社区作者卡加载失败", result.error.message || result.error);
+        const fallback = await Promise.all(missing.map(async profileId => {
+          try {
+            const card = await cloudClient.rpc("get_community_user_profile", {
+              p_profile: profileId,
+            });
+            if (card.error) return null;
+            return Object.assign({ profile_id: profileId }, card.data || {});
+          } catch (_) {
+            return null;
+          }
+        }));
+        fallback.filter(Boolean).forEach(item => {
+          communityAuthorCardCache[String(item.profile_id)] = item;
+        });
+        if (!communityAuthorCardWarningShown && typeof toast === "function") {
+          communityAuthorCardWarningShown = true;
+          toast("社区头像已恢复；主公司职业数据仍待更新 SQL");
+        }
       } else {
         const authors = result.data && result.data.authors;
         (Array.isArray(authors) ? authors : []).forEach(item => {
