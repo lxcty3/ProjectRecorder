@@ -2803,12 +2803,22 @@ async function registerBoss(data) {
   }
   if (!initCloud()) throw new Error("云组件没加载上，检查一下网络");
 
-  const result = await cloudClient.rpc("create_boss_account", {
+  let result = await cloudClient.rpc("create_boss_account", {
     p_code: code,
     p_password: String(data.password),
     p_name: name,
     p_email: email,
   });
+  const firstMessage = String(result.error && result.error.message || result.error || "");
+  if (result.error && /failed to fetch|networkerror|load failed|network request failed|fetch failed/i.test(firstMessage)) {
+    await new Promise(resolve => setTimeout(resolve, 900));
+    result = await cloudClient.rpc("create_boss_account", {
+      p_code: code,
+      p_password: String(data.password),
+      p_name: name,
+      p_email: email,
+    });
+  }
   if (result.error) throw new Error(translateBossError(result.error.message));
 
   const payload = result.data || {};
@@ -2852,6 +2862,12 @@ function translateBossError(message) {
   }
   if (/too many accounts/i.test(text)) {
     return "这个账号被太多次用过了，换一个吧";
+  }
+  if (/failed to fetch|networkerror|load failed|network request failed|fetch failed/i.test(text)) {
+    return "手机连不上云服务器。\n\n"
+      + "请先切换 Wi-Fi / 手机流量后重试；如果仍然失败，用手机浏览器打开 "
+      + "https://edchntmyqqjqvpngylgc.supabase.co/rest/v1/ 。"
+      + "打不开说明当前网络屏蔽了 Supabase，需要换网络或使用网络加速服务。";
   }
   if (/Could not find the function|does not exist/i.test(text)) {
     return "云端的注册功能还没装。\n\n"

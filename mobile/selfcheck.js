@@ -1315,6 +1315,18 @@ test("英文报错会翻译成能看懂的中文", () => {
   if (unknown !== "Some weird thing") throw new Error("未知错误应当原样返回");
 });
 
+test("老板注册的网络失败必须给出可操作提示", () => {
+  fresh();
+  for (const raw of ["TypeError: Failed to fetch", "NetworkError", "Load failed"]) {
+    const got = run(`translateBossError(${JSON.stringify(raw)})`);
+    if (got.indexOf("手机连不上云服务器") === -1
+        || got.indexOf("Wi-Fi") === -1
+        || got.indexOf("supabase.co") === -1) {
+      throw new Error(`注册网络错误没有给出可操作说明：${got}`);
+    }
+  }
+});
+
 test("本机 uuid 生成不重复且格式正确", () => {
   fresh();
   const ids = [];
