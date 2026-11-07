@@ -115,7 +115,8 @@ function renderMyCompanies() {
             </div>
             ${access.full ? `<div class="meta" style="margin-top:4px">${escapeHtml(person.code || "无员工号")}
               · ${escapeHtml(person.email || "未绑定邮箱")}
-              · ${escapeHtml(person.status || "active")}</div>` : ""}
+              · ${escapeHtml(person.status || "active")}</div>
+              <div class="meta" style="margin-top:2px">主公司：${escapeHtml(person.primary_company_name || "未设置")}</div>` : ""}
           </div>
           <div class="identity-member-share">${person.is_shareholder ? num(person.share_percent) + "%" : "非股东"}</div>
         </div>`).join("") : '<div class="identity-empty"><b>没有可显示的成员</b></div>');

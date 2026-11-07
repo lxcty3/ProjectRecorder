@@ -109,6 +109,8 @@ begin
         ) || case when v_full then jsonb_build_object(
           'code',p.code,
           'email',p.email,
+          'primary_enterprise_id',p.primary_enterprise_id,
+          'primary_company_name',(select pe.name from public.enterprises pe where pe.id=p.primary_enterprise_id),
           'status',m.status,
           'appointed_at',m.appointed_at,
           'is_shareholder',coalesce(s.shares,0)>0,
