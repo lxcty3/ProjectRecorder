@@ -274,6 +274,7 @@ declare
   v_uid uuid:=auth.uid();
   v_row public.organization_member_invites%rowtype;
   v_org_name text;
+  v_owner uuid;
 begin
   if v_uid is null then raise exception 'not signed in'; end if;
   select * into v_row
@@ -283,7 +284,7 @@ begin
   if not found then raise exception 'invite not found'; end if;
   if v_row.status<>'invited' then raise exception 'invite is not open'; end if;
 
-  select name into v_org_name
+  select name,owner_profile_id into v_org_name,v_owner
     from public.enterprises where id=v_row.enterprise_id;
 
   if v_row.expires_at<=now() then
@@ -317,6 +318,13 @@ begin
 
   update public.organization_member_invites
      set status='accepted',responded_at=now() where id=p_invite;
+
+  -- Accepting an invite switches the current organization. The primary
+  -- company is not changed when one already exists.
+  update public.profiles
+     set active_enterprise_id=v_row.enterprise_id,
+         boss_id=v_owner
+   where id=v_uid;
   perform public._phase1_ensure_primary_company(v_uid);
 
   insert into public.enterprise_identity_audit(
