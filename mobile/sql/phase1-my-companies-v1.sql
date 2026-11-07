@@ -44,10 +44,10 @@ begin
         'can_view_sensitive',
           e.owner_profile_id=v_uid
           or public._organization_is_founder(e.id,v_uid)
-          or public.identity_has_permission(e.id,'people.view_all')
-          or public.identity_has_permission(e.id,'people.manage')
-          or public.identity_has_permission(e.id,'company.manage')
-          or public.identity_has_permission(e.id,'governance.manage')
+          or public._identity_role_permissions(e.id,v_uid) ? 'people.view_all'
+          or public._identity_role_permissions(e.id,v_uid) ? 'people.manage'
+          or public._identity_role_permissions(e.id,v_uid) ? 'company.manage'
+          or public._identity_role_permissions(e.id,v_uid) ? 'governance.manage'
       ) order by (e.id=v_primary) desc,e.name)
       from public.enterprise_members m
       join public.enterprises e on e.id=m.enterprise_id
@@ -79,10 +79,10 @@ begin
 
   v_full:=v_company.owner_profile_id=v_uid
     or public._organization_is_founder(p_enterprise,v_uid)
-    or public.identity_has_permission(p_enterprise,'people.view_all')
-    or public.identity_has_permission(p_enterprise,'people.manage')
-    or public.identity_has_permission(p_enterprise,'company.manage')
-    or public.identity_has_permission(p_enterprise,'governance.manage');
+    or public._identity_role_permissions(p_enterprise,v_uid) ? 'people.view_all'
+    or public._identity_role_permissions(p_enterprise,v_uid) ? 'people.manage'
+    or public._identity_role_permissions(p_enterprise,v_uid) ? 'company.manage'
+    or public._identity_role_permissions(p_enterprise,v_uid) ? 'governance.manage';
 
   select coalesce(sum(shares),0) into v_total
     from public.enterprise_shareholders

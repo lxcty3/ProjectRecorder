@@ -166,6 +166,7 @@ async function loadMyCompanies(force) {
     await loadMyCompanyPeople(myCompaniesState.selectedId);
   } catch (error) {
     const text = String(error.message || error || "");
+    console.warn("我的公司加载失败", text);
     myCompaniesState.error = /could not find the function|does not exist/i.test(text)
       ? "我的公司 SQL 尚未安装，请运行 mobile/sql/phase1-my-companies-v1.sql"
       : text || "公司信息加载失败";
