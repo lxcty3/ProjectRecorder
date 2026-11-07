@@ -486,6 +486,7 @@ function applyRoleUI() {
     $("btn-me-leave").classList.toggle("hidden", !isStaff);
   }
 
+  if (typeof updateNavScrollCue === "function") updateNavScrollCue();
   refreshSyncBadge();
 }
 

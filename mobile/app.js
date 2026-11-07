@@ -182,6 +182,107 @@ function setBanner(element, text, kind) {
 
 /* 底部导航要占位置，所以这些页面的 body 要留出底部空间。
    登录页和派任务页没有导航，不用留。 */
+function updateNavScrollCue() {
+  const nav = $("nav");
+  const cue = $("nav-scroll-cue");
+  if (!nav || !cue) return;
+  const maxScroll = Math.max(0, nav.scrollWidth - nav.clientWidth);
+  const canScroll = maxScroll > 2;
+  nav.classList.toggle("scrollable", canScroll);
+  cue.classList.toggle("hidden", !canScroll);
+  if (!canScroll) return;
+
+  const atStart = nav.scrollLeft <= 2;
+  const atEnd = nav.scrollLeft >= maxScroll - 2;
+  cue.textContent = atStart ? "›" : atEnd ? "‹" : "↔";
+  cue.title = atStart ? "向右拖动查看更多入口"
+            : atEnd ? "向左拖动返回前面的入口"
+            : "左右拖动查看更多入口";
+}
+
+/* 电脑预览没有手机触屏，补一套鼠标拖动和滚轮横滑。
+   触摸设备继续走浏览器原生横滑，不抢它的手势。 */
+function enableNavDrag() {
+  const nav = $("nav");
+  if (!nav || nav.dataset.dragReady === "1") return;
+  nav.dataset.dragReady = "1";
+
+  let pointerId = null;
+  let startX = 0;
+  let startScroll = 0;
+  let dragged = false;
+  let suppressClick = false;
+
+  const finishPointer = event => {
+    if (pointerId === null || (event && event.pointerId !== pointerId)) return;
+    if (nav.hasPointerCapture && nav.hasPointerCapture(pointerId)) {
+      nav.releasePointerCapture(pointerId);
+    }
+    pointerId = null;
+    nav.classList.remove("nav-dragging");
+    if (dragged) {
+      suppressClick = true;
+      window.setTimeout(() => { suppressClick = false; }, 0);
+    }
+    updateNavScrollCue();
+  };
+
+  nav.addEventListener("pointerdown", event => {
+    if (event.pointerType === "touch" || event.button !== 0) return;
+    if (nav.scrollWidth <= nav.clientWidth + 1) return;
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startScroll = nav.scrollLeft;
+    dragged = false;
+  });
+
+  nav.addEventListener("pointermove", event => {
+    if (pointerId === null || event.pointerId !== pointerId) return;
+    const distance = event.clientX - startX;
+    if (!dragged && Math.abs(distance) > 5) {
+      dragged = true;
+      nav.classList.add("nav-dragging");
+      try { nav.setPointerCapture(pointerId); } catch (_) {}
+    }
+    if (!dragged) return;
+    event.preventDefault();
+    nav.scrollLeft = startScroll - distance;
+    updateNavScrollCue();
+  });
+
+  nav.addEventListener("pointerup", finishPointer);
+  nav.addEventListener("pointercancel", finishPointer);
+  nav.addEventListener("lostpointercapture", finishPointer);
+  nav.addEventListener("dragstart", event => event.preventDefault());
+
+  nav.addEventListener("click", event => {
+    if (!suppressClick) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+
+  nav.addEventListener("wheel", event => {
+    const maxScroll = Math.max(0, nav.scrollWidth - nav.clientWidth);
+    if (maxScroll <= 2) return;
+    const raw = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ? event.deltaX : event.deltaY;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? nav.clientWidth : 1;
+    const before = nav.scrollLeft;
+    nav.scrollLeft += raw * unit;
+    if (nav.scrollLeft !== before) {
+      event.preventDefault();
+      updateNavScrollCue();
+    }
+  }, { passive: false });
+
+  nav.addEventListener("scroll", updateNavScrollCue, { passive: true });
+  window.addEventListener("resize", updateNavScrollCue);
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(updateNavScrollCue).observe(nav);
+  }
+  updateNavScrollCue();
+}
+
 function makeNavScrollable() {
   ["page-today", "page-decisions", "page-operations", "page-execution", "page-intake",
    "page-dash", "page-team",
@@ -189,6 +290,7 @@ function makeNavScrollable() {
    "page-me"].forEach(id => {
     $(id).classList.add("has-nav");
   });
+  enableNavDrag();
 }
 
 /*: 所有页面。加新页面必须登记在这里——

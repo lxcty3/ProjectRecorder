@@ -3881,6 +3881,7 @@ nav {
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 nav::-webkit-scrollbar { display: none; }
 nav button {
@@ -3888,3 +3889,41 @@ nav button {
   min-width: 25%;
 }
 nav .nav-badge { pointer-events: none; }
+
+/* Desktop preview: draggable with a mouse, wheel scrolls sideways. */
+nav.scrollable,
+nav.scrollable button { cursor: grab; }
+nav.nav-dragging,
+nav.nav-dragging button {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+nav.nav-dragging button {
+  transform: none !important;
+  transition: none !important;
+}
+
+.nav-scroll-cue {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--game-paper) 78%, transparent);
+  box-shadow: 0 3px 9px rgba(27, 52, 45, .12);
+  color: var(--fg-dim);
+  font-size: 18px;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.nav-scroll-cue.hidden { display: none !important; }
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .nav-scroll-cue { background: var(--game-paper); }
+}
