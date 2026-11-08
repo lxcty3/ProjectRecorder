@@ -43,6 +43,78 @@ function json(data, status = 200) {
   });
 }
 
+
+const GITHUB_ROUTES = [
+  {
+    prefix: "/github/",
+    upstream: "https://github.com",
+    allowed: "lxcty3/ProjectRecorder.git",
+  },
+  {
+    prefix: "/github-api/",
+    upstream: "https://api.github.com",
+    allowed: "repos/lxcty3/ProjectRecorder",
+  },
+  {
+    prefix: "/github-upload/",
+    upstream: "https://uploads.github.com",
+    allowed: "repos/lxcty3/ProjectRecorder",
+  },
+];
+
+function githubRoute(pathname) {
+  return GITHUB_ROUTES.find((route) => {
+    if (!pathname.startsWith(route.prefix)) return false;
+    const rest = pathname.slice(route.prefix.length);
+    return rest === route.allowed || rest.startsWith(route.allowed + "/");
+  });
+}
+
+function rewriteGithubLocation(location, requestUrl, route) {
+  if (!location) return location;
+  try {
+    const target = new URL(location);
+    const upstream = new URL(route.upstream);
+    if (target.origin !== upstream.origin) return location;
+    return requestUrl.origin + route.prefix + target.pathname.slice(1) + target.search;
+  } catch {
+    return location;
+  }
+}
+
+async function proxyGithub(request, url, route) {
+  const rest = url.pathname.slice(route.prefix.length);
+  const target = new URL(route.upstream + "/" + rest + url.search);
+  const headers = new Headers(request.headers);
+  for (const name of [
+    "host", "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor",
+  ]) headers.delete(name);
+
+  const hasBody = !["GET", "HEAD"].includes(request.method);
+  let response;
+  try {
+    response = await fetch(target.toString(), {
+      method: request.method,
+      headers,
+      body: hasBody ? request.body : undefined,
+      redirect: "manual",
+    });
+  } catch (error) {
+    return json({ error: "github_unreachable", message: String(error) }, 502);
+  }
+
+  const outHeaders = new Headers(response.headers);
+  const location = outHeaders.get("location");
+  if (location) {
+    outHeaders.set("location", rewriteGithubLocation(location, url, route));
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: outHeaders,
+  });
+}
+
 function allowedPath(pathname) {
   return ALLOWED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(prefix + "/"),
@@ -68,6 +140,9 @@ export default {
     if (url.pathname === "/healthz") {
       return json({ ok: true, service: "projectrecorder-gateway" });
     }
+
+    const ghRoute = githubRoute(url.pathname);
+    if (ghRoute) return proxyGithub(request, url, ghRoute);
 
     if (!allowedPath(url.pathname)) {
       return json({ error: "unsupported_path" }, 404);
