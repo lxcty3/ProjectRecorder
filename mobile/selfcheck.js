@@ -5480,6 +5480,34 @@ test("工作入口：手机快速记录、公开表单和分诊完整接线", ()
   }
 });
 
+test("高级模式：多公司升级后的 ON CONFLICT 已修复", () => {
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
+  if (!today.includes("42P10") ||
+      !today.includes("fix-advanced-mode-on-conflict.sql")) {
+    throw new Error("高级模式遇到 42P10 时没有给出修复指引");
+  }
+
+  const sqlPath = path.join(HERE, "sql", "fix-advanced-mode-on-conflict.sql");
+  if (!fs.existsSync(sqlPath)) {
+    throw new Error("缺少高级模式兼容修复 SQL");
+  }
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  if (!/^[\x00-\x7F]*$/.test(sql)) {
+    throw new Error("高级模式修复 SQL 必须保持 ASCII");
+  }
+  const legacy = /on\s+conflict\s*\(\s*owner_profile_id\s*\)/i;
+  if (legacy.test(sql)) {
+    throw new Error("多公司模式下不能再对 owner_profile_id 使用 ON CONFLICT");
+  }
+  for (const text of [
+    "pg_advisory_xact_lock", "active_enterprise_id",
+    "enterprise_members_enterprise_profile_uidx",
+    "grant execute on function public.set_enterprise_ui_mode(text)",
+  ]) {
+    if (!sql.includes(text)) throw new Error("高级模式修复 SQL 缺少 " + text);
+  }
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

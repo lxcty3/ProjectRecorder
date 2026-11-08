@@ -270,6 +270,26 @@ async function refreshPointState(force) {
   }
 }
 
+function mobileUiModeError(error) {
+  const message = String(error && error.message || error || "");
+  if (error && error.code === "42P10"
+      || /no unique or exclusion constraint matching the ON CONFLICT/i.test(message)) {
+    return "数据库还缺少多公司兼容修复。\n\n"
+      + "请在 Supabase SQL Editor 运行 sql/fix-advanced-mode-on-conflict.sql，"
+      + "然后重新点击高级模式。";
+  }
+  if (/advanced mode requires/i.test(message)) {
+    return "当前岗位没有高级模式权限。高级模式只对管理、财务、审计或治理岗位开放。";
+  }
+  if (/not an enterprise member/i.test(message)) {
+    return "你还没有加入当前公司，先接受公司邀请或建立公司。";
+  }
+  if (/not signed in/i.test(message)) {
+    return "登录状态已失效，请重新登录。";
+  }
+  return message || "切换模式失败";
+}
+
 async function setMobileUiMode(mode) {
   if (mode !== "simple" && mode !== "advanced") {
     toast("模式只能是简单或高级");

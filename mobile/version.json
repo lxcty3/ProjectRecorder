@@ -1,9 +1,9 @@
 {
-  "versionCode": 9,
-  "versionName": "2.0.7",
+  "versionCode": 10,
+  "versionName": "2.0.8",
   "releasedAt": "2026-11-08",
   "notes": [
-    "注册、登录、社区与多人同步统一走 Cloudflare 中转，用户无需直连 Supabase"
+    "修复多公司高级模式 ON CONFLICT 错误；云端功能统一走 Cloudflare 中转"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
