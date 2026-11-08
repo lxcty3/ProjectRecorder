@@ -1,9 +1,9 @@
 {
-  "versionCode": 8,
-  "versionName": "2.0.6",
-  "releasedAt": "2026-11-07",
+  "versionCode": 9,
+  "versionName": "2.0.7",
+  "releasedAt": "2026-11-08",
   "notes": [
-    "阶段一：主公司、公司成员邀请、今日工作台与版本检查"
+    "注册、登录、社区与多人同步统一走 Cloudflare 中转，用户无需直连 Supabase"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }

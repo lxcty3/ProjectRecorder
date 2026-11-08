@@ -25,6 +25,7 @@ const OUT = path.join(HERE, "www");
 const FILES = [
   "index.html",
   "style.css",
+  "cloud-config.js",
   "store.js",
   "calc.js",
   "charts.js",

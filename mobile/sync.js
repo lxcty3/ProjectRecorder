@@ -100,11 +100,18 @@ const CLOUD_DEFAULTS = {
 function syncConfig() {
   const savedUrl = getSetting("supabase_url", "");
   const savedKey = getSetting("supabase_key", "");
+  const gatewayUrl = normalizeCloudUrl(
+    typeof window !== "undefined" && window.PROJECT_RECORDER_GATEWAY_URL || ""
+  );
+  const directUrl = normalizeCloudUrl(CLOUD_DEFAULTS.url);
+  const storedUrl = normalizeCloudUrl(savedUrl);
+  /* Older installs may have persisted the public Supabase URL. Treat it as
+     the default, so enabling a gateway really moves those users behind it. */
+  const customUrl = storedUrl && storedUrl !== directUrl;
   return {
-    url: savedUrl || CLOUD_DEFAULTS.url,
+    url: customUrl ? storedUrl : gatewayUrl || directUrl,
     key: savedKey || CLOUD_DEFAULTS.key,
-    /* 标记一下是预置的还是用户填的，界面上要区别对待 */
-    custom: !!(savedUrl || savedKey),
+    custom: !!(customUrl || (savedKey && savedKey !== CLOUD_DEFAULTS.key)),
   };
 }
 

@@ -26,7 +26,7 @@ const HERE = __dirname;
    **必须和 index.html 里 <script src> 的顺序一致**——
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
-const FILES = ["store.js", "calc.js", "charts.js", "merit.js", "assist.js",
+const FILES = ["cloud-config.js", "store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js",
@@ -1195,6 +1195,53 @@ test("云服务配置：预置值可用，用户填的能覆盖", () => {
   run('saveSyncConfig("", "");');
   const back = plain(run("syncConfig()"));
   if (back.url !== preset.url) throw new Error("清空后没回到预置值");
+});
+
+test("云服务网关：用户只连接中转地址，不直连 Supabase", () => {
+  fresh();
+  run('window.PROJECT_RECORDER_GATEWAY_URL = "https://gateway.example.com/rest/v1/";'
+    + 'saveSyncConfig("", "");');
+  const gateway = plain(run("syncConfig()"));
+  if (gateway.url !== "https://gateway.example.com") {
+    throw new Error("网关地址没有规整或被忽略：" + gateway.url);
+  }
+  if (gateway.custom) throw new Error("预置网关不应标记成用户自定义");
+
+  /* People who used the previous build may have the direct URL persisted.
+     That must migrate to the gateway automatically, not silently keep
+     calling the blocked Supabase domain. */
+  run('saveSyncConfig("https://edchntmyqqjqvpngylgc.supabase.co", "");');
+  if (plain(run("syncConfig()")).url !== "https://gateway.example.com") {
+    throw new Error("旧版预置 Supabase 地址没有迁移到网关");
+  }
+
+  /* A genuinely custom backend still wins. */
+  run('saveSyncConfig("https://custom.example.com", "custom-key");');
+  const custom = plain(run("syncConfig()"));
+  if (custom.url !== "https://custom.example.com" || custom.key !== "custom-key") {
+    throw new Error("用户自定义后端被网关覆盖");
+  }
+
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  const intake = fs.readFileSync(path.join(HERE, "intake.html"), "utf8");
+  const sync = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  const publicIntake = fs.readFileSync(path.join(HERE, "public-intake.js"), "utf8");
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!html.includes("cloud-config.js") ||
+      html.indexOf('<script src="cloud-config.js') > html.indexOf('<script src="sync.js')) {
+    throw new Error("index.html 没有在 sync.js 前加载网关配置");
+  }
+  if (!intake.includes("cloud-config.js") ||
+      intake.indexOf('<script src="cloud-config.js') > intake.indexOf('<script src="public-intake.js')) {
+    throw new Error("公开表单没有在接口脚本前加载网关配置");
+  }
+  if (!sync.includes("PROJECT_RECORDER_GATEWAY_URL") ||
+      !publicIntake.includes("PROJECT_RECORDER_GATEWAY_URL")) {
+    throw new Error("应用没有使用网关地址");
+  }
+  if (!build.includes('"cloud-config.js"')) {
+    throw new Error("APK 构建没有包含 cloud-config.js");
+  }
 });
 
 test("URL 规整化能把各种粘错的形式修回来", () => {
