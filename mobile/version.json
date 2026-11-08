@@ -1,9 +1,9 @@
 {
-  "versionCode": 12,
-  "versionName": "2.0.10",
+  "versionCode": 13,
+  "versionName": "2.0.11",
   "releasedAt": "2026-11-08",
   "notes": [
-    "基础版可直接查看和调整公司；账号数据隔离、待上传恢复和同步修复"
+    "改用正式签名，支持覆盖安装并保留本机数据；基础版可管理公司"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
