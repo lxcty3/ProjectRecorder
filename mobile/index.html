@@ -430,6 +430,19 @@
       <span class="meta" id="my-company-people-count"></span></div>
     <div id="my-company-people"></div>
 
+    <div id="organization-health-section" class="hidden" style="margin-top:20px">
+      <div class="section-head">
+        <span>组织健康检查</span>
+        <div class="btn-row">
+          <button class="icon-btn" id="btn-org-repair" title="修复公司身份">修</button>
+          <button class="icon-btn" id="btn-org-health" title="检查组织健康">↻</button>
+        </div>
+      </div>
+      <div id="organization-health-result" class="meta">
+        检查公司成员、股份和同步状态。
+      </div>
+    </div>
+
     <div class="community-note">
       成员信息按权限分级显示。普通成员只看到角色、部门和职务；管理身份才显示账号、持股和成员状态。
     </div>
@@ -814,28 +827,28 @@
   window.__supabaseLoaded = (typeof window.supabase !== "undefined");
 </script>
 <script src="cloud-config.js?v=cloud-gateway-1"></script>
-<script src="store.js"></script>
+<script src="store.js?v=20261108-multi-account-1"></script>
 <script src="calc.js"></script>
 <script src="charts.js"></script>
 <!-- merit.js 要在 app.js 之前：app.js 会在渲染任务页时调
      renderMeritCard()，晚加载会报未定义。 -->
 <script src="merit.js"></script>
 <script src="assist.js"></script>
-<script src="sync.js?v=20261107-network-fix-1"></script>
+<script src="sync.js?v=20261108-multi-account-1"></script>
 <!-- notify.js 要在 app.js 之前：app.js 启动时会调
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
 <script src="meeting.js?v=20261107-phase1-1"></script>
 <script src="update.js?v=20261107-companies-4"></script>
-<script src="identity.js?v=20261107-companies-4"></script>
-<script src="companies.js?v=20261107-companies-4"></script>
+<script src="identity.js?v=20261108-multi-account-1"></script>
+<script src="companies.js?v=20261108-multi-account-1"></script>
 <script src="today.js"></script>
 <script src="decision.js"></script>
 <script src="operations.js"></script>
 <script src="execution.js"></script>
 <script src="intake.js"></script>
-<script src="account.js?v=20261107-companies-4"></script>
+<script src="account.js?v=20261108-multi-account-1"></script>
 <script src="community.js?v=20261107-profile-8"></script>
-<script src="app.js?v=20261107-companies-4"></script>
+<script src="app.js?v=20261108-multi-account-1"></script>
 </body>
 </html>

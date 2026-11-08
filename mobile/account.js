@@ -104,7 +104,28 @@ function renderLogin() {
 const SAVED_ACCOUNT_LIMIT = 5;
 
 function savedAccountsList() {
-  return (DB.savedAccounts || []).filter(item => item && item.code && item.password);
+  const stored = getSetting("saved_accounts", null);
+  let rows = Array.isArray(stored) ? stored : null;
+  /* One-time move from the legacy shared database into device settings. */
+  if (!rows && DB && Array.isArray(DB.savedAccounts) && DB.savedAccounts.length) {
+    rows = DB.savedAccounts.slice();
+    saveSetting("saved_accounts", rows);
+  }
+  if (!rows) {
+    try {
+      const legacy = JSON.parse(localStorage.getItem(DB_KEY) || "null");
+      if (legacy && Array.isArray(legacy.savedAccounts)
+          && legacy.savedAccounts.length) {
+        rows = legacy.savedAccounts.slice();
+        saveSetting("saved_accounts", rows);
+      }
+    } catch (error) {}
+  }
+  return (rows || []).filter(item => item && item.code && item.password);
+}
+
+function saveSavedAccounts(rows) {
+  saveSetting("saved_accounts", (rows || []).slice(0, SAVED_ACCOUNT_LIMIT));
 }
 
 /* 登录成功之后记住这个账号。
@@ -120,24 +141,21 @@ function rememberAccount(code, role, name, password) {
   const rest = savedAccountsList().filter(item =>
     !(item.code === key && item.role === kind));
 
-  DB.savedAccounts = [{
+  saveSavedAccounts([{
     code: key,
     role: kind,
     name: String(name || "").trim() || key,
     password: String(password),
     lastUsed: nowISO(),
-  }].concat(rest).slice(0, SAVED_ACCOUNT_LIMIT);
-
-  _save();
+  }].concat(rest));
 }
 
 /* 从登录页删掉一条。
    传了 role 就只删那一个身份，没传就把这个号的两个身份都删。 */
 function forgetAccount(code, role) {
   const key = String(code || "").trim();
-  DB.savedAccounts = savedAccountsList().filter(item =>
-    !(item.code === key && (!role || item.role === role)));
-  _save();
+  saveSavedAccounts(savedAccountsList().filter(item =>
+    !(item.code === key && (!role || item.role === role))));
 }
 
 /* "上次 10-19 22:33" 这种短格式。存的是完整 ISO，这里只取月日时分。 */
@@ -374,6 +392,11 @@ function finishLogin() {
   $("login-password").value = "";
   applyRoleUI();
   startSyncLoop();
+  if (typeof ensureClientProtocol === "function") {
+    ensureClientProtocol(true).then(ok => {
+      if (!ok) toast("当前版本与云端协议不兼容，请安装最新版");
+    });
+  }
   /* 登录时顺手确认一次系统通知权限。
      放在这里而不是 App 启动时：那时用户还没进入任何身份，
      弹权限框最容易被拒绝。 */
@@ -390,12 +413,14 @@ function finishLogin() {
   if (typeof loadExecution === "function") loadExecution(false);
   showPage(typeof mobileHomePage === "function" ? mobileHomePage() : "today");
   refreshSyncBadge();
+  if (typeof maybePromptLegacyDataClaim === "function") maybePromptLegacyDataClaim();
 }
 
 /* 重启后恢复上次登录 */
 function resumeSession() {
   applyRoleUI();
   startSyncLoop();
+  if (typeof ensureClientProtocol === "function") ensureClientProtocol(false);
   if (typeof refreshPointState === "function") refreshPointState(false);
   if (typeof loadDecisionCenter === "function") loadDecisionCenter(false);
   if (typeof loadOperations === "function") loadOperations(false);
@@ -405,21 +430,101 @@ function resumeSession() {
     ensureGetuiPushConsent();
   }
   syncNow("resume");
+  if (typeof maybePromptLegacyDataClaim === "function") {
+    setTimeout(() => maybePromptLegacyDataClaim(), 800);
+  }
+}
+
+function resetAccountScopedRuntimeState() {
+  if (typeof resetIdentityRuntimeCache === "function") resetIdentityRuntimeCache();
+  if (typeof resetMyCompaniesRuntimeCache === "function") resetMyCompaniesRuntimeCache();
+  if (typeof clearOperationsCache === "function") clearOperationsCache();
+  if (typeof clearExecutionCache === "function") clearExecutionCache();
+  if (typeof clearShareholderMeetings === "function") clearShareholderMeetings();
+  if (typeof clearIntakeCache === "function") clearIntakeCache();
+  if (typeof resetTodayState === "function") resetTodayState();
+}
+
+function stopAccountRuntime() {
+  stopSyncLoop();
+  if (typeof unsubscribeRealtime === "function") unsubscribeRealtime();
+  if (DB) saveAll();
+}
+
+function switchAccount() {
+  stopAccountRuntime();
+  const unregister = typeof unregisterGetuiPushDevice === "function"
+    ? unregisterGetuiPushDevice() : Promise.resolve();
+  return Promise.resolve(unregister)
+    .then(() => cloudLogout())
+    .then(() => {
+      if (typeof resetTodayState === "function") resetTodayState();
+      applyRoleUI();
+      closeSheet();
+      showPage("login");
+    });
 }
 
 function logout() {
-  if (!confirm("退出登录？\n\n本机自己记的项目和工时不会丢，"
-      + "只是要重新登录才能看到员工报上来的数据。")) return;
-  stopSyncLoop();
-  const unregister = typeof unregisterGetuiPushDevice === "function"
-    ? unregisterGetuiPushDevice() : Promise.resolve();
-  Promise.resolve(unregister).then(() => cloudLogout()).then(() => {
-    if (typeof resetTodayState === "function") resetTodayState();
-    applyRoleUI();
-    closeSheet();
-    showPage("login");
+  if (!confirm("退出登录？\n\n本机项目和待上传数据会按当前账号保存，"
+      + "重新登录后继续使用。")) return;
+  Promise.resolve(switchAccount()).then(() => {
     toast("已退出登录");
   });
+}
+
+/* ---------------------------------------------------------- 旧数据归属 */
+
+function maybePromptLegacyDataClaim() {
+  if (!DB || !DB.profile || !DB.account_scope_id) return;
+  const state = getSetting("legacy_data_claim", {});
+  if (state && (state.status === "claimed" || state.status === "archived")) return;
+  const legacy = typeof legacyDatabaseSnapshot === "function"
+    ? legacyDatabaseSnapshot() : null;
+  if (!legacy) return;
+  const summary = legacyDataSummary(legacy);
+  if (!summary.total) return;
+
+  openSheet("旧数据归属确认", `
+    <div class="banner warn">
+      检测到旧版本留下了 ${summary.total} 条本机数据。旧数据没有可靠的账号标识，
+      需要你确认归属后才能使用。
+    </div>
+    <div class="identity-meta-grid" style="margin-top:12px">
+      <div><span>项目 / 步骤</span><b>${num(summary.projects)} / ${num(summary.steps)}</b></div>
+      <div><span>员工 / 工时</span><b>${num(summary.employees)} / ${num(summary.worklogs)}</b></div>
+      <div><span>任务 / 打卡</span><b>${num(summary.tasks)} / ${num(summary.habitLogs)}</b></div>
+      <div><span>待上传记录</span><b>${num(summary.syncQueue)}</b></div>
+    </div>
+    <div class="meta" style="margin-top:10px">
+      选择“归入当前账号”只会导入本机业务数据，不会自动上传旧队列。
+      系统会先保留一份完整备份。
+    </div>
+  `, [
+    { label: "稍后处理", kind: "ghost", onClick: () => {
+      deferLegacyDataClaim(DB.account_scope_id);
+      closeSheet();
+      toast("旧数据仍保留，可稍后确认");
+    } },
+    { label: "保留为备份", kind: "ghost", onClick: () => {
+      archiveLegacyDataClaim();
+      closeSheet();
+      toast("旧数据已保留为备份");
+    } },
+    { label: "归入当前账号", kind: "", onClick: () => {
+      try {
+        claimLegacyDataForCurrentAccount();
+        closeSheet();
+        saveAll();
+        applyRoleUI();
+        renderToday();
+        renderMe();
+        toast("旧数据已归入当前账号，并保留备份");
+      } catch (error) {
+        toast(String(error.message || error || "旧数据迁移失败"));
+      }
+    } },
+  ]);
 }
 
 /* ---------------------------------------------------------- 角色 */

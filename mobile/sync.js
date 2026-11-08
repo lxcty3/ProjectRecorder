@@ -244,6 +244,10 @@ function syncStatus() {
        判断依据：云客户端能拿到当前会话。 */
     hasSession: sessionAlive(),
     configured: !!(config.url && config.key),
+    protocolCompatible: !DB.clientProtocol
+      || DB.clientProtocol.protocol_version === null
+      || Number(DB.clientProtocol.protocol_version)
+        >= Number(DB.clientProtocol.minimum_protocol_version || 2),
   };
 }
 
@@ -266,6 +270,54 @@ function sessionAlive() {
     if (raw === "" || raw === "null") return false;
     return true;
   } catch (error) {
+    return true;
+  }
+}
+
+const APP_PROTOCOL_VERSION = 2;
+const APP_CLIENT_VERSION = "2.0.9";
+
+async function ensureClientProtocol(force) {
+  if (!DB.profile || !initCloud()) return false;
+  const cached = DB.clientProtocol || {};
+  if (!force && cached.checked_at
+      && Date.now() - Number(cached.checked_at) < 60000) {
+    return Number(cached.protocol_version || 0)
+      >= Number(cached.minimum_protocol_version || 2);
+  }
+  try {
+    let result = await cloudClient.rpc("register_client_protocol", {
+      p_protocol: APP_PROTOCOL_VERSION,
+      p_app_version: APP_CLIENT_VERSION,
+    });
+    if (result.error
+        && /could not find the function|does not exist|schema cache/i.test(String(result.error.message || ""))) {
+      result = await cloudClient.rpc("get_client_protocol");
+    }
+    if (result.error) throw result.error;
+    const data = result.data || {};
+    DB.clientProtocol = {
+      protocol_version: Number(data.protocol_version || APP_PROTOCOL_VERSION),
+      minimum_protocol_version: Number(data.minimum_protocol_version || APP_PROTOCOL_VERSION),
+      checked_at: Date.now(),
+    };
+    saveAll();
+    const compatible = DB.clientProtocol.protocol_version
+      >= DB.clientProtocol.minimum_protocol_version;
+    if (!compatible) {
+      DB.lastSync = Object.assign({}, DB.lastSync, {
+        ok: false,
+        message: "客户端协议过旧，请安装新版后继续同步",
+      });
+      saveAll();
+    }
+    return compatible;
+  } catch (error) {
+    DB.clientProtocol = Object.assign({}, cached, {
+      checked_at: Date.now(),
+      error: String(error.message || error || "协议检查失败"),
+    });
+    saveAll();
     return true;
   }
 }
@@ -764,7 +816,7 @@ function translateAccountError(message) {
 async function adoptSession(user) {
   const previousId = DB.profile && DB.profile.id ? String(DB.profile.id) : "";
   if (!user) { DB.profile = null; DB.identity = null; _save(); return null; }
-  if (previousId && previousId !== String(user.id)) DB.identity = null;
+
   let extra = null;
   try {
     const { data } = await cloudClient.from("profiles")
@@ -774,17 +826,35 @@ async function adoptSession(user) {
     /* 读不到 profile 不阻塞登录——先用基本信息进去，
        界面会提示"资料没同步上"。比直接登录失败好。 */
   }
+
+  const accountId = String(user.id);
+  if (DB && (currentDatabaseKey !== accountDatabaseKey(accountId)
+      || String(DB.account_scope_id || "") !== accountId)) {
+    saveAll();
+    ensureAccountDatabase(accountId);
+    if (typeof resetAccountScopedRuntimeState === "function") {
+      resetAccountScopedRuntimeState();
+    }
+  }
+  const switched = previousId && previousId !== accountId;
   DB.profile = profileFromUser(user, extra);
+  DB.account_scope_id = accountId;
+  DB.company_scope_id = (extra && extra.active_enterprise_id) || null;
+  if (switched) DB.identity = null;
   resetSyncState();
   _save();
   return DB.profile;
 }
 
 async function cloudLogout() {
+  if (DB) saveAll();
   try { if (cloudClient) await cloudClient.auth.signOut(); } catch (error) { /* 忽略 */ }
   DB.profile = null;
   DB.identity = null;
   resetSyncState();
+  if (typeof resetAccountScopedRuntimeState === "function") {
+    resetAccountScopedRuntimeState();
+  }
   _save();
 }
 
@@ -932,8 +1002,84 @@ function translateAuthError(message) {
 
    **只有服务端明确说"唯一约束冲突"时才丢弃**——
    那种情况重试多少次都不会成功，留着只会永远堵住队列。 */
+async function resolveSyncConflict(conflictId, choice) {
+  const conflict = (DB.syncConflicts || []).find(item =>
+    String(item.id) === String(conflictId) && !item.resolved);
+  if (!conflict) throw new Error("这条冲突已经处理过了");
+  if (choice === "cloud") {
+    if (conflict.table === "tasks" && typeof mergeTasks === "function") {
+      mergeTasks([conflict.cloud]);
+    } else if (conflict.table === "worklogs"
+        && typeof mergeRemoteWorklogs === "function") {
+      mergeRemoteWorklogs([conflict.cloud]);
+    }
+    DB.syncQueue = (DB.syncQueue || []).filter(item =>
+      Number(item.id) !== Number(conflict.queue_id));
+    conflict.resolved = true;
+    conflict.resolution = "cloud";
+    conflict.resolved_at = nowISO();
+    saveAll();
+    return true;
+  }
+  if (choice === "local") {
+    const queued = (DB.syncQueue || []).find(item =>
+      Number(item.id) === Number(conflict.queue_id));
+    if (!queued) throw new Error("对应的待上传操作已经不存在");
+    queued.payload = Object.assign({}, conflict.local);
+    queued.payload.updated_at = nowISO();
+    delete queued.lastError;
+    delete queued.lastErrorAt;
+    conflict.resolved = true;
+    conflict.resolution = "local";
+    conflict.resolved_at = nowISO();
+    saveAll();
+    syncNow("conflict-local");
+    return true;
+  }
+  throw new Error("未知的冲突处理方式");
+}
+
+async function detectQueueConflict(item) {
+  if (!item || item.op !== "update" || !item.payload
+      || !item.payload.updated_at || !item.key) return null;
+  const { data, error } = await cloudClient.from(item.table)
+    .select("*").eq("id", item.key).maybeSingle();
+  if (error || !data || !data.updated_at) return null;
+  const remoteTime = String(data.updated_at || "");
+  const localTime = String(item.payload.updated_at || "");
+  if (!remoteTime || !localTime || remoteTime <= localTime) return null;
+
+  const ignore = new Set(["updated_at", "created_at", "sync_status"]);
+  const fields = [];
+  Object.keys(item.payload).forEach(key => {
+    if (ignore.has(key)) return;
+    if (String(item.payload[key] ?? "") !== String(data[key] ?? "")) fields.push(key);
+  });
+  if (!fields.length) return null;
+
+  const conflict = {
+    id: "conflict-" + item.id + "-" + Date.now(),
+    queue_id: item.id,
+    table: item.table,
+    key: item.key,
+    fields: fields,
+    local: item.payload,
+    cloud: data,
+    at: nowISO(),
+    resolved: false,
+  };
+  if (!Array.isArray(DB.syncConflicts)) DB.syncConflicts = [];
+  DB.syncConflicts.push(conflict);
+  saveAll();
+  return conflict;
+}
+
 async function pushQueue() {
   if (!cloudClient || !DB.profile) return { pushed: 0, failed: [] };
+  const compatible = await ensureClientProtocol(false);
+  if (!compatible) {
+    return { pushed: 0, failed: [{ message: "客户端协议过旧，请安装新版" }] };
+  }
   const queue = DB.syncQueue || [];
   if (!queue.length) return { pushed: 0, failed: [] };
 
@@ -943,11 +1089,49 @@ async function pushQueue() {
 
   for (let i = 0; i < batch.length; i += 1) {
     const item = batch[i];
+
+    /* A queue belongs to one account and, where relevant, one company.
+       Refuse to upload it under a different scope. Keeping the item intact
+       is safer than attributing work to the wrong organisation. */
+    if (item.account_id && DB.account_scope_id
+        && String(item.account_id) !== String(DB.account_scope_id)) {
+      item.lastError = "这条待上传数据属于另一个账号，已停止上传";
+      item.lastErrorAt = nowISO();
+      failed.push(item);
+      break;
+    }
+    const currentEnterprise = DB.company_scope_id
+      || (DB.identity && DB.identity.enterprise && DB.identity.enterprise.id)
+      || null;
+    if (item.enterprise_id && currentEnterprise
+        && String(item.enterprise_id) !== String(currentEnterprise)) {
+      item.lastError = "这条待上传数据属于另一家公司，已停止上传";
+      item.lastErrorAt = nowISO();
+      failed.push(item);
+      break;
+    }
+
     try {
+      const conflict = await detectQueueConflict(item);
+      if (conflict) {
+        item.lastError = "云端版本较新，已暂停上传，等待选择保留哪一版";
+        item.lastErrorAt = nowISO();
+        failed.push({ table: item.table, op: item.op, message: item.lastError });
+        break;
+      }
       if (item.op === "delete") {
-        const result = await cloudClient.from(item.table)
-          .delete().eq("id", item.key);
+        if (!["tasks", "task_logs", "worklogs"].includes(item.table)) {
+          throw new Error("不支持的删除同步表：" + item.table);
+        }
+        const result = await cloudClient.rpc("delete_sync_record", {
+          p_table: item.table,
+          p_id: item.key,
+          p_enterprise: currentEnterprise,
+        });
         if (result.error) throw new Error(result.error.message);
+        if (result.data && result.data.ok === false) {
+          throw new Error(result.data.message || "删除同步失败");
+        }
       } else {
         const result = await cloudClient.from(item.table)
           .upsert(item.payload, { onConflict: "id" });
@@ -958,6 +1142,18 @@ async function pushQueue() {
       delete item.lastErrorAt;
     } catch (error) {
       const message = String(error.message || error);
+
+      /* Another device already deleted this row. Apply the server tombstone
+         locally and drop this stale queue item. */
+      if (/record deleted on another device/i.test(message)) {
+        applySyncTombstones([{
+          table_name: item.table,
+          row_id: item.key,
+          deleted_at: nowISO(),
+        }]);
+        done.push(item.id);
+        continue;
+      }
 
       /* 唯一约束冲突：服务端已经有这条了，重试也不会成功。
          当作成功丢弃，否则队列会被这一条永远堵住。 */
@@ -991,6 +1187,9 @@ async function pushQueue() {
       item.lastError = message;
       item.lastErrorAt = nowISO();
       failed.push({ table: item.table, op: item.op, message: message });
+      /* Later queue items may depend on this one (create -> update -> delete).
+         Stop this round and retry from the same item after the cause is fixed. */
+      break;
     }
   }
 
@@ -1058,6 +1257,34 @@ function cursorSafe(value) {
    `events` 是这次拉到的新 task_events（老板看员工的完成/取消，
    员工看老板派的活）；`newWorklogs` 是这次新拉到的工时行，
    用来合成"今天收到 N 条工时"那条汇总。 */
+function applySyncTombstones(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return 0;
+  let changed = 0;
+  const removed = new Set();
+  list.forEach(row => {
+    const table = String(row.table_name || "");
+    const id = String(row.row_id || "");
+    if (!table || !id) return;
+    removed.add(table + ":" + id);
+    changed += 1;
+  });
+  DB.tasks = (DB.tasks || []).filter(row =>
+    !removed.has("tasks:" + String(row.id)));
+  DB.taskLogs = (DB.taskLogs || []).filter(row =>
+    !removed.has("task_logs:" + String(row.id)));
+  DB.remoteWorklogs = (DB.remoteWorklogs || []).filter(row =>
+    !removed.has("worklogs:" + String(row.id)));
+  DB.worklogs = (DB.worklogs || []).filter(row =>
+    !removed.has("worklogs:" + String(row.id)));
+  DB.syncQueue = (DB.syncQueue || []).filter(item =>
+    !removed.has(String(item.table) + ":" + String(item.key)));
+  DB.syncConflicts = (DB.syncConflicts || []).filter(item =>
+    !removed.has(String(item.table) + ":" + String(item.key)));
+  saveAll();
+  return changed;
+}
+
 async function pullAll() {
   const empty = { changed: 0, events: [], newWorklogs: [] };
   if (!cloudClient || !DB.profile) {
@@ -1253,6 +1480,22 @@ async function pullAll() {
       const watermark = latestTimestamp(data, "created_at");
       if (watermark) DB.syncCursor.taskEvents = watermark;
     }
+  }
+
+  /* ---- deletion tombstones ---- */
+  try {
+    const { data, error } = await cloudClient.rpc("get_sync_tombstones", {
+      p_since: cursor.tombstones ? cursorSafe(cursor.tombstones) : null,
+    });
+    if (error) noteError("删除标记", error);
+    if (!error && data) {
+      const rows = Array.isArray(data) ? data : [];
+      changed += applySyncTombstones(rows);
+      const watermark = latestTimestamp(rows, "deleted_at");
+      if (watermark) DB.syncCursor.tombstones = watermark;
+    }
+  } catch (error) {
+    noteError("删除标记", error);
   }
 
   /* 记下拉取错误，界面能看见。

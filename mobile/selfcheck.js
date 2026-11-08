@@ -119,6 +119,7 @@ function makeContext() {
     },
   };
   sandbox.window = sandbox;
+  sandbox.__storage = storage;
   return vm.createContext(sandbox);
 }
 
@@ -1148,19 +1149,97 @@ test("待上传数量算得对", () => {
   if (run("pendingCount()") !== 2) throw new Error("应当是 2");
 });
 
-test("切换账号会重置同步游标和队列", () => {
+test("切换账号保留待上传队列但重置同步游标", () => {
   fresh();
-  /* 必须重置：profile.id 是服务端 uuid，切账号后如果不清 cursor，
-     增量拉取会从上一个人的时间点继续，漏掉新账号的数据。 */
   run(`queueChange("tasks", "insert", "a", {});
     DB.syncCursor = {tasks: "2026-01-01 00:00:00"};
     DB.lastSync = {at: "x", ok: true, pending: 5, message: "旧消息"};
     resetSyncState();`);
-  if (run("DB.syncQueue.length") !== 0) throw new Error("队列没清空");
+  if (run("DB.syncQueue.length") !== 1) {
+    throw new Error("未上传队列被登录/退出流程清空了");
+  }
   if (Object.keys(plain(run("DB.syncCursor"))).length !== 0) {
     throw new Error("游标没清空");
   }
   if (run("DB.lastSync.pending") !== 0) throw new Error("状态没重置");
+});
+
+test("账号数据库彼此隔离且切换后能恢复", () => {
+  fresh();
+  run('activateAccountDatabase("account-a");'
+    + 'addProject({name: "A 的项目"}); saveAll();'
+    + 'activateAccountDatabase("account-b");'
+    + 'addProject({name: "B 的项目"}); saveAll();'
+    + 'activateAccountDatabase("account-a");');
+  if (run("DB.projects.length") !== 1
+      || run("DB.projects[0].name") !== "A 的项目") {
+    throw new Error("切回账号 A 后没有恢复 A 自己的数据");
+  }
+  if (run("DB.account_scope_id") !== "account-a") {
+    throw new Error("数据库没有记录账号 scope");
+  }
+  run('activateAccountDatabase("account-b");');
+  if (run("DB.projects.length") !== 1
+      || run("DB.projects[0].name") !== "B 的项目") {
+    throw new Error("账号 B 读到了账号 A 的数据");
+  }
+});
+
+test("已保存账号属于设备设置，不随账号数据库切换消失", () => {
+  fresh();
+  const accountSource = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  new vm.Script(accountSource, { filename: "account.js" }).runInContext(ctx);
+  run('rememberAccount("boss-a", "boss", "老板 A", "pass-a");'
+    + 'activateAccountDatabase("other-account");'
+    + 'rememberAccount("staff-b", "employee", "员工 B", "pass-b");');
+  const rows = plain(run("savedAccountsList()"));
+  if (rows.length !== 2 || rows[0].code !== "staff-b") {
+    throw new Error("切换账号后已保存账号列表没有保留");
+  }
+});
+
+test("多账号连续切换 20 次不串数据", () => {
+  fresh();
+  run('activateAccountDatabase("switch-a"); addProject({name:"A only"}); saveAll();'
+    + 'activateAccountDatabase("switch-b"); addProject({name:"B only"}); saveAll();');
+  for (let i = 0; i < 20; i += 1) {
+    const account = i % 2 === 0 ? "switch-a" : "switch-b";
+    const expected = account === "switch-a" ? "A only" : "B only";
+    run('activateAccountDatabase(' + JSON.stringify(account) + ');');
+    if (run("DB.projects.length") !== 1
+        || run("DB.projects[0].name") !== expected) {
+      throw new Error("第 " + (i + 1) + " 次切换账号发生数据串号");
+    }
+  }
+});
+
+test("旧数据必须显式归属，且旧队列不会自动激活", () => {
+  fresh();
+  run(`DB = emptyDatabase();
+  DB.projects = [{id: 1, name: "旧项目"}];
+  DB.syncQueue = [{id: 1, table: "tasks", op: "insert", key: "old"}];
+  saveAll();
+  activateAccountDatabase("account-owner");
+  claimLegacyDataForCurrentAccount();`);
+  if (run("DB.projects.length") !== 1
+      || run("DB.projects[0].name") !== "旧项目") {
+    throw new Error("确认归属后旧项目没有导入");
+  }
+  if (run("DB.syncQueue.length") !== 0) {
+    throw new Error("旧队列不应自动归到新账号");
+  }
+  const backups = plain(run("databaseBackups()"));
+  if (!backups.length) throw new Error("旧数据导入前没有留备份");
+});
+
+test("切换公司清缓存但不清账号队列", () => {
+  fresh();
+  run('activateAccountDatabase("account-company");'
+    + 'queueChange("tasks", "insert", "pending", {id: "pending"});'
+    + 'clearCompanyScopedCache();');
+  if (run("pendingCount()") !== 1) {
+    throw new Error("切换公司时待上传队列被清空");
+  }
 });
 
 test("云服务配置：预置值可用，用户填的能覆盖", () => {
@@ -5505,6 +5584,51 @@ test("高级模式：多公司升级后的 ON CONFLICT 已修复", () => {
     "grant execute on function public.set_enterprise_ui_mode(text)",
   ]) {
     if (!sql.includes(text)) throw new Error("高级模式修复 SQL 缺少 " + text);
+  }
+});
+
+test("多账号同步修复：隔离、队列、协议和组织健康完整接线", () => {
+  fresh();
+  run('activateAccountDatabase("scope-account");'
+    + 'DB.company_scope_id="scope-company";'
+    + 'queueChange("tasks","update","scope-key",{id:"scope-key"});');
+  if (run("DB.syncQueue[0].account_id") !== "scope-account"
+      || run("DB.syncQueue[0].enterprise_id") !== "scope-company") {
+    throw new Error("待上传记录没有绑定账号和公司 scope");
+  }
+
+  const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
+  for (const text of [
+    "saved_accounts", "switchAccount", "resetAccountScopedRuntimeState",
+    "maybePromptLegacyDataClaim", "claimLegacyDataForCurrentAccount",
+  ]) {
+    if (!account.includes(text)) throw new Error("account.js 缺少 " + text);
+  }
+  const sync = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  for (const text of [
+    "ensureClientProtocol", "detectQueueConflict", "resolveSyncConflict",
+    "delete_sync_record", "get_sync_tombstones", "applySyncTombstones",
+    "这条待上传数据属于另一个账号", "break;",
+  ]) {
+    if (!sync.includes(text)) throw new Error("sync.js 缺少 " + text);
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of [
+    "accountDatabaseKey(lastAccountId)", "localSyncDiagnostics",
+    "btn-local-backup", "data-conflict-local",
+  ]) {
+    if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+
+  const sqlPath = path.join(HERE, "sql", "multi-account-sync-health-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少多账号修复 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "repair_my_organization", "get_organization_health",
+    "register_client_protocol", "client_protocol_versions",
+    "sync_tombstones", "delete_sync_record", "get_sync_tombstones",
+  ]) {
+    if (!sql.includes(text)) throw new Error("多账号 SQL 缺少 " + text);
   }
 });
 

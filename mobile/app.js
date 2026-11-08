@@ -22,9 +22,96 @@ window.addEventListener("error", event => {
 async function runSystemDiagnosis() {
   const box = $("system-health-result");
   if (!box) return;
-  if (!DB.profile) { box.textContent = "请先登录账号。"; return; }
-  if (!initCloud()) { box.textContent = "云组件未加载，无法运行诊断。"; return; }
-  box.textContent = "正在检查账号、数据库和功能迁移…";
+  const local = typeof localSyncDiagnostics === "function"
+    ? localSyncDiagnostics() : {};
+  const pending = Number(local.pending || 0);
+  const localHtml = '<div class="banner ' + (pending || local.pullError
+      ? "warn" : "good") + '">'
+    + (pending ? '本机还有 ' + pending + ' 条待上传数据'
+      : local.pullError ? '上次拉取有异常' : '本机账号数据与队列正常')
+    + '</div>'
+    + '<div class="identity-meta-grid" style="margin-top:10px">'
+    + '<div><span>当前账号</span><b>' + escapeHtml((DB.profile && DB.profile.code) || "未登录") + '</b></div>'
+    + '<div><span>当前公司</span><b>' + escapeHtml(local.company_id || "未确定") + '</b></div>'
+    + '<div><span>最近同步</span><b>' + escapeHtml((local.lastSync && local.lastSync.at) || "尚未同步") + '</b></div>'
+    + '<div><span>自动备份</span><b>' + num(local.backup_count) + ' 份</b></div>'
+    + '</div>'
+    + (local.conflicts
+      ? '<div class="banner warn" style="margin-top:8px">有 ' + num(local.conflicts)
+        + ' 条同步冲突，云端和本机版本都已保留。</div>'
+        + (local.conflict_items || []).map(item => '<div class="today-ledger-row">'
+          + '<div><b>' + escapeHtml(item.table + ' · ' + (item.fields || []).join('、'))
+          + '</b><span>记录 ' + escapeHtml(item.key) + '</span></div>'
+          + '<div class="btn-row"><button class="identity-small-btn" data-conflict-local="'
+          + escapeHtml(item.id) + '">用本机</button>'
+          + '<button class="identity-small-btn" data-conflict-cloud="'
+          + escapeHtml(item.id) + '">用云端</button></div></div>').join("")
+      : "")
+    + (local.pullError ? '<div class="banner bad" style="margin-top:8px">拉取失败：'
+      + escapeHtml(local.pullError) + '</div>' : "")
+    + (local.failures || []).map(item => '<div class="today-ledger-row">'
+      + '<div><b>' + escapeHtml(item.table || "待上传") + '</b><span>'
+      + escapeHtml(item.error || "") + '</span></div></div>').join("")
+    + (local.legacy_available
+      ? '<div class="banner warn" style="margin-top:8px">发现旧版本未归属数据 '
+        + num((local.legacy_summary || {}).total || 0)
+        + ' 条，可手动确认导入当前账号。</div>'
+        + '<button class="btn ghost" id="btn-legacy-claim" style="width:100%;margin-top:8px">'
+        + '导入旧数据到当前账号</button>' : "")
+    + '<div class="btn-row" style="margin-top:10px">'
+    + '<button class="btn ghost" id="btn-local-backup">立即备份</button>'
+    + '<button class="btn" id="btn-local-sync">立即同步</button></div>';
+
+  const bindLocalButtons = () => {
+    if ($("btn-local-backup")) {
+      $("btn-local-backup").onclick = () => {
+        try {
+          const key = backupCurrentDatabase("manual-diagnostic");
+          toast(key ? "本机数据已备份" : "当前没有可备份的数据");
+          runSystemDiagnosis();
+        } catch (error) { toast(String(error.message || error)); }
+      };
+    }
+    if ($("btn-legacy-claim")) {
+      $("btn-legacy-claim").onclick = () => {
+        if (!confirm("把旧版本本机数据导入当前账号？\n\n会先自动备份，旧队列不会自动上传。")) return;
+        claimLegacyDataForCurrentAccount();
+        runSystemDiagnosis();
+        toast("旧数据已导入当前账号");
+      };
+    }
+    document.querySelectorAll("[data-conflict-local]").forEach(button => {
+      button.onclick = async () => {
+        await resolveSyncConflict(button.dataset.conflictLocal, "local");
+        runSystemDiagnosis();
+      };
+    });
+    document.querySelectorAll("[data-conflict-cloud]").forEach(button => {
+      button.onclick = async () => {
+        await resolveSyncConflict(button.dataset.conflictCloud, "cloud");
+        runSystemDiagnosis();
+      };
+    });
+    if ($("btn-local-sync")) {
+      $("btn-local-sync").onclick = async () => {
+        await syncNow("diagnostic");
+        runSystemDiagnosis();
+      };
+    }
+  };
+
+  if (!DB.profile) {
+    box.innerHTML = localHtml + '<div class="meta" style="margin-top:10px">登录后可继续检查云端数据库。</div>';
+    bindLocalButtons();
+    return;
+  }
+  if (!initCloud()) {
+    box.innerHTML = localHtml + '<div class="banner warn" style="margin-top:10px">云组件未加载，无法检查云端。</div>';
+    bindLocalButtons();
+    return;
+  }
+  box.innerHTML = localHtml + '<div class="meta" style="margin-top:10px">正在检查云端数据库…</div>';
+  bindLocalButtons();
   try {
     await ensureFreshCloudSession();
     const { data, error } = await cloudClient.rpc("get_platform_health");
@@ -32,20 +119,21 @@ async function runSystemDiagnosis() {
     const checks = Array.isArray(data && data.checks) ? data.checks : [];
     const failed = checks.filter(item => !item.ok);
     const migrations = Array.isArray(data && data.migrations) ? data.migrations.length : 0;
-    box.innerHTML = (failed.length
-      ? '<div class="banner bad">缺少 ' + failed.length + ' 项数据库功能，请检查 SQL 迁移。</div>'
-      : '<div class="banner good">账号、数据库和核心功能检查通过。</div>')
+    box.innerHTML = localHtml
+      + (failed.length
+        ? '<div class="banner bad">云端缺少 ' + failed.length + ' 项数据库功能。</div>'
+        : '<div class="banner good">云端账号、数据库和核心功能检查通过。</div>')
       + '<div class="meta" style="margin-top:8px">已登记迁移 ' + migrations
       + ' 项 · 服务器时间 ' + escapeHtml(String(data && data.server_time || "")) + '</div>'
       + checks.map(item => '<div class="today-ledger-row"><div><b>'
         + escapeHtml(item.label || item.key) + '</b></div><strong>'
         + (item.ok ? "正常" : "缺失") + '</strong></div>').join("");
   } catch (error) {
-    box.innerHTML = '<div class="banner bad">诊断失败：'
+    box.innerHTML = localHtml + '<div class="banner bad" style="margin-top:10px">云端诊断失败：'
       + escapeHtml(String(error.message || error)) + '</div>';
   }
+  bindLocalButtons();
 }
-
 function showBootError(title, detail) {
   const box = document.getElementById("boot-error");
   box.innerHTML = "<b>" + escapeHtml(title) + "</b>"
@@ -54,7 +142,20 @@ function showBootError(title, detail) {
 }
 
 function boot() {
-  DB = loadAll();
+  const lastAccountId = getSetting("last_account_id", "");
+  DB = loadAll(lastAccountId ? accountDatabaseKey(lastAccountId) : undefined);
+
+  /* Upgrade path: an old install has only the shared legacy database.
+     Create the account-owned database without moving business data. The
+     ownership prompt decides later whether old records belong to this user. */
+  if (currentDatabaseKey === DB_KEY && DB.profile && DB.profile.id) {
+    const legacyProfile = DB.profile;
+    ensureAccountDatabase(String(legacyProfile.id));
+    DB.profile = legacyProfile;
+    DB.account_scope_id = String(legacyProfile.id);
+    saveAll();
+  }
+
   applyTheme(getSetting("theme", "light"));
   makeNavScrollable();
   bindGlobalEvents();
@@ -671,6 +772,12 @@ function bindGlobalEvents() {
   if ($("btn-my-companies-refresh")) {
     $("btn-my-companies-refresh").onclick = () => loadMyCompanies(true);
   }
+  if ($("btn-org-health")) {
+    $("btn-org-health").onclick = () => loadOrganizationHealth();
+  }
+  if ($("btn-org-repair")) {
+    $("btn-org-repair").onclick = () => repairMyOrganizationFromUI();
+  }
 
   if ($("btn-check-update")) {
     $("btn-check-update").onclick = () => checkForAppUpdate(true);
@@ -759,7 +866,7 @@ function bindGlobalEvents() {
     showPage(DB.profile && DB.profile.role === "employee" ? "tasks" : "dash");
   };
   $("btn-switch-account").onclick = () => {
-    cloudLogout().then(() => { renderLogin(); toast("请输入新账号"); });
+    switchAccount().then(() => { renderLogin(); toast("请输入新账号"); });
   };
 
   /* ---- 员工任务页 ---- */
@@ -2787,5 +2894,3 @@ document.addEventListener("DOMContentLoaded", () => {
     showBootError("启动失败", error.message + "\n\n" + (error.stack || ""));
   }
 });
-
-
