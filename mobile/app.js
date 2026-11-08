@@ -916,6 +916,7 @@ function bindGlobalEvents() {
     showPage("me");
     toast("已切到" + (next === "dark" ? "深色" : "浅色"));
   };
+  $("btn-me-companies").onclick = () => showPage("companies");
   $("btn-me-accounts").onclick = () => showPage("staff");
 
   /* 新加的四项：开工、兑换、请假、商品管理。

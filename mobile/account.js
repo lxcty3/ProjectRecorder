@@ -587,6 +587,9 @@ function applyRoleUI() {
   }
 
   /* 「我要请假」只给普通员工看。 */
+  if ($("btn-me-companies")) {
+    $("btn-me-companies").classList.toggle("hidden", !profile);
+  }
   if ($("btn-me-leave")) {
     $("btn-me-leave").classList.toggle("hidden", !isStaff);
   }
