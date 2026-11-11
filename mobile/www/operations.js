@@ -8,6 +8,7 @@
 
 let operationsBusy = false;
 let myPerformanceBusy = false;
+let operationsStaleMessage = "";
 const WORKLOG_DIMENSION_RPC = "upsert_worklog_dimensions";
 
 function emptyOperationsState(at) {
@@ -85,6 +86,13 @@ function operationsEvidenceEntries(evidence) {
 
 function renderOperations() {
   if (!$("operations-projects") || !$("operations-capacity")) return;
+  const banner = $("operations-banner");
+  if (banner) {
+    const message = operationsStaleMessage || String(DB.pullError || "");
+    banner.innerHTML = message
+      ? '<div class="banner warn">数据可能不是最新：' + escapeHtml(message) + '</div>'
+      : "";
+  }
   const state = operationsState();
   const access = state.access && typeof state.access === "object" ? state.access : {};
   const projects = Array.isArray(state.projects) ? state.projects : [];
@@ -286,6 +294,16 @@ async function loadOperations(force) {
   if (operationsBusy) return;
   operationsBusy = true;
   try {
+    try {
+      const cloudProjects = typeof pullCloudProjects === "function"
+        ? await pullCloudProjects() : { changed: 0, error: null };
+      if (cloudProjects && cloudProjects.error) {
+        operationsStaleMessage = String(
+          cloudProjects.error.message || cloudProjects.error);
+      }
+    } catch (projectError) {
+      operationsStaleMessage = String(projectError.message || projectError);
+    }
     const data = await operationsRpc("get_operations_dashboard", {
       p_weeks: 4,
     });
@@ -298,10 +316,21 @@ async function loadOperations(force) {
       data && typeof data === "object" ? data : {},
       { at: Date.now() }
     );
+    const serverIds = new Set((DB.operations.projects || [])
+      .map(item => String(item.project_id || "")));
+    const localIds = new Set((DB.projects || [])
+      .filter(item => item.remote_id)
+      .map(item => String(item.remote_id)));
+    const missing = [...serverIds].filter(id => id && !localIds.has(id));
+    operationsStaleMessage = missing.length
+      ? '经营摘要有 ' + missing.length + ' 个项目尚未合并到首页，请再刷新一次。'
+      : "";
     saveAll();
     renderOperations();
   } catch (error) {
-    toast(String(error.message || error));
+    operationsStaleMessage = String(error.message || error || "经营数据加载失败");
+    renderOperations();
+    toast(operationsStaleMessage);
   } finally {
     operationsBusy = false;
   }

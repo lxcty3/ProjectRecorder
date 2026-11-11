@@ -1074,6 +1074,51 @@ async function detectQueueConflict(item) {
   return conflict;
 }
 
+async function pushQueuedProject(item) {
+  const payload = item.payload || {};
+  if (item.op === "delete") {
+    if (!payload.remote_id) return;
+    const result = await cloudClient.from("projects")
+      .delete().eq("id", payload.remote_id);
+    if (result.error) throw new Error(result.error.message);
+    return;
+  }
+  const result = await cloudClient.rpc("save_project", {
+    p_id: payload.remote_id || null,
+    p_version: payload.remote_version || null,
+    p_data: payload,
+  });
+  if (result.error) throw new Error(result.error.message);
+  if (!result.data || !result.data.id) throw new Error("项目保存后没有返回云端 ID");
+  mergeCloudProjects([result.data]);
+  saveAll();
+}
+
+async function pushQueuedProjectStep(item) {
+  const payload = item.payload || {};
+  if (item.op === "delete") {
+    if (!payload.remote_id) return;
+    const result = await cloudClient.from("project_steps")
+      .delete().eq("id", payload.remote_id);
+    if (result.error) throw new Error(result.error.message);
+    return;
+  }
+  const project = getProject(payload.project_id);
+  if (!project || !project.remote_id) {
+    throw new Error("步骤所属项目还没有云端 ID，项目上传后会重试");
+  }
+  const result = await cloudClient.rpc("save_project_step", {
+    p_id: payload.remote_id || null,
+    p_project: project.remote_id,
+    p_version: payload.remote_version || null,
+    p_data: payload,
+  });
+  if (result.error) throw new Error(result.error.message);
+  if (!result.data || !result.data.id) throw new Error("步骤保存后没有返回云端 ID");
+  mergeCloudProjectSteps([result.data]);
+  saveAll();
+}
+
 async function pushQueue() {
   if (!cloudClient || !DB.profile) return { pushed: 0, failed: [] };
   const compatible = await ensureClientProtocol(false);
@@ -1083,7 +1128,11 @@ async function pushQueue() {
   const queue = DB.syncQueue || [];
   if (!queue.length) return { pushed: 0, failed: [] };
 
-  const batch = queue.slice(0, QUEUE_BATCH);
+  const priority = { projects: 0, project_steps: 1 };
+  const batch = queue.slice(0, QUEUE_BATCH).map((item, index) => ({ item, index }))
+    .sort((a, b) => (priority[a.item.table] ?? 2) - (priority[b.item.table] ?? 2)
+      || a.index - b.index)
+    .map(row => row.item);
   const done = [];
   const failed = [];
 
@@ -1118,6 +1167,20 @@ async function pushQueue() {
         item.lastErrorAt = nowISO();
         failed.push({ table: item.table, op: item.op, message: item.lastError });
         break;
+      }
+      if (item.table === "projects") {
+        await pushQueuedProject(item);
+        done.push(item.id);
+        delete item.lastError;
+        delete item.lastErrorAt;
+        continue;
+      }
+      if (item.table === "project_steps") {
+        await pushQueuedProjectStep(item);
+        done.push(item.id);
+        delete item.lastError;
+        delete item.lastErrorAt;
+        continue;
       }
       if (item.op === "delete") {
         if (!["tasks", "task_logs", "worklogs"].includes(item.table)) {
@@ -1285,6 +1348,163 @@ function applySyncTombstones(rows) {
   return changed;
 }
 
+function cloudSyncDateOnly(value) {
+  const text = String(value || "");
+  return text ? text.slice(0, 10) : "";
+}
+
+function cloudProjectFields(row) {
+  return {
+    remote_id: String(row.id || ""),
+    remote_version: Number(row.version || 1),
+    cloud_updated_at: String(row.updated_at || ""),
+    name: String(row.name || ""),
+    owner: String(row.owner || ""),
+    client: String(row.client || ""),
+    status: String(row.status || "进行中"),
+    priority: String(row.priority || "中"),
+    start_date: cloudSyncDateOnly(row.start_date),
+    due_date: cloudSyncDateOnly(row.due_date),
+    budget: num(row.budget),
+    cost: num(row.cost),
+    progress: clamp(num(row.progress), 0, 100),
+    note: String(row.note || ""),
+    created_at: String(row.created_at || nowISO()),
+    updated_at: String(row.updated_at || nowISO()),
+  };
+}
+
+function cloudStepFields(row, localProjectId) {
+  return {
+    remote_id: String(row.id || ""),
+    remote_version: Number(row.version || 1),
+    cloud_updated_at: String(row.updated_at || ""),
+    project_id: Number(localProjectId),
+    seq: num(row.seq),
+    name: String(row.name || ""),
+    owner: String(row.owner || ""),
+    status: String(row.status || "未开始"),
+    start_date: cloudSyncDateOnly(row.start_date),
+    due_date: cloudSyncDateOnly(row.due_date),
+    progress: clamp(num(row.progress), 0, 100),
+    note: String(row.note || ""),
+    created_at: String(row.created_at || nowISO()),
+    updated_at: String(row.updated_at || nowISO()),
+  };
+}
+
+function pendingSyncKeys(table) {
+  return new Set((DB.syncQueue || [])
+    .filter(item => item.table === table)
+    .map(item => String(item.key)));
+}
+
+function pendingDeleteRemoteIds(table) {
+  return new Set((DB.syncQueue || [])
+    .filter(item => item.table === table && item.op === "delete")
+    .map(item => String((item.payload || {}).remote_id || ""))
+    .filter(Boolean));
+}
+
+function mergeCloudProjects(rows) {
+  if (!Array.isArray(DB.projects)) DB.projects = [];
+  if (!Array.isArray(DB.steps)) DB.steps = [];
+  const activeRows = (Array.isArray(rows) ? rows : []).filter(row => !row.archived_at);
+  const pending = pendingSyncKeys("projects");
+  const deleting = pendingDeleteRemoteIds("projects");
+  const remoteIds = new Set();
+  let changed = 0;
+
+  activeRows.forEach(row => {
+    const remoteId = String(row.id || "");
+    if (!remoteId || deleting.has(remoteId)) return;
+    remoteIds.add(remoteId);
+    const fields = cloudProjectFields(row);
+    let local = DB.projects.find(item => String(item.remote_id || "") === remoteId);
+    if (!local) {
+      local = Object.assign({ id: nextId("project") }, fields);
+      DB.projects.push(local);
+      changed += 1;
+      return;
+    }
+    if (pending.has(String(local.id))) return;
+    if (local.cloud_updated_at === fields.cloud_updated_at) return;
+    Object.assign(local, fields);
+    changed += 1;
+  });
+
+  const before = DB.projects.length;
+  DB.projects = DB.projects.filter(item =>
+    !item.remote_id || remoteIds.has(String(item.remote_id))
+      || pending.has(String(item.id)));
+  changed += before - DB.projects.length;
+  if (changed) saveAll();
+  return changed;
+}
+
+function mergeCloudProjectSteps(rows) {
+  if (!Array.isArray(DB.steps)) DB.steps = [];
+  const pending = pendingSyncKeys("project_steps");
+  const deleting = pendingDeleteRemoteIds("project_steps");
+  const remoteIds = new Set();
+  let changed = 0;
+
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const remoteProjectId = String(row.project_id || "");
+    const project = DB.projects.find(item =>
+      String(item.remote_id || "") === remoteProjectId);
+    if (!project) return;
+    const remoteId = String(row.id || "");
+    if (!remoteId || deleting.has(remoteId)) return;
+    remoteIds.add(remoteId);
+    const fields = cloudStepFields(row, project.id);
+    let local = DB.steps.find(item => String(item.remote_id || "") === remoteId);
+    if (!local) {
+      local = Object.assign({ id: nextId("step") }, fields);
+      DB.steps.push(local);
+      changed += 1;
+      return;
+    }
+    if (pending.has(String(local.id))) return;
+    if (local.cloud_updated_at === fields.cloud_updated_at) return;
+    Object.assign(local, fields);
+    changed += 1;
+  });
+
+  const before = DB.steps.length;
+  DB.steps = DB.steps.filter(item =>
+    !item.remote_id || remoteIds.has(String(item.remote_id))
+      || pending.has(String(item.id)));
+  changed += before - DB.steps.length;
+  if (changed) saveAll();
+  return changed;
+}
+
+async function pullCloudProjects() {
+  if (!cloudClient || !DB.profile) return { changed: 0, error: null };
+  const identityData = typeof identityState === "function" ? identityState() : null;
+  const ownerId = identityData && identityData.enterprise
+    ? identityData.enterprise.owner_profile_id
+    : (DB.profile.boss_id || (DB.profile.role === "boss" ? DB.profile.id : ""));
+  if (!ownerId) return { changed: 0, error: new Error("当前账号没有有效公司") };
+  const projects = await cloudClient.from("projects").select("*")
+    .eq("boss_id", ownerId)
+    .order("updated_at", { ascending: false })
+    .limit(1000);
+  if (projects.error) return { changed: 0, error: projects.error };
+  let changed = mergeCloudProjects(projects.data || []);
+
+  const steps = await cloudClient.from("project_steps").select("*")
+    .eq("boss_id", ownerId)
+    .order("seq", { ascending: true })
+    .limit(5000);
+  if (steps.error) return { changed: changed, error: steps.error };
+  changed += mergeCloudProjectSteps(steps.data || []);
+  DB.cloudProjectsAt = nowISO();
+  saveAll();
+  return { changed: changed, error: null };
+}
+
 async function pullAll() {
   const empty = { changed: 0, events: [], newWorklogs: [] };
   if (!cloudClient || !DB.profile) {
@@ -1319,6 +1539,17 @@ async function pullAll() {
     if (!error) return;
     pullErrors.push(label + "：" + String(error.message || error));
   };
+
+  /* ---- 项目与步骤 ----
+     手机本地项目和云端项目原本是两套数据，经营摘要能算出项目、
+     首页却显示 0。这里把公司项目与步骤先并入本地缓存，再拉任务和工时。 */
+  try {
+    const projectSync = await pullCloudProjects();
+    if (projectSync.error) noteError("项目", projectSync.error);
+    changed += projectSync.changed || 0;
+  } catch (error) {
+    noteError("项目", error);
+  }
 
   /* ---- 任务 ----
      员工拉"派给我的"，老板拉"我派出去的"。

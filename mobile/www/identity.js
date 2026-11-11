@@ -187,6 +187,42 @@ function identityErrorText(error) {
   return message || "企业身份请求失败。";
 }
 
+function resetIdentityRuntimeCache() {
+  identityLastAttempt = 0;
+  organizationState = null;
+  organizationLastRefresh = 0;
+  if (DB) {
+    DB.identity = null;
+    DB.identityError = "";
+    DB.organizationStatus = { status: "unknown", message: "", at: 0 };
+  }
+}
+
+async function ensureMyOrganization(force) {
+  if (!DB.profile || !initCloud()) return false;
+  const state = DB.organizationStatus || {};
+  if (!force && state.status === "ready" && Date.now() - num(state.at) < 30000) {
+    return true;
+  }
+  const { data, error } = await cloudClient.rpc("repair_my_organization");
+  if (error) throw error;
+  DB.organizationStatus = Object.assign({}, data || {}, { at: Date.now() });
+  if (data && data.enterprise_id && typeof updateCompanyScope === "function") {
+    updateCompanyScope(data.enterprise_id);
+  }
+  saveAll();
+  if (DB.organizationStatus.status !== "ready") {
+    DB.identity = null;
+    DB.identityError = DB.organizationStatus.status === "pending"
+      ? "尚未加入有效公司，请等待老板邀请或联系管理员。"
+      : (DB.organizationStatus.message || "公司关系需要修复。");
+    renderIdentity();
+    return false;
+  }
+  DB.identityError = "";
+  return true;
+}
+
 async function refreshIdentity(force) {
   if (!DB.profile) {
     renderIdentity();
@@ -204,11 +240,17 @@ async function refreshIdentity(force) {
   identityBusy = true;
   identityLastAttempt = now;
   try {
+    const ready = await ensureMyOrganization(force);
+    if (!ready) return;
     const { data, error } = await cloudClient.rpc(
       "get_enterprise_identity_state"
     );
     if (error) throw error;
     if (!data || !data.enterprise) throw new Error("服务端没有返回企业资料");
+    if (data.enterprise.id
+        && typeof updateCompanyScope === "function") {
+      updateCompanyScope(data.enterprise.id);
+    }
     DB.identity = data;
     DB.identityError = "";
     const preferred = data.me && data.me.preferred_mode;
@@ -1017,13 +1059,20 @@ async function respondOrganizationMemberInvite(inviteId, accept) {
 
 async function switchOrganization(enterpriseId) {
   if (!enterpriseId || !initCloud()) return;
+  if (typeof pendingCount === "function" && pendingCount() > 0) {
+    toast("当前公司还有待上传数据，请先同步完成再切换公司");
+    return;
+  }
   try {
     const { error } = await cloudClient.rpc("set_active_organization", {
       p_enterprise: enterpriseId,
     });
     if (error) throw error;
+    if (typeof unsubscribeRealtime === "function") unsubscribeRealtime();
+    if (typeof clearCompanyScopedCache === "function") clearCompanyScopedCache();
     organizationLastRefresh = 0;
     await refreshIdentity(true);
+    if (typeof syncNow === "function") syncNow("company-switch");
     toast("已切换组织");
   } catch (error) { toast(organizationErrorText(error)); }
 }
@@ -1042,6 +1091,10 @@ function organizationErrorText(error) {
   if (lower.includes("rename_organization") || lower.includes("add_organization_member")
       || lower.includes("organization-management-v1")) {
     return "公司管理 SQL 尚未安装，请运行 mobile/sql/organization-management-v1.sql";
+  }
+  if (lower.includes("repair_my_organization")
+      || lower.includes("get_organization_health")) {
+    return "多账号修复 SQL 尚未安装，请运行 mobile/sql/multi-account-sync-health-v1.sql";
   }
   if (lower.includes("organization-founders-v1") || lower.includes("function") && lower.includes("not found")) {
     return "组织股权 SQL 尚未安装，请运行 mobile/sql/organization-founders-v1.sql";

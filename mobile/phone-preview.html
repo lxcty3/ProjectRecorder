@@ -160,6 +160,36 @@
       border-radius: 16px;
       transform: none;
     }
+    body {
+      background:
+        radial-gradient(circle at 18% 12%, rgba(155,140,255,.20), transparent 30%),
+        radial-gradient(circle at 82% 68%, rgba(114,215,199,.09), transparent 34%),
+        radial-gradient(rgba(231,185,111,.10) .7px, transparent .7px),
+        #0f1022;
+      color: #eee9fb;
+    }
+    body::before, body::after { border-color: rgba(199,184,255,.14); }
+    .caption { color: #cfc5e7; }
+    .caption::before { background: #e7b96f; box-shadow: 0 0 0 4px rgba(231,185,111,.10); }
+    .caption b { color: #f0e5ff; }
+    .phone {
+      border-color: rgba(199,184,255,.24);
+      background: linear-gradient(145deg, #35284f, #18152c 52%, #2a2142);
+      box-shadow: 0 38px 100px rgba(0,0,0,.66), 0 0 0 1px rgba(255,255,255,.05), inset 0 0 0 1px rgba(255,255,255,.05);
+    }
+    iframe { background: #f5f1fb; }
+    .hint { color: #9186aa; }
+    .preview-tools button {
+      border-color: rgba(199,184,255,.26);
+      background: rgba(255,255,255,.06);
+      color: #dcd2f2;
+    }
+    .preview-tools button.on {
+      background: #705aa8;
+      border-color: #b9a7ec;
+      color: #fffaff;
+    }
+    body.desktop .phone { background: #18152c; }
     @media (prefers-reduced-motion: no-preference) {
       .phone { animation: settle .55s cubic-bezier(.22,1,.36,1) both; }
       @keyframes settle {
@@ -177,7 +207,7 @@
       <button type="button" data-preview-mode="desktop">桌面预览</button>
     </div>
     <div class="phone">
-      <iframe src="./?v=community-identity-v1" title="项目记录器界面"></iframe>
+      <iframe src="./?v=purple-starry-1" title="项目记录器界面"></iframe>
     </div>
     <div class="hint">在手机尺寸下查看真实交互</div>
   </div>

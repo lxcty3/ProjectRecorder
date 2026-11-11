@@ -1,9 +1,12 @@
 {
-  "versionCode": 8,
-  "versionName": "2.0.6",
-  "releasedAt": "2026-11-07",
+  "versionCode": 17,
+  "versionName": "2.0.15",
+  "releasedAt": "2026-11-10",
   "notes": [
-    "阶段一：主公司、公司成员邀请、今日工作台与版本检查"
+    "新增 16 张星轨陪伴表情，首页可直接选择今天的状态。",
+    "首页加入深墨蓝星空面板、星光背景和轻量动效，浅色与深色主题均可使用。",
+    "小助手、登录页和首页主视觉统一使用新的星空角色。",
+    "保留项目与经营数据一致性修复、公司邀请和多账号同步改动。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }

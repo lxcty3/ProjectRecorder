@@ -1,9 +1,12 @@
 {
-  "versionCode": 8,
-  "versionName": "2.0.6",
-  "releasedAt": "2026-11-07",
+  "versionCode": 17,
+  "versionName": "2.0.15",
+  "releasedAt": "2026-11-10",
   "notes": [
-    "阶段一：主公司、公司成员邀请、今日工作台与版本检查"
+    "淡紫星图主题：以低饱和紫色为主调，减少卡片噪音并增加留白。",
+    "今日、登录、知识星球和我的公司加入场景主视觉。",
+    "保留 16 张星轨表情，统一用于状态反馈、空状态和陪伴选择。",
+    "修复四栏底部导航被挤出、首页卡片横向拥挤和主题色不同步。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }

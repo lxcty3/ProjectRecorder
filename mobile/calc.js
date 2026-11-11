@@ -164,7 +164,7 @@ function projectStats(project) {
   const steps = projectSteps(project.id);
   const done = steps.filter(item => item.status === "已完成").length;
   const blocked = steps.filter(item => item.status === "已阻塞");
-  const logs = worklogsFor({ project_id: project.id });
+  const logs = worklogsFor({ project_id: project.id, includeRemote: true });
   const hours = logs.reduce((sum, item) => sum + num(item.hours), 0);
   const assignments = projectAssignments(project.id);
   const planned = assignments.reduce((sum, item) => sum + num(item.planned_hours), 0);

@@ -151,6 +151,61 @@ function todayCompanyUpdatesHtml() {
     : '<div class="identity-empty game-empty"><b>今天还没有新动态</b><span>公司消息和社区提醒会显示在这里。</span></div>';
 }
 
+function todaySceneData(tasks, pending, open) {
+  if (open) {
+    return {
+      file: "star_04_work",
+      kicker: "专注轨道",
+      title: "今天的任务正在推进",
+      body: "计时器已经启动，先把眼前这一步做完。",
+    };
+  }
+  if (!tasks.length) {
+    return {
+      file: "star_03_tea",
+      kicker: "空白星图",
+      title: "今天暂时没有任务",
+      body: "可以整理计划、补充知识，或者给自己留一点缓冲。",
+    };
+  }
+  if (!pending.length) {
+    return {
+      file: "star_08_great",
+      kicker: "今日完成",
+      title: "所有行动都已完成",
+      body: "收好今天的成果，剩下的时间可以留给复盘。",
+    };
+  }
+  if (pending.length > 3) {
+    return {
+      file: "star_15_tired",
+      kicker: "任务偏多",
+      title: "先挑最重要的一件事",
+      body: "不用同时启动所有任务，完成一件就能让星图重新清晰。",
+    };
+  }
+  return {
+    file: "star_02_roger",
+    kicker: "今日航线",
+    title: "从最近的一步开始",
+    body: "任务已经排好顺序，完成第一项就会看到新的进度。",
+  };
+}
+
+function renderTodayScene(tasks, pending, open) {
+  const box = $("today-scene");
+  if (!box) return;
+  const scene = todaySceneData(tasks, pending, open);
+  box.innerHTML = `<div class="scene-card scene-today">
+    <div class="scene-card-copy">
+      <span class="scene-kicker">${escapeHtml(scene.kicker)}</span>
+      <h2>${escapeHtml(scene.title)}</h2>
+      <p>${escapeHtml(scene.body)}</p>
+    </div>
+    <img class="scene-card-art" src="icons/star/${scene.file}.webp" alt="">
+  </div>`;
+}
+
 function renderToday() {
   const sub = $("today-sub");
   const summary = $("today-summary");
@@ -173,6 +228,8 @@ function renderToday() {
   const pendingItems = todayPendingItems(tasks);
   const open = typeof openWorkSession === "function" ? openWorkSession() : null;
   const updates = typeof notifications === "function" ? notifications() : [];
+
+  renderTodayScene(tasks, pending, open);
 
   sub.textContent = DB.profile
     ? `${DB.profile.name}，先看清今天最重要的三件事`

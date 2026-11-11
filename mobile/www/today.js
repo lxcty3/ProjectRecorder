@@ -151,6 +151,61 @@ function todayCompanyUpdatesHtml() {
     : '<div class="identity-empty game-empty"><b>今天还没有新动态</b><span>公司消息和社区提醒会显示在这里。</span></div>';
 }
 
+function todaySceneData(tasks, pending, open) {
+  if (open) {
+    return {
+      file: "star_04_work",
+      kicker: "专注轨道",
+      title: "今天的任务正在推进",
+      body: "计时器已经启动，先把眼前这一步做完。",
+    };
+  }
+  if (!tasks.length) {
+    return {
+      file: "star_03_tea",
+      kicker: "空白星图",
+      title: "今天暂时没有任务",
+      body: "可以整理计划、补充知识，或者给自己留一点缓冲。",
+    };
+  }
+  if (!pending.length) {
+    return {
+      file: "star_08_great",
+      kicker: "今日完成",
+      title: "所有行动都已完成",
+      body: "收好今天的成果，剩下的时间可以留给复盘。",
+    };
+  }
+  if (pending.length > 3) {
+    return {
+      file: "star_15_tired",
+      kicker: "任务偏多",
+      title: "先挑最重要的一件事",
+      body: "不用同时启动所有任务，完成一件就能让星图重新清晰。",
+    };
+  }
+  return {
+    file: "star_02_roger",
+    kicker: "今日航线",
+    title: "从最近的一步开始",
+    body: "任务已经排好顺序，完成第一项就会看到新的进度。",
+  };
+}
+
+function renderTodayScene(tasks, pending, open) {
+  const box = $("today-scene");
+  if (!box) return;
+  const scene = todaySceneData(tasks, pending, open);
+  box.innerHTML = `<div class="scene-card scene-today">
+    <div class="scene-card-copy">
+      <span class="scene-kicker">${escapeHtml(scene.kicker)}</span>
+      <h2>${escapeHtml(scene.title)}</h2>
+      <p>${escapeHtml(scene.body)}</p>
+    </div>
+    <img class="scene-card-art" src="icons/star/${scene.file}.webp" alt="">
+  </div>`;
+}
+
 function renderToday() {
   const sub = $("today-sub");
   const summary = $("today-summary");
@@ -173,6 +228,8 @@ function renderToday() {
   const pendingItems = todayPendingItems(tasks);
   const open = typeof openWorkSession === "function" ? openWorkSession() : null;
   const updates = typeof notifications === "function" ? notifications() : [];
+
+  renderTodayScene(tasks, pending, open);
 
   sub.textContent = DB.profile
     ? `${DB.profile.name}，先看清今天最重要的三件事`
@@ -268,6 +325,26 @@ async function refreshPointState(force) {
     renderToday();
     return null;
   }
+}
+
+function mobileUiModeError(error) {
+  const message = String(error && error.message || error || "");
+  if (error && error.code === "42P10"
+      || /no unique or exclusion constraint matching the ON CONFLICT/i.test(message)) {
+    return "数据库还缺少多公司兼容修复。\n\n"
+      + "请在 Supabase SQL Editor 运行 sql/fix-advanced-mode-on-conflict.sql，"
+      + "然后重新点击高级模式。";
+  }
+  if (/advanced mode requires/i.test(message)) {
+    return "当前岗位没有高级模式权限。高级模式只对管理、财务、审计或治理岗位开放。";
+  }
+  if (/not an enterprise member/i.test(message)) {
+    return "你还没有加入当前公司，先接受公司邀请或建立公司。";
+  }
+  if (/not signed in/i.test(message)) {
+    return "登录状态已失效，请重新登录。";
+  }
+  return message || "切换模式失败";
 }
 
 async function setMobileUiMode(mode) {

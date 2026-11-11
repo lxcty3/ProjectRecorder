@@ -707,6 +707,64 @@ const PROJECT_FIELDS = [
   "start_date", "due_date", "budget", "cost", "progress", "note",
 ];
 
+function projectCloudPayload(project) {
+  return {
+    remote_id: project.remote_id || "",
+    remote_version: project.remote_version || null,
+    name: project.name || "",
+    owner: project.owner || "",
+    client: project.client || "",
+    status: project.status || "进行中",
+    priority: project.priority || "中",
+    start_date: project.start_date || "",
+    due_date: project.due_date || "",
+    budget: num(project.budget),
+    cost: num(project.cost),
+    progress: clamp(num(project.progress), 0, 100),
+    note: project.note || "",
+  };
+}
+
+function stepCloudPayload(step) {
+  return {
+    remote_id: step.remote_id || "",
+    remote_version: step.remote_version || null,
+    project_id: step.project_id,
+    seq: num(step.seq),
+    name: step.name || "",
+    owner: step.owner || "",
+    status: step.status || "未开始",
+    start_date: step.start_date || "",
+    due_date: step.due_date || "",
+    progress: clamp(num(step.progress), 0, 100),
+    note: step.note || "",
+  };
+}
+
+function dropQueuedSync(table, key) {
+  if (!Array.isArray(DB.syncQueue)) return;
+  DB.syncQueue = DB.syncQueue.filter(item =>
+    item.table !== table || String(item.key) !== String(key));
+}
+
+function queueProjectSync(project, op) {
+  if (!DB.profile || !project || typeof queueChange !== "function") return;
+  if (op === "delete" && !project.remote_id) {
+    dropQueuedSync("projects", project.id);
+    return;
+  }
+  queueChange("projects", op || "upsert", project.id, projectCloudPayload(project));
+}
+
+function queueStepSync(step, op) {
+  if (!DB.profile || !step || typeof queueChange !== "function") return;
+  if (op === "delete" && !step.remote_id) {
+    dropQueuedSync("project_steps", step.id);
+    return;
+  }
+  queueChange("project_steps", op || "upsert", step.id, stepCloudPayload(step));
+}
+
 function addProject(data) {
   const project = {
     id: nextId("project"),
@@ -727,6 +785,7 @@ function addProject(data) {
   if (!project.name) throw new Error("项目名称不能为空。");
   DB.projects.push(project);
   _save();
+  queueProjectSync(project, "upsert");
   return project;
 }
 
@@ -745,6 +804,7 @@ function updateProject(id, data) {
   });
   project.updated_at = nowISO();
   _save();
+  queueProjectSync(project, "upsert");
   return project;
 }
 
@@ -754,7 +814,8 @@ function getProject(id) {
 
 function deleteProject(id) {
   const pid = Number(id);
-  // 级联删掉从属于它的东西。工时也一起删——
+  const project = getProject(pid);
+  // 级联删掉从属于它的东西。工时也一起删
   // 留着「项目已删但工时还在」会让负荷统计出现找不到项目的记录。
   DB.steps = DB.steps.filter(item => item.project_id !== pid);
   DB.worklogs = DB.worklogs.filter(item => item.project_id !== pid);
@@ -763,6 +824,7 @@ function deleteProject(id) {
   DB.metrics = DB.metrics.filter(item => item.project_id !== pid);
   DB.projects = DB.projects.filter(item => item.id !== pid);
   _save();
+  queueProjectSync(project, "delete");
 }
 
 function projectSteps(projectId) {
@@ -793,6 +855,7 @@ function addStep(projectId, data) {
   if (!step.name) throw new Error("步骤名称不能为空。");
   DB.steps.push(step);
   _save();
+  queueStepSync(step, "upsert");
   return step;
 }
 
@@ -807,22 +870,22 @@ function updateStep(id, data) {
   });
   if (!String(step.name).trim()) throw new Error("步骤名称不能为空。");
   _save();
+  queueStepSync(step, "upsert");
   return step;
 }
 
 function deleteStep(id) {
   const sid = Number(id);
-  // 工时不跟着删，只是把关联去掉——那条工时是真干过的活，
+  const step = DB.steps.find(item => item.id === sid) || null;
+  // 工时不跟着删，只是把关联去掉那条工时是真干过的活，
   // 不该因为步骤被删就消失（和电脑端 ON DELETE SET NULL 一致）
   DB.worklogs.forEach(item => { if (item.step_id === sid) item.step_id = null; });
   DB.assignments.forEach(item => { if (item.step_id === sid) item.step_id = null; });
   DB.steps = DB.steps.filter(item => item.id !== sid);
   _save();
+  queueStepSync(step, "delete");
 }
 
-/* ============================================================
-   员工
-   ============================================================ */
 function addEmployee(data) {
   const employee = {
     id: nextId("employee"),
@@ -1055,8 +1118,10 @@ function worklogsFor(options) {
     rows = rows.filter(item => String(item.employee_id) === wanted);
   }
   if (opts.project_id !== undefined && opts.project_id !== null) {
-    const wanted = String(opts.project_id);
-    rows = rows.filter(item => String(item.project_id) === wanted);
+    const project = typeof getProject === "function" ? getProject(opts.project_id) : null;
+    const wanted = new Set([String(opts.project_id)]);
+    if (project && project.remote_id) wanted.add(String(project.remote_id));
+    rows = rows.filter(item => wanted.has(String(item.project_id)));
   }
   if (opts.date_from) rows = rows.filter(item => item.work_date >= opts.date_from);
   if (opts.date_to) rows = rows.filter(item => item.work_date <= opts.date_to);

@@ -1,6 +1,9 @@
 "use strict";
 
-const PUBLIC_SUPABASE_URL = "https://edchntmyqqjqvpngylgc.supabase.co";
+const PUBLIC_SUPABASE_URL = String(
+  window.PROJECT_RECORDER_GATEWAY_URL
+    || "https://edchntmyqqjqvpngylgc.supabase.co"
+).replace(/\/+$/, "");
 const PUBLIC_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkY2hudG15cXFqcXZwbmd5bGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1ODY5ODksImV4cCI6MjEwNzE2Mjk4OX0.6vfi2zxvdbmdLSHoV2U0r4R8zd10UCtO5XGaToqBc7I";
 
 const $ = id => document.getElementById(id);

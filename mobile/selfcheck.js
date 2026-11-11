@@ -1126,6 +1126,78 @@ test("队列去重不会把不同表混在一起", () => {
   }
 });
 
+test("云端项目与步骤会合并到本地，本机独有项目保留", () => {
+  fresh();
+  run(`mergeCloudProjects([{
+    id: "cloud-project-1", version: 3, name: "云端项目",
+    owner: "老板", client: "", status: "进行中", priority: "中",
+    start_date: "2026-01-01", due_date: "2026-02-01",
+    budget: 100, cost: 20, progress: 50, note: "",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z"
+  }]);
+  mergeCloudProjectSteps([{
+    id: "cloud-step-1", version: 2, project_id: "cloud-project-1",
+    seq: 1, name: "云端步骤", owner: "", status: "未开始",
+    progress: 0, note: "", created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z"
+  }]);
+  DB.projects.push({id: 999, name: "本机独有项目"});`);
+  if (run("DB.projects.length") !== 2) {
+    throw new Error("应当合并 1 个云端项目并保留 1 个本机项目");
+  }
+  if (run("DB.projects.filter(function (p) { return !!p.remote_id; }).length") !== 1) {
+    throw new Error("云端项目没有写入 remote_id");
+  }
+  if (run("DB.steps.length") !== 1 || run("DB.steps[0].name") !== "云端步骤") {
+    throw new Error("云端步骤没有合并到本地");
+  }
+  run(`mergeCloudProjects([{
+    id: "cloud-project-1", version: 3, name: "云端项目",
+    owner: "老板", client: "", status: "进行中", priority: "中",
+    start_date: "2026-01-01", due_date: "2026-02-01",
+    budget: 100, cost: 20, progress: 50, note: "",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z"
+  }]);`);
+  if (run("DB.projects.filter(function (p) { return p.remote_id === 'cloud-project-1'; }).length") !== 1) {
+    throw new Error("重复拉取同一个云端项目时产生了重复记录");
+  }
+});
+
+test("本机新建项目与步骤会进入待上传队列", () => {
+  fresh();
+  run(`DB.profile = {id: "profile-1", name: "老板"};
+    DB.account_scope_id = "profile-1";
+    DB.company_scope_id = "enterprise-1";
+    var p = addProject({name: "本机新项目"});
+    updateProject(p.id, {progress: 30});
+    addStep(p.id, {name: "第一步"});`);
+  if (run("DB.syncQueue.filter(function (x) { return x.table === 'projects'; }).length") !== 1) {
+    throw new Error("项目应当只保留 1 条去重后的待上传记录");
+  }
+  if (run("DB.syncQueue.filter(function (x) { return x.table === 'project_steps'; }).length") !== 1) {
+    throw new Error("步骤没有进入待上传队列");
+  }
+  if (run("DB.syncQueue.find(function (x) { return x.table === 'projects'; }).account_id") !== "profile-1") {
+    throw new Error("项目队列没有绑定当前账号");
+  }
+});
+
+test("云端工时会按项目 UUID 归到本地项目", () => {
+  fresh();
+  run(`DB.projects = [{id: 1, remote_id: "cloud-project-1", name: "云端项目"}];
+    DB.worklogs = [];
+    DB.remoteWorklogs = [{
+      id: "cloud-worklog-1", project_id: "cloud-project-1",
+      employee_id: "employee-1", work_date: "2026-01-02", hours: 2
+    }];`);
+  const rows = plain(run('worklogsFor({project_id: 1, includeRemote: true})'));
+  if (rows.length !== 1 || Number(rows[0].hours) !== 2) {
+    throw new Error("云端工时没有按 remote_id 归到本地项目");
+  }
+});
+
 test("上传成功后只清掉成功的那些", () => {
   fresh();
   run(`queueChange("tasks", "insert", "a", {id: "a"});
@@ -4999,6 +5071,30 @@ test("build-www.js 的头像清单和实际文件对得上", () => {
   }
 });
 
+test("星轨陪伴：16 张表情和星空界面完整接入", () => {
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  const block = app.match(/const STAR_STICKERS = \[[\s\S]*?\];/);
+  if (!block) throw new Error("app.js 缺少 STAR_STICKERS");
+  const files = matchAll(block[0], /file:\s*"([^"]+)"/g);
+  if (files.length !== 16) throw new Error("星轨表情应当正好 16 张，实际 " + files.length);
+  files.forEach(file => {
+    [`${file}.webp`, `${file}@face.webp`].forEach(name => {
+      if (!fs.existsSync(path.join(HERE, "icons", "star", name))) {
+        throw new Error("缺少星轨表情 " + name);
+      }
+    });
+  });
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ['class="star-sky"', 'id="star-companion"']) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  if (!app.includes("renderStarCompanion")) throw new Error("缺少星轨渲染入口");
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!build.includes("prepare-star-stickers.py")) {
+    throw new Error("打包脚本没有检查星轨表情");
+  }
+});
+
 test("小助手按回答内容挑表情", () => {
   fresh();
   /* moodForAnswer 在 app.js 里（要用到 faceSrc），而 app.js 依赖 DOM，
@@ -5253,7 +5349,7 @@ test("阶段一：主公司、公司邀请、今日四块和版本检查完整�
   ]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
-  for (const id of ["page-companies", "my-company-primary", "my-company-list", "my-company-people"]) {
+  for (const id of ["page-companies", "my-company-invites", "my-company-primary", "my-company-list", "my-company-people"]) {
     if (html.indexOf(`id="${id}"`) === -1) throw new Error(`缺少 ${id}`);
   }
   const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
@@ -5269,7 +5365,7 @@ test("阶段一：主公司、公司邀请、今日四块和版本检查完整�
     throw new Error("版本检查没有接上 latest.json");
   }
   const companies = fs.readFileSync(path.join(HERE, "companies.js"), "utf8");
-  for (const marker of ["get_my_companies", "get_company_people", "data-company-primary"]) {
+  for (const marker of ["get_my_companies", "get_company_people", "get_organization_member_invites", "respond_organization_member_invite", "myCompanyInvitesHtml", "data-company-primary", "data-my-company-invite-accept"]) {
     if (companies.indexOf(marker) === -1) throw new Error(`我的公司缺少 ${marker}`);
   }
   const companiesSql = fs.readFileSync(
@@ -5399,7 +5495,7 @@ test("经营摘要：管理页、能力缺口和个人绩效依据完整接线",
   if (html.indexOf('data-page="operations"') === -1) {
     throw new Error("高级导航缺少经营摘要入口");
   }
-  if (html.indexOf('src="operations.js"') === -1) {
+  if (!/src="operations\.js(?:\?[^"]*)?"/.test(html)) {
     throw new Error("index.html 没有加载 operations.js");
   }
 
@@ -5629,6 +5725,61 @@ test("多账号同步修复：隔离、队列、协议和组织健康完整接�
     "sync_tombstones", "delete_sync_record", "get_sync_tombstones",
   ]) {
     if (!sql.includes(text)) throw new Error("多账号 SQL 缺少 " + text);
+  }
+});
+
+test("数据一致性：项目同步、经营摘要和首页使用同一份项目缓存", () => {
+  const sync = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  for (const text of [
+    "pullCloudProjects", "mergeCloudProjects", "mergeCloudProjectSteps",
+    "pushQueuedProject", "pushQueuedProjectStep", "save_project",
+    "save_project_step",
+  ]) {
+    if (!sync.includes(text)) throw new Error("sync.js 缺少 " + text);
+  }
+  const operations = fs.readFileSync(path.join(HERE, "operations.js"), "utf8");
+  for (const text of ["pullCloudProjects", "operationsStaleMessage", "operations-banner"]) {
+    if (!operations.includes(text)) throw new Error("operations.js 缺少 " + text);
+  }
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  if (!html.includes('id="operations-banner"')) {
+    throw new Error("经营摘要缺少旧数据提示区域");
+  }
+  const store = fs.readFileSync(path.join(HERE, "store.js"), "utf8");
+  for (const text of ["queueProjectSync", "queueStepSync", "projectCloudPayload"]) {
+    if (!store.includes(text)) throw new Error("store.js 缺少 " + text);
+  }
+});
+
+test("淡紫星图视觉：场景卡、紫色主题和预览框架完整接线", () => {
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of [
+    "scene-login", "scene-company", "planet-signal-art",
+    'id="today-scene"', "purple-starry-1", "charts.js?v=20261111-purple-starry-1",
+  ]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  const today = fs.readFileSync(path.join(HERE, "today.js"), "utf8");
+  for (const text of [
+    "todaySceneData", "renderTodayScene", "star_04_work",
+    "star_03_tea", "star_08_great", "star_15_tired", "star_02_roger",
+  ]) {
+    if (!today.includes(text)) throw new Error("today.js 缺少 " + text);
+  }
+  const css = fs.readFileSync(path.join(HERE, "style.css"), "utf8");
+  for (const text of [
+    "--accent: #705aa8", ".scene-card {", "#nav-simple button {",
+    ".planet-signal-art {", "prefers-reduced-motion",
+  ]) {
+    if (!css.includes(text)) throw new Error("style.css 缺少 " + text);
+  }
+  const charts = fs.readFileSync(path.join(HERE, "charts.js"), "utf8");
+  if (!charts.includes('accent: "#705aa8"')) {
+    throw new Error("图表主题没有同步淡紫色");
+  }
+  const preview = fs.readFileSync(path.join(HERE, "phone-preview.html"), "utf8");
+  if (!preview.includes("#0f1022") || !preview.includes("purple-starry-1")) {
+    throw new Error("手机预览框架没有同步紫色主题");
   }
 });
 

@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#45c4a8">
+<meta name="theme-color" content="#2b2148">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="项目记录器">
 <title>项目记录器</title>
-<link rel="stylesheet" href="style.css?v=20261107-profile-8">
+<link rel="stylesheet" href="style.css?v=20261111-purple-starry-1">
 </head>
 <body>
+<div class="star-sky" aria-hidden="true"></div>
 
 <!-- ============================================================
      启动时如果用不了，这个横幅会显示出来。
@@ -24,11 +25,14 @@
      老用户升级后本机数据还在，不能被一个用不上的登录页挡住。 -->
 <section id="page-login" class="page hidden">
   <div class="body">
-    <div class="login-hero">
-      <span class="login-world-chip">工作冒险手账</span>
-      <img class="hero-art sticker" src="icons/09_暗中观察@hero.webp" alt="">
-      <h1>项目记录器</h1>
-      <p class="login-tagline">和伙伴一起，把每个项目变成一段可回看的冒险。</p>
+    <div class="login-hero scene-card scene-login">
+      <div class="scene-card-copy">
+        <span class="scene-kicker">星图工作手账</span>
+        <h1>项目记录器</h1>
+        <p class="login-tagline">把今天要做的事，放回属于它的轨道。</p>
+        <div class="scene-constellation" aria-hidden="true"><i></i><i></i><i></i></div>
+      </div>
+      <img class="scene-card-art" src="icons/star/star_10_read.webp" alt="">
     </div>
 
     <div id="login-cloud"></div>
@@ -101,6 +105,7 @@
     <button class="icon-btn hidden" id="btn-mode-toggle" title="切换模式">⇄</button>
   </div>
   <div class="body">
+    <div id="today-scene"></div>
     <div class="identity-me-card" id="today-summary"></div>
 
     <div class="section-head"><span>今日焦点</span><span class="meta" id="today-count"></span></div>
@@ -151,6 +156,7 @@
          而里面的「在管项目 3」和下面的列表是同一份信息。
          首屏要留给真正要看的项目列表。 -->
     <div id="dash-stats" class="summary"></div>
+    <div class="star-companion" id="star-companion"></div>
 
     <!-- **现在谁在干活 + 今日产出 + 待审批。**
 
@@ -420,6 +426,15 @@
     <button class="icon-btn" id="btn-my-companies-refresh" title="刷新">↻</button>
   </div>
   <div class="body">
+    <div class="scene-card scene-company">
+      <div class="scene-card-copy">
+        <span class="scene-kicker">组织星图</span>
+        <h2>找到你的公司轨道</h2>
+        <p>查看主公司、成员关系和当前组织，需要时再调整主公司。</p>
+      </div>
+      <img class="scene-card-art" src="icons/star/star_02_roger.webp" alt="">
+    </div>
+    <div id="my-company-invites"></div>
     <div id="my-company-primary"></div>
 
     <div class="section-head"><span>我加入的公司</span>
@@ -429,6 +444,19 @@
     <div class="section-head"><span>公司成员</span>
       <span class="meta" id="my-company-people-count"></span></div>
     <div id="my-company-people"></div>
+
+    <div id="organization-health-section" class="hidden" style="margin-top:20px">
+      <div class="section-head">
+        <span>组织健康检查</span>
+        <div class="btn-row">
+          <button class="icon-btn" id="btn-org-repair" title="修复公司身份">修</button>
+          <button class="icon-btn" id="btn-org-health" title="检查组织健康">↻</button>
+        </div>
+      </div>
+      <div id="organization-health-result" class="meta">
+        检查公司成员、股份和同步状态。
+      </div>
+    </div>
 
     <div class="community-note">
       成员信息按权限分级显示。普通成员只看到角色、部门和职务；管理身份才显示账号、持股和成员状态。
@@ -466,6 +494,7 @@
     <button class="icon-btn" id="btn-operations-refresh" title="刷新">↻</button>
   </div>
   <div class="body">
+    <div id="operations-banner"></div>
     <div id="operations-summary" class="decision-summary"></div>
     <div id="operations-admin-actions" class="btn-row hidden">
       <button class="btn ghost" id="btn-ops-skill">维护技能</button>
@@ -570,6 +599,7 @@
         <b>每个成员都能看到，也都能发声</b>
         <small>按板块讨论，提问、复盘、分享和必读知识都不再混成一条消息流。</small>
       </div>
+      <img class="planet-signal-art" src="icons/star/star_09_music.webp" alt="">
       <i>在线</i>
     </div>
 
@@ -701,6 +731,10 @@
       <button class="btn ghost" id="btn-me-login">改登录名</button>
     </div>
 
+    <!-- 基础版也能查看公司关系并调整主公司，不要求先进入高级模式。 -->
+    <button class="btn ghost hidden" id="btn-me-companies"
+            style="width:100%;margin-top:8px">我的公司</button>
+
     <!-- 只有老板需要：切主题、管员工。
          **「云服务设置」不在这里**——服务器已经配好了，
          摆出来别人看不懂（"云服务"是什么？）。
@@ -813,28 +847,29 @@
      教训：绝对不要用 document.write 动态插脚本。 */
   window.__supabaseLoaded = (typeof window.supabase !== "undefined");
 </script>
-<script src="store.js"></script>
+<script src="cloud-config.js?v=cloud-gateway-1"></script>
+<script src="store.js?v=20261110-consistency-1"></script>
 <script src="calc.js"></script>
-<script src="charts.js"></script>
+<script src="charts.js?v=20261111-purple-starry-1"></script>
 <!-- merit.js 要在 app.js 之前：app.js 会在渲染任务页时调
      renderMeritCard()，晚加载会报未定义。 -->
 <script src="merit.js"></script>
 <script src="assist.js"></script>
-<script src="sync.js?v=20261107-network-fix-1"></script>
+<script src="sync.js?v=20261110-consistency-1"></script>
 <!-- notify.js 要在 app.js 之前：app.js 启动时会调
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
 <script src="meeting.js?v=20261107-phase1-1"></script>
 <script src="update.js?v=20261107-companies-4"></script>
-<script src="identity.js?v=20261107-companies-4"></script>
-<script src="companies.js?v=20261107-companies-4"></script>
-<script src="today.js"></script>
+<script src="identity.js?v=20261108-multi-account-1"></script>
+<script src="companies.js?v=20261108-invites-1"></script>
+<script src="today.js?v=20261111-purple-starry-1"></script>
 <script src="decision.js"></script>
-<script src="operations.js"></script>
+<script src="operations.js?v=20261110-consistency-1"></script>
 <script src="execution.js"></script>
 <script src="intake.js"></script>
-<script src="account.js?v=20261107-companies-4"></script>
+<script src="account.js?v=20261108-multi-account-1"></script>
 <script src="community.js?v=20261107-profile-8"></script>
-<script src="app.js?v=20261107-companies-4"></script>
+<script src="app.js?v=20261111-purple-starry-1"></script>
 </body>
 </html>

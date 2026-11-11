@@ -10,11 +10,78 @@ let myCompaniesState = {
   selectedId: null,
   people: [],
   access: {},
+  invites: { received: [], sent: [] },
+  inviteBusy: "",
 };
+
+function resetMyCompaniesRuntimeCache() {
+  myCompaniesState = {
+    busy: false,
+    loadedAt: 0,
+    error: "",
+    companies: [],
+    primaryId: null,
+    activeId: null,
+    selectedId: null,
+    people: [],
+    access: {},
+    invites: { received: [], sent: [] },
+    inviteBusy: "",
+  };
+}
 
 function myCompanyRoleLabel(value) {
   return typeof identityRoleLabel === "function"
     ? identityRoleLabel(value) : (value || "成员");
+}
+
+function myCompanyInviteIsOpen(item) {
+  if (!item || item.status !== "invited") return false;
+  const expiresAt = Date.parse(item.expires_at || "");
+  return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+}
+
+function myCompanyInvitesHtml() {
+  const data = (myCompaniesState && myCompaniesState.invites) || {};
+  const received = (Array.isArray(data.received) ? data.received : [])
+    .filter(myCompanyInviteIsOpen);
+  const sent = (Array.isArray(data.sent) ? data.sent : [])
+    .filter(myCompanyInviteIsOpen);
+  const busy = String(myCompaniesState.inviteBusy || "");
+  const receivedHtml = received.map(item => {
+    const id = String(item.id || "");
+    const working = busy === id;
+    const disabled = busy ? " disabled" : "";
+    const inviter = [item.inviter_name, item.inviter_code].filter(Boolean).join("  ");
+    return `
+      <div class="identity-motion open">
+        <div class="identity-motion-head"><div>
+          <div class="identity-eyebrow">公司邀请${inviter ? "  " + escapeHtml(inviter) : ""}</div>
+          <b>${escapeHtml(item.organization_name || "新公司")}</b>
+        </div><span class="identity-status open">待接受</span></div>
+        <div class="identity-vote-line">
+          <span>${escapeHtml(item.department || "未填部门")}</span>
+          <span>${escapeHtml(item.title || "普通成员")}</span>
+        </div>
+        <div class="hint" style="margin-top:8px">接受后会加入这家公司，并切换为当前公司；原公司数据不会迁移。</div>
+        <div class="identity-vote-actions">
+          <button class="btn ghost" data-my-company-invite-reject="${escapeHtml(id)}"${disabled}>拒绝</button>
+          <button class="btn" data-my-company-invite-accept="${escapeHtml(id)}"${disabled}>${working ? "处理中" : "接受邀请"}</button>
+        </div>
+      </div>`;
+  }).join("");
+  const sentHtml = sent.map(item => `
+    <div class="today-ledger-row">
+      <div><b>${escapeHtml(item.invitee_name || "成员")}</b>
+        <span>${escapeHtml(item.invitee_code || "无员工号")}  ${escapeHtml(item.department || "未填部门")}  ${escapeHtml(item.title || "普通成员")}</span></div>
+      <strong>等待接受</strong>
+    </div>`).join("");
+  return (receivedHtml
+    ? '<div class="section-head"><span>待处理的公司邀请</span><span class="meta">' + received.length + ' 个</span></div>' + receivedHtml
+    : "")
+    + (sentHtml
+      ? '<div class="section-head"><span>已发出的成员邀请</span><span class="meta">' + sent.length + ' 个待接受</span></div><div class="card">' + sentHtml + '</div>'
+      : "");
 }
 
 function renderMyCompanies() {
@@ -22,6 +89,7 @@ function renderMyCompanies() {
   const listBox = $("my-company-list");
   const peopleBox = $("my-company-people");
   const peopleCount = $("my-company-people-count");
+  const invitesBox = $("my-company-invites");
   const sub = $("my-companies-sub");
   if (!primaryBox || !listBox || !peopleBox || !peopleCount || !sub) return;
 
@@ -31,6 +99,7 @@ function renderMyCompanies() {
     listBox.innerHTML = "";
     peopleBox.innerHTML = "";
     peopleCount.textContent = "";
+    if (invitesBox) invitesBox.innerHTML = "";
     return;
   }
 
@@ -38,8 +107,14 @@ function renderMyCompanies() {
     primaryBox.innerHTML = '<div class="identity-empty"><b>正在读取公司</b><span>加载主公司和其他成员关系…</span></div>';
     listBox.innerHTML = "";
     peopleBox.innerHTML = "";
+    if (invitesBox) invitesBox.innerHTML = "";
     loadMyCompanies(true);
     return;
+  }
+
+  const healthSection = $("organization-health-section");
+  if (healthSection) {
+    healthSection.classList.toggle("hidden", !identityHasManagementView());
   }
 
   const companies = myCompaniesState.companies || [];
@@ -52,9 +127,11 @@ function renderMyCompanies() {
     listBox.innerHTML = "";
     peopleBox.innerHTML = "";
     peopleCount.textContent = "";
+    if (invitesBox) invitesBox.innerHTML = "";
     return;
   }
 
+  if (invitesBox) invitesBox.innerHTML = myCompanyInvitesHtml();
   primaryBox.innerHTML = primary ? `
     <div class="card identity-me-card">
       <div class="identity-me-head"><div>
@@ -144,6 +221,55 @@ function renderMyCompanies() {
       switchMyCompany(button.dataset.companyActive);
     };
   });
+  if (invitesBox) {
+    invitesBox.querySelectorAll("[data-my-company-invite-accept]").forEach(button => {
+      button.onclick = () => respondMyCompanyInvite(button.dataset.myCompanyInviteAccept, true);
+    });
+    invitesBox.querySelectorAll("[data-my-company-invite-reject]").forEach(button => {
+      button.onclick = () => respondMyCompanyInvite(button.dataset.myCompanyInviteReject, false);
+    });
+  }
+}
+
+async function loadMyCompanyInvites() {
+  if (!initCloud()) return;
+  try {
+    const { data, error } = await cloudClient.rpc("get_organization_member_invites");
+    if (error) throw error;
+    myCompaniesState.invites = {
+      received: Array.isArray(data && data.received) ? data.received : [],
+      sent: Array.isArray(data && data.sent) ? data.sent : [],
+    };
+  } catch (error) {
+    console.warn("公司邀请加载失败", String(error.message || error || ""));
+  }
+}
+
+async function respondMyCompanyInvite(inviteId, accept) {
+  if (!inviteId || myCompaniesState.inviteBusy || !initCloud()) return;
+  myCompaniesState.inviteBusy = String(inviteId);
+  renderMyCompanies();
+  try {
+    const { data, error } = await cloudClient.rpc("respond_organization_member_invite", {
+      p_invite: inviteId, p_accept: !!accept,
+    });
+    if (error) throw error;
+    if (data && data.ok === false) throw new Error(data.error || "邀请处理失败");
+    myCompaniesState.loadedAt = 0;
+    await loadMyCompanies(true);
+    if (typeof refreshOrganizationState === "function") refreshOrganizationState(true);
+    if (typeof refreshIdentity === "function") refreshIdentity(true);
+    toast(accept
+      ? `已加入 ${(data && data.organization_name) || "新公司"}`
+      : "已拒绝公司邀请");
+  } catch (error) {
+    toast(typeof organizationErrorText === "function"
+      ? organizationErrorText(error)
+      : String(error.message || error || "邀请处理失败"));
+  } finally {
+    myCompaniesState.inviteBusy = "";
+    renderMyCompanies();
+  }
 }
 
 async function loadMyCompanies(force) {
@@ -166,8 +292,9 @@ async function loadMyCompanies(force) {
     if (!keepSelected) myCompaniesState.selectedId = myCompaniesState.primaryId
       || (myCompaniesState.companies[0] && myCompaniesState.companies[0].id) || null;
     myCompaniesState.error = "";
-    myCompaniesState.loadedAt = Date.now();
     await loadMyCompanyPeople(myCompaniesState.selectedId);
+    await loadMyCompanyInvites();
+    myCompaniesState.loadedAt = Date.now();
   } catch (error) {
     const text = String(error.message || error || "");
     console.warn("我的公司加载失败", text);
@@ -205,16 +332,84 @@ async function selectMyCompany(companyId) {
   renderMyCompanies();
 }
 
+async function loadOrganizationHealth() {
+  const box = $("organization-health-result");
+  if (!box || !DB.profile) return;
+  if (!identityHasManagementView()) {
+    box.textContent = "只有管理身份可以查看组织健康。";
+    return;
+  }
+  if (!initCloud()) {
+    box.textContent = "云服务没有加载。";
+    return;
+  }
+  box.textContent = "正在检查成员、股份和治理状态…";
+  try {
+    const { data, error } = await cloudClient.rpc("get_organization_health", {
+      p_enterprise: myCompaniesState.activeId || DB.company_scope_id || null,
+    });
+    if (error) throw error;
+    if (!data || data.ok === false) {
+      throw new Error(data && data.message || "组织健康检查未完成");
+    }
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    const failed = checks.filter(item => !item.ok);
+    box.innerHTML = (failed.length
+      ? '<div class="banner bad">发现 ' + failed.length + ' 项需要修复。</div>'
+      : '<div class="banner good">组织成员、股份和治理状态正常。</div>')
+      + checks.map(item => '<div class="today-ledger-row"><div><b>'
+        + escapeHtml(item.label || item.key) + '</b><span>'
+        + escapeHtml(item.detail || "") + '</span></div><strong>'
+        + (item.ok ? "正常" : "异常") + '</strong></div>').join("");
+  } catch (error) {
+    const message = String(error.message || error || "");
+    box.innerHTML = '<div class="banner bad">健康检查失败：'
+      + escapeHtml(message) + '</div>';
+  }
+}
+
+async function repairMyOrganizationFromUI() {
+  if (!DB.profile || !initCloud()) return;
+  try {
+    const { data, error } = await cloudClient.rpc("repair_my_organization");
+    if (error) throw error;
+    DB.organizationStatus = Object.assign({}, data || {}, { at: Date.now() });
+    if (data && data.enterprise_id && typeof updateCompanyScope === "function") {
+      updateCompanyScope(data.enterprise_id);
+    }
+    saveAll();
+    if (data && data.status === "ready") {
+      await refreshIdentity(true);
+      myCompaniesState.loadedAt = 0;
+      await loadMyCompanies(true);
+      await loadOrganizationHealth();
+      toast("公司身份已修复");
+    } else {
+      toast(String(data && data.message || "正在等待公司邀请"));
+    }
+  } catch (error) {
+    toast(String(error.message || error || "公司身份修复失败"));
+  }
+}
+
 async function switchMyCompany(companyId) {
   if (!companyId || !initCloud()) return;
+  if (typeof pendingCount === "function" && pendingCount() > 0) {
+    toast("当前公司还有待上传数据，请先同步完成再切换公司");
+    return;
+  }
   try {
     const { error } = await cloudClient.rpc("set_active_organization", {
       p_enterprise: companyId,
     });
     if (error) throw error;
+    if (typeof unsubscribeRealtime === "function") unsubscribeRealtime();
+    if (typeof clearCompanyScopedCache === "function") clearCompanyScopedCache();
     myCompaniesState.loadedAt = 0;
     await loadMyCompanies(true);
+    if (typeof refreshIdentity === "function") await refreshIdentity(true);
     if (typeof refreshOrganizationState === "function") refreshOrganizationState(true);
+    if (typeof syncNow === "function") syncNow("company-switch");
     toast("已切换当前公司");
   } catch (error) {
     toast(String(error.message || error || "切换公司失败"));

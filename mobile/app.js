@@ -19,6 +19,23 @@ window.addEventListener("error", event => {
     || event.message || String(event));
 });
 
+function queueLocalProjectsForCloud() {
+  const projects = (DB.projects || []).filter(item => !item.remote_id);
+  if (!projects.length) {
+    toast("没有需要上传的本机项目");
+    return 0;
+  }
+  projects.forEach(project => {
+    queueProjectSync(project, "upsert");
+    (DB.steps || []).filter(step => step.project_id === project.id)
+      .forEach(step => queueStepSync(step, "upsert"));
+  });
+  saveAll();
+  if (typeof syncNow === "function") syncNow("project-confirm");
+  toast(`已排队上传 ${projects.length} 个本机项目`);
+  return projects.length;
+}
+
 async function runSystemDiagnosis() {
   const box = $("system-health-result");
   if (!box) return;
@@ -58,6 +75,12 @@ async function runSystemDiagnosis() {
         + ' 条，可手动确认导入当前账号。</div>'
         + '<button class="btn ghost" id="btn-legacy-claim" style="width:100%;margin-top:8px">'
         + '导入旧数据到当前账号</button>' : "")
+    + ((DB.projects || []).filter(item => !item.remote_id).length
+      ? '<div class="banner warn" style="margin-top:8px">本机有 '
+        + (DB.projects || []).filter(item => !item.remote_id).length
+        + ' 个项目尚未同步到公司。确认后才会上传，不会自动改动云端。</div>'
+        + '<button class="btn ghost" id="btn-local-projects" style="width:100%;margin-top:8px">'
+        + '确认为当前公司上传本机项目</button>' : "")
     + '<div class="btn-row" style="margin-top:10px">'
     + '<button class="btn ghost" id="btn-local-backup">立即备份</button>'
     + '<button class="btn" id="btn-local-sync">立即同步</button></div>';
@@ -92,6 +115,13 @@ async function runSystemDiagnosis() {
         runSystemDiagnosis();
       };
     });
+    if ($("btn-local-projects")) {
+      $("btn-local-projects").onclick = () => {
+        if (!confirm("把本机尚未同步的项目和步骤上传到当前公司？")) return;
+        queueLocalProjectsForCloud();
+        runSystemDiagnosis();
+      };
+    }
     if ($("btn-local-sync")) {
       $("btn-local-sync").onclick = async () => {
         await syncNow("diagnostic");
@@ -447,6 +477,15 @@ function showPage(name) {
     renderIntake();
     loadIntake(true);
   }
+  if (target === "dash" || target === "today") {
+    if (typeof pullCloudProjects === "function") {
+      pullCloudProjects().then(result => {
+        if (!result || result.error || currentPageName() !== target) return;
+        if (target === "dash") renderDash();
+        else renderToday();
+      }).catch(() => {});
+    }
+  }
   if (target === "dash") renderDash();
   if (target === "team") renderTeam();
   if (target === "assist") renderAssist();
@@ -458,7 +497,10 @@ function showPage(name) {
     if (typeof refreshIdentity === "function") refreshIdentity(false);
     if (typeof loadShareholderMeetings === "function") loadShareholderMeetings(false);
   }
-  if (target === "companies") renderMyCompanies();
+  if (target === "companies") {
+    renderMyCompanies();
+    loadMyCompanies(true);
+  }
   if (target === "community") renderCommunity();
   if (target === "me") renderMe();
   if (target === "login") renderLogin();
@@ -1141,11 +1183,118 @@ const AVATARS = {
   watch:   "09_暗中观察",  // 等待输入
 };
 
+const STAR_STICKERS = [
+  { id: "hug", file: "star_01_hug", label: "抱抱", message: "先接住自己，再处理事情。" },
+  { id: "roger", file: "star_02_roger", label: "收到", message: "收到，我来把这件事落到下一步。" },
+  { id: "tea", file: "star_03_tea", label: "喝茶", message: "缓一口气，节奏比速度重要。" },
+  { id: "work", file: "star_04_work", label: "工作中", message: "进入专注轨道，先完成最小的一步。" },
+  { id: "wow", file: "star_05_wow", label: "惊讶", message: "有变化就先核对，不急着下结论。" },
+  { id: "hmph", file: "star_06_hmph", label: "哼", message: "可以不同意，但把理由写清楚。" },
+  { id: "sleep", file: "star_07_sleep", label: "睡觉", message: "今天到这里，休息也是进度。" },
+  { id: "great", file: "star_08_great", label: "太好了", message: "一切在变好，继续保持现在的节奏。" },
+  { id: "music", file: "star_09_music", label: "听歌", message: "给自己一段不被打断的时间。" },
+  { id: "read", file: "star_10_read", label: "看书", message: "先找依据，再决定下一步。" },
+  { id: "yum", file: "star_11_yum", label: "好吃", message: "补充能量，才有力气继续。" },
+  { id: "meow", file: "star_12_meow", label: "喵", message: "允许自己可爱一点，也允许事情慢一点。" },
+  { id: "out", file: "star_13_out", label: "想出去", message: "想离开一下没关系，回来再继续。" },
+  { id: "what", file: "star_14_what", label: "疑惑", message: "没想清楚就先标记问题，不用硬猜。" },
+  { id: "tired", file: "star_15_tired", label: "好累", message: "累不是失败，今天只做必要的事。" },
+  { id: "bye", file: "star_16_bye", label: "下次见", message: "收好今天的进度，下次接着来。" },
+];
+
+const STAR_MOOD_FILES = {
+  neutral: "star_03_tea",
+  happy: "star_08_great",
+  sleepy: "star_07_sleep",
+  puzzled: "star_14_what",
+  warn: "star_06_hmph",
+  alarm: "star_05_wow",
+  warm: "star_01_hug",
+  ok: "star_02_roger",
+  watch: "star_10_read",
+};
+
+const STAR_MOOD_IDS = {
+  neutral: "tea", happy: "great", sleepy: "sleep", puzzled: "what",
+  warn: "hmph", alarm: "wow", warm: "hug", ok: "roger", watch: "read",
+};
+
+function starStickerById(id) {
+  return STAR_STICKERS.find(item => item.id === id) || null;
+}
+
+function starForMood(mood) {
+  return starStickerById(STAR_MOOD_IDS[mood] || "hug") || STAR_STICKERS[0];
+}
+
+function starStickerSrc(star) {
+  const item = typeof star === "string" ? starStickerById(star) : star;
+  return item ? `icons/star/${item.file}.webp` : "icons/star/star_01_hug.webp";
+}
+
+function starFaceSrc(star) {
+  const item = typeof star === "string" ? starStickerById(star) : star;
+  return item ? `icons/star/${item.file}@face.webp` : "icons/star/star_01_hug@face.webp";
+}
+
+function starStickerSettingKey() {
+  return "star_sticker_" + String(DB.account_scope_id
+    || (DB.profile && DB.profile.id) || "device");
+}
+
+function selectedStarSticker() {
+  const id = getSetting(starStickerSettingKey(), "");
+  return starStickerById(String(id || ""));
+}
+
+function renderStarCompanion(mood) {
+  const box = $("star-companion");
+  if (!box) return;
+  const manual = selectedStarSticker();
+  const active = manual || starForMood(mood);
+  box.innerHTML = `
+    <div class="star-companion-head">
+      <div>
+        <div class="star-kicker"> 星轨陪伴</div>
+        <h3>今天想以什么状态出现？</h3>
+      </div>
+      ${manual ? '<button class="star-auto" data-star-auto="1">跟随状态</button>' : ""}
+    </div>
+    <div class="star-strip" role="list">
+      ${STAR_STICKERS.map(item => `
+        <button class="star-chip${item.id === active.id ? " active" : ""}"
+          data-star-id="${escapeHtml(item.id)}" role="listitem"
+          aria-pressed="${item.id === active.id ? "true" : "false"}"
+          title="${escapeHtml(item.message)}">
+          <img src="${starFaceSrc(item)}" alt="${escapeHtml(item.label)}" loading="lazy">
+          <span>${escapeHtml(item.label)}</span>
+        </button>`).join("")}
+    </div>
+    <div class="star-message">
+      <img src="${starFaceSrc(active)}" alt="">
+      <div><b>${escapeHtml(active.label)}</b><span>${escapeHtml(active.message)}</span></div>
+    </div>`;
+  box.querySelectorAll("[data-star-id]").forEach(button => {
+    button.onclick = () => {
+      saveSetting(starStickerSettingKey(), button.dataset.starId);
+      renderDash();
+    };
+  });
+  if (box.querySelector("[data-star-auto]")) {
+    box.querySelector("[data-star-auto]").onclick = () => {
+      saveSetting(starStickerSettingKey(), "");
+      renderDash();
+    };
+  }
+}
+
 function faceSrc(key) {
+  if (STAR_MOOD_FILES[key]) return `icons/star/${STAR_MOOD_FILES[key]}@face.webp`;
   return "icons/" + (AVATARS[key] || AVATARS.neutral) + ".webp";
 }
 
 function heroSrc(key) {
+  if (STAR_MOOD_FILES[key]) return `icons/star/${STAR_MOOD_FILES[key]}.webp`;
   return "icons/" + (AVATARS[key] || AVATARS.neutral) + "@hero.webp";
 }
 
@@ -1642,6 +1791,19 @@ function employeeNameOf(profileId) {
   return "员工 " + id.slice(0, 6);
 }
 
+function renderDataFreshnessBanner() {
+  const box = $("dash-banner");
+  if (!box) return false;
+  const error = String(DB.pullError || "").trim();
+  const localOnly = (DB.projects || []).filter(item => !item.remote_id).length;
+  if (!error && !localOnly) return false;
+  const text = error
+    ? "数据可能不是最新：" + error
+    : `本机有 ${localOnly} 个项目尚未同步到公司，请到系统诊断确认上传。`;
+  setBanner(box, text, "warn");
+  return true;
+}
+
 function renderDash() {
   /* 「现在」这张卡先画 —— 老板打开 App 最想知道
      人有没有到位、今天产出了多少、有没有卡着等他的事。 */
@@ -1681,8 +1843,12 @@ function renderDash() {
      这句话是**对当前状态的判断**，不是欢迎语——
      看一眼就知道今天要不要操心。 */
   const mood = dashboardMood(rows, bad);
-  $("dash-hero-art").src = heroSrc(mood);
-  $("dash-hero-line").textContent = heroLine(mood, rows, bad, weekHours, range);
+  const chosenStar = selectedStarSticker();
+  $("dash-hero-art").src = chosenStar ? starStickerSrc(chosenStar) : heroSrc(mood);
+  $("dash-hero-line").textContent = chosenStar
+    ? chosenStar.message
+    : heroLine(mood, rows, bad, weekHours, range);
+  renderStarCompanion(mood);
 
   /* 近两周工时折线。**画的是"每天多少小时"而不是累计**——
      累计曲线永远是往上的，看不出节奏；
@@ -1714,6 +1880,7 @@ function renderDash() {
     if (problems.length) {
       setBanner($("dash-banner"), problems[0].text, "warn");
     }
+    renderDataFreshnessBanner();
     return;
   }
 
@@ -1760,6 +1927,7 @@ function renderDash() {
     setBanner($("dash-banner"),
       `${problems.length} 处工时异常：${problems[0].text}`, "warn");
   }
+  renderDataFreshnessBanner();
 }
 
 /* ============================================================

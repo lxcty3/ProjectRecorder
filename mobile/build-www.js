@@ -120,6 +120,19 @@ function main() {
     process.exit(1);
   }
 
+  /* ---- 星轨陪伴表情 ---- */
+  const starSrcDir = path.join(HERE, ICON_DIR, "star");
+  const starOutDir = path.join(iconOut, "star");
+  let starCount = 0;
+  if (fs.existsSync(starSrcDir)) {
+    fs.cpSync(starSrcDir, starOutDir, { recursive: true });
+    starCount = fs.readdirSync(starOutDir).filter(name => name.endsWith(".webp")).length;
+  }
+  if (starCount < 32) {
+    console.error("\n星轨陪伴表情不足 32 个文件，请先运行：py prepare-star-stickers.py");
+    process.exit(1);
+  }
+
   /* ---- 云库 ----
      缺了不中断，只警告：没有云库时本机功能照常能用，
      只是登录用不了。硬中断的话，一个还没配云服务的用户
@@ -149,6 +162,7 @@ function main() {
   console.log(`已复制 ${copied} 个文件 + ${iconCount} 个头像到 www/：`);
   FILES.forEach(name => console.log("  " + name));
   console.log(`  ${ICON_DIR}/  （${iconCount} 个文件）`);
+  console.log(`  ${ICON_DIR}/star/  （${starCount} 个星轨表情）`);
   if (vendorCount) {
     console.log(`  ${VENDOR_DIR}/  （${vendorCount} 个文件）`);
   } else {
