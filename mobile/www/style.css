@@ -5139,3 +5139,34 @@ nav button.on::after { background: rgba(239, 226, 255, .75); }
   .star-sky,
   .star-sky::after { animation: none; }
 }
+/* Non-repeating irregular star fields replace the old evenly tiled dots. */
+.star-sky {
+  background-image: url("icons/star/starfield.svg");
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: cover;
+  opacity: .58;
+  animation-name: star-field-drift, star-sky-breathe;
+  animation-duration: 26s, 14s;
+  animation-timing-function: ease-in-out, ease-in-out;
+  animation-iteration-count: infinite, infinite;
+  animation-direction: alternate, alternate;
+}
+[data-theme="dark"] .star-sky {
+  opacity: .9;
+  background-image: url("icons/star/starfield.svg");
+}
+.scene-card::after {
+  background-image: url("icons/star/star-cluster.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  opacity: .94;
+}
+@keyframes star-field-drift {
+  from { background-position: 49.7% 50.3%; }
+  to { background-position: 50.3% 49.7%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-sky { animation: none; }
+}

@@ -5767,9 +5767,14 @@ test("淡紫星图视觉：场景卡、紫色主题和预览框架完整接线",
     if (!today.includes(text)) throw new Error("today.js 缺少 " + text);
   }
   const css = fs.readFileSync(path.join(HERE, "style.css"), "utf8");
+  for (const file of ["starfield.svg", "star-cluster.svg"]) {
+    if (!fs.existsSync(path.join(HERE, "icons", "star", file))) {
+      throw new Error("缺少不规则星空素材 " + file);
+    }
+  }
   for (const text of [
     "--accent: #705aa8", ".scene-card {", "#nav-simple button {",
-    ".planet-signal-art {", "prefers-reduced-motion",
+    ".planet-signal-art {", "starfield.svg", "star-cluster.svg", "prefers-reduced-motion",
   ]) {
     if (!css.includes(text)) throw new Error("style.css 缺少 " + text);
   }

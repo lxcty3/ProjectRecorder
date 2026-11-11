@@ -25,7 +25,8 @@
    ============================================================= */
 "use strict";
 
-const URL_BASE = "https://edchntmyqqjqvpngylgc.supabase.co";
+const URL_BASE = process.env.PROJECT_RECORDER_CLOUD_URL
+  || "https://edchntmyqqjqvpngylgc.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkY2hudG15cXFqcXZwbmd5bGdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1ODY5ODksImV4cCI6MjEwNzE2Mjk4OX0.6vfi2zxvdbmdLSHoV2U0r4R8zd10UCtO5XGaToqBc7I";
 
 let passed = 0;
