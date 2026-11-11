@@ -1,10 +1,10 @@
 {
-  "versionCode": 20,
-  "versionName": "2.0.18",
+  "versionCode": 21,
+  "versionName": "2.0.19",
   "releasedAt": "2026-11-11",
   "notes": [
-    "手工补录工时也能选公司成员，跨公司加入的老板号不再需要本机员工号。",
-    "工时上云时带上公司归属（enterprise_id），手工补录按当前公司记账。"
+    "背景加入斜向银河带、柔光星云亮核和底部山脊剪影。",
+    "新增两颗错开节奏的流星，深色主题更丰富，浅色主题保持清爽。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }

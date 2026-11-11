@@ -1,10 +1,10 @@
 {
-  "versionCode": 20,
-  "versionName": "2.0.18",
+  "versionCode": 21,
+  "versionName": "2.0.19",
   "releasedAt": "2026-11-11",
   "notes": [
-    "跨公司老板账号默认为普通员工，可直接记工时，不再要求创建员工号。",
-    "团队页改为读取当前公司有效成员，工时按当前公司归属。"
+    "手工补录工时也能选公司成员，跨公司加入的老板号不再需要本机员工号。",
+    "工时上云时带上公司归属（enterprise_id），手工补录按当前公司记账。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
