@@ -1,12 +1,13 @@
 {
-  "versionCode": 22,
-  "versionName": "2.0.20",
+  "versionCode": 23,
+  "versionName": "2.0.21",
   "releasedAt": "2026-11-11",
   "notes": [
-    "新增应用内自动更新：下载新 APK、校验 SHA-256、调系统安装器。",
-    "启动时发现新版本会提示，可在“我的 → 应用版本”里应用内更新；失败自动回退浏览器下载。"
+    "应用内自动更新：下载新 APK、校验 SHA-256、调系统安装器。",
+    "更新源支持 GitHub raw + Cloudflare 网关两条路，网络受限时自动切换。",
+    "启动时发现新版本会提示，可在“我的 → 应用版本”里应用内更新；失败回退浏览器下载。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk",
-  "sha256": "d2627c2c84228bb07bae3ad665c3cc3a43e287d9ccab5aa3bf1a27622326ec3d",
-  "size": 11577185
+  "sha256": "e8b91b2bbcccf03c0160f442f403f6bbef6bb89e090db6d0cbd302f8afc4e4b6",
+  "size": 11578161
 }

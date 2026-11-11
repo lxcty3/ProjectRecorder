@@ -2,6 +2,10 @@
 const APP_UPDATE_MANIFEST_URL =
   "https://raw.githubusercontent.com/lxcty3/ProjectRecorder/main/latest.json";
 const APP_UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
+/* raw.githubusercontent 在国内经常被 reset；这里再备一个走 Cloudflare
+   网关的 GitHub Release API，两个源任意一个能用就能检查更新。 */
+const APP_UPDATE_API_URL =
+  "https://projectrecorder-gateway-pages2.pages.dev/github-api/repos/lxcty3/ProjectRecorder/releases/latest";
 let appUpdateBusy = false;
 
 function appUpdateState() {
@@ -38,6 +42,64 @@ async function loadCurrentAppVersion() {
   return state.current;
 }
 
+function versionParts(name) {
+  return String(name || "").replace(/^v/i, "")
+    .split(/[^0-9]+/).filter(Boolean).map(Number);
+}
+
+/* 优先用 versionCode；Release API 回退时没有 code，就逐段比版本号。 */
+function versionGreater(remote, current) {
+  const rc = Number(remote && remote.versionCode);
+  const cc = Number(current && current.versionCode);
+  if (isFinite(rc) && rc > 0 && isFinite(cc) && cc > 0) return rc > cc;
+  const a = versionParts(remote && remote.versionName);
+  const b = versionParts(current && current.versionName);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+function releaseManifest(data) {
+  if (!data || !data.tag_name) return null;
+  const assets = Array.isArray(data.assets) ? data.assets : [];
+  const apk = assets.find(item =>
+    String(item && item.name || "").toLowerCase().endsWith(".apk"));
+  if (!apk) return null;
+  const notes = String(data.body || "")
+    .split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 6);
+  return {
+    versionCode: 0,
+    versionName: String(data.tag_name).replace(/^v/i, ""),
+    releasedAt: String(data.published_at || "").slice(0, 10),
+    notes: notes,
+    downloadUrl: apk.browser_download_url || apk.url || "",
+    sha256: String(apk.digest || "").replace(/^sha256:/i, ""),
+    size: Number(apk.size || 0),
+  };
+}
+
+async function fetchUpdateManifest() {
+  const sources = [APP_UPDATE_MANIFEST_URL, APP_UPDATE_API_URL];
+  for (let i = 0; i < sources.length; i += 1) {
+    try {
+      const response = await fetch(sources[i], { cache: "no-store" });
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (i === 0 && data && (data.versionCode || data.versionName)) {
+        return data;
+      }
+      const manifest = releaseManifest(data);
+      if (manifest) return manifest;
+    } catch (_) {
+      /* 换下一个源 */
+    }
+  }
+  throw new Error("更新服务暂时不可用");
+}
+
 function updateProgressHtml(state) {
   const progress = state.progress;
   if (!progress) return "";
@@ -64,7 +126,7 @@ function renderAppUpdateCard() {
   const state = appUpdateState();
   const current = state.current || { versionCode: 0, versionName: "未知" };
   const remote = state.remote;
-  const hasUpdate = remote && Number(remote.versionCode) > Number(current.versionCode);
+  const hasUpdate = remote && versionGreater(remote, current);
   const plugin = appUpdatePlugin();
   const status = state.error ? escapeHtml(state.error)
     : hasUpdate ? `发现新版本 ${escapeHtml(remote.versionName)}`
@@ -91,17 +153,14 @@ async function checkForAppUpdate(force) {
   await loadCurrentAppVersion();
   if (!force && state.checkedAt && Date.now() - state.checkedAt < APP_UPDATE_CHECK_MS) {
     renderAppUpdateCard();
-    if (state.remote
-        && Number(state.remote.versionCode) > Number(state.current.versionCode)) {
+    if (state.remote && versionGreater(state.remote, state.current)) {
       showUpdatePrompt(state.remote);
     }
     return state.remote;
   }
   appUpdateBusy = true;
   try {
-    const response = await fetch(APP_UPDATE_MANIFEST_URL, { cache: "no-store" });
-    if (!response.ok) throw new Error("更新服务暂时不可用");
-    const remote = await response.json();
+    const remote = await fetchUpdateManifest();
     state.remote = remote;
     state.checkedAt = Date.now();
     state.error = "";

@@ -5837,6 +5837,7 @@ test("应用内自动更新：下载、校验、安装和兜底完整接线", ()
     "appUpdatePlugin", "expectedSha256", "updateProgress",
     "install_permission_required", "openInstallSettings",
     "openAppUpdateInBrowser", "showUpdatePrompt",
+    "APP_UPDATE_API_URL", "fetchUpdateManifest", "releaseManifest",
   ]) {
     if (!update.includes(text)) throw new Error("update.js 缺少 " + text);
   }
