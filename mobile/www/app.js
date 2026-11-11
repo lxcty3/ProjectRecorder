@@ -1024,7 +1024,13 @@ function bindGlobalEvents() {
   };
 
   /* 团队 */
-  $("btn-new-employee").onclick = () => editEmployee(null);
+  $("btn-new-employee").onclick = () => {
+    if (typeof openInviteOrganizationMember === "function") {
+      openInviteOrganizationMember();
+    } else {
+      editEmployee(null);
+    }
+  };
   $("btn-new-worklog").onclick = () => editWorklog(null);
 
   /* 小助手 */
@@ -1642,7 +1648,7 @@ function renderTeamCard() {
   const card = $("team-card");
   if (!card) return;
   const profile = DB.profile;
-  if (!profile || profile.role !== "boss") {
+  if (!profile || !identityHasManagementView()) {
     card.classList.add("hidden");
     return;
   }
@@ -1786,6 +1792,10 @@ function employeeNameOf(profileId) {
   const account = (DB.staffAccounts || []).find(item =>
     String(item.employee_id) === id);
   if (account && account.name) return account.name;
+  const member = (DB.identity && Array.isArray(DB.identity.members)
+    ? DB.identity.members : [])
+    .find(item => String(item.profile_id) === id);
+  if (member && member.name) return member.name;
   const employee = (DB.employees || []).find(item => String(item.id) === id);
   if (employee && employee.name) return employee.name;
   return "员工 " + id.slice(0, 6);
@@ -2387,11 +2397,72 @@ function editMetric(projectId, metricId) {
 /* ============================================================
    团队
    ============================================================ */
+function enterpriseMemberRows() {
+  const members = (DB.identity && Array.isArray(DB.identity.members)
+    ? DB.identity.members : [])
+    .filter(item => item && String(item.status || "active") !== "inactive");
+  const byId = new Map();
+  (DB.employees || []).forEach(item => {
+    byId.set(String(item.id), { source: "local", item });
+  });
+  members.forEach(item => {
+    byId.set(String(item.profile_id), { source: "member", item });
+  });
+  return Array.from(byId.values()).map(entry => {
+    const m = entry.item;
+    if (entry.source === "local") {
+      return {
+        id: m.id,
+        profile_id: null,
+        name: m.name,
+        role: m.role || "",
+        level: m.level || "",
+        weekly_hours: num(m.weekly_hours) || 40,
+      };
+    }
+    return {
+      id: m.profile_id,
+      profile_id: m.profile_id,
+      name: m.name || "未命名成员",
+      role: m.role_name
+        || (typeof identityRoleLabel === "function" ? identityRoleLabel(m.role_key) : m.role_key),
+      level: [m.department, m.title].filter(Boolean).join(" / "),
+      weekly_hours: 40,
+      active: true,
+    };
+  });
+}
+
+function teamMemberRows(range) {
+  const hoursByMember = {};
+  worklogsFor({ date_from: range.from, date_to: range.to, includeRemote: true })
+    .forEach(log => {
+      const key = String(log.employee_id || "");
+      if (!key) return;
+      hoursByMember[key] = (hoursByMember[key] || 0) + num(log.hours);
+    });
+  const rows = enterpriseMemberRows().map(item => {
+    const hours = hoursByMember[String(item.id)] || 0;
+    const expected = Math.max(1, num(item.weekly_hours) / 7 * range.days);
+    return Object.assign({}, item, {
+      hours,
+      expected,
+      ratio: hours / expected,
+    });
+  }).sort((a, b) => b.hours - a.hours);
+  if (rows.length) return rows;
+  return loadRows().rows.map(row => Object.assign({}, row, {
+    id: row.id, profile_id: null, active: true,
+  }));
+}
+
 function renderTeam() {
-  const { rows, window: range } = loadRows();
+  const windowRange = loadRows().window;
+  const rows = teamMemberRows(windowRange);
+  const range = windowRange;
   /* 条数要把云端的一起算——否则员工报了一堆工时，
      这里还显示"0 条工时"，看起来像没收到。 */
-  $("team-sub").textContent = `${activeEmployees().length} 人在岗 · `
+  $("team-sub").textContent = `${rows.length} 人在岗 · `
     + `${fetchWorklogs().length} 条工时`;
   $("load-range").textContent = `最近 ${range.days} 天`;
 
@@ -2435,17 +2506,17 @@ function renderTeam() {
 
   /* 员工列表 + 工时列表合并在一页，手机上滚动比切页方便 */
   const employeeHtml = rows.length ? rows.map(row => `
-    <div class="list-item tap" data-employee="${row.id}">
+    <div class="list-item tap" data-employee="${escapeHtml(String(row.id))}">
       <div class="row">
         <div class="grow"><span class="title">${escapeHtml(row.name)}</span>
-          <div class="meta">${escapeHtml(row.role || "未填岗位")}
+          <div class="meta">${escapeHtml(row.role || "普通员工")}
             ${row.level ? " · " + escapeHtml(row.level) : ""}</div></div>
         <b class="${row.ratio > 1 ? "lv-风险" : ""}">
           ${Math.round(row.ratio * 100)}%</b>
       </div>
-      <div class="meta">${row.hours.toFixed(1)} 小时 / 应出 `
-        + `${row.expected.toFixed(0)} 小时</div>
-    </div>`).join("") : '<div class="meta">还没有员工。</div>';
+      <div class="meta">${Number(row.hours || 0).toFixed(1)} 小时 / 应出 `
+        + `${Number(row.expected || 0).toFixed(0)} 小时</div>
+    </div>`).join("") : '<div class="meta">还没有成员，先邀请同事加入公司。</div>';
 
   /* 团队页的工时列表要带上云端——员工报的必须出现在这里，
      否则老板看到的是"没人干活"。云端记录用只读方式展示。 */
@@ -2480,7 +2551,13 @@ function renderTeam() {
   body.appendChild(block);
 
   block.querySelectorAll("[data-employee]").forEach(node => {
-    node.onclick = () => editEmployee(Number(node.dataset.employee));
+    const id = String(node.dataset.employee);
+    const member = enterpriseMemberRows().find(item => String(item.id) === id);
+    if (member && member.profile_id && !getEmployee(id)) {
+      toast("这位是公司成员，岗位调整请在治理页面进行");
+      return;
+    }
+    editEmployee(Number(id));
   });
   block.querySelectorAll("[data-worklog]").forEach(node => {
     node.onclick = () => editWorklog(String(node.dataset.worklog));

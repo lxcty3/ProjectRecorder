@@ -5788,6 +5788,34 @@ test("淡紫星图视觉：场景卡、紫色主题和预览框架完整接线",
   }
 });
 
+test("跨公司老板作为员工记录工时：完整接线", () => {
+  const sync = fs.readFileSync(path.join(HERE, "sync.js"), "utf8");
+  for (const text of [
+    "currentEnterpriseId", "currentEnterpriseOwnerId",
+    "p_enterprise: enterpriseId", "p_enterprise: currentEnterpriseId()",
+    "enterprise_id: task.enterprise_id || currentEnterpriseId()",
+  ]) {
+    if (!sync.includes(text)) throw new Error("sync.js 缺少 " + text);
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of [
+    "enterpriseMemberRows", "teamMemberRows", "identityHasManagementView()",
+    "profile_id) === id", "openInviteOrganizationMember",
+  ]) {
+    if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "cross-company-worklogs-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少跨公司工时 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "enterprise_id uuid", "_worklog_scope", "start_work(", "p_enterprise uuid default null",
+    "end_work(", "p_enterprise uuid default null", "not an enterprise member",
+  ]) {
+    if (!sql.includes(text)) throw new Error("跨公司 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("跨公司 SQL 必须保持 ASCII");
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

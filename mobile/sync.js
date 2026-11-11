@@ -2491,6 +2491,7 @@ function completeTask(task, hours) {
     id: uuid(),
     boss_id: task.boss_id,
     employee_id: profile.id,
+    enterprise_id: task.enterprise_id || currentEnterpriseId(),
     task_id: task.id,
     work_date: date,
     hours: worked,
@@ -2825,16 +2826,38 @@ function openWorkSession() {
     && !row.ended_at) || null;
 }
 
+function currentEnterpriseId() {
+  return String(
+    DB.company_scope_id
+    || (DB.identity && DB.identity.enterprise && DB.identity.enterprise.id)
+    || (DB.profile && DB.profile.active_enterprise_id)
+    || ""
+  );
+}
+
+function currentEnterpriseOwnerId() {
+  const state = DB.identity && DB.identity.enterprise;
+  if (state && state.owner_profile_id) return String(state.owner_profile_id);
+  if (typeof identityOwnerId === "function") {
+    const owner = identityOwnerId();
+    if (owner) return String(owner);
+  }
+  return DB.profile ? String(DB.profile.id || "") : "";
+}
+
 async function startWork(taskId) {
+  const enterpriseId = currentEnterpriseId();
   const result = await callTaskRpc("start_work", {
     p_task: taskId || null,
+    p_enterprise: enterpriseId,
   });
   if (!Array.isArray(DB.workSessions)) DB.workSessions = [];
   const now = nowISO();
   DB.workSessions.unshift({
     id: result && result.id ? result.id : "local-" + now,
-    boss_id: DB.profile ? DB.profile.boss_id || DB.profile.id : null,
+    boss_id: currentEnterpriseOwnerId(),
     profile_id: DB.profile ? DB.profile.id : null,
+    enterprise_id: enterpriseId,
     task_id: taskId || null,
     started_at: (result && result.started_at) || now,
     ended_at: null,
@@ -2847,7 +2870,9 @@ async function startWork(taskId) {
 
 async function stopWork() {
   const open = openWorkSession();
-  const result = await callTaskRpc("end_work", {});
+  const result = await callTaskRpc("end_work", {
+    p_enterprise: currentEnterpriseId(),
+  });
   if (open) {
     open.ended_at = nowISO();
     open.hours = result && result.hours !== undefined

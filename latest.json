@@ -1,10 +1,10 @@
 {
-  "versionCode": 18,
-  "versionName": "2.0.16",
+  "versionCode": 19,
+  "versionName": "2.0.17",
   "releasedAt": "2026-11-11",
   "notes": [
-    "星空背景改为不规则随机星点与簇状星群，场景卡不再重复平铺。",
-    "保留淡紫星图主题、场景插画和 16 张星轨表情。"
+    "跨公司老板账号默认为普通员工，可直接记工时，不再要求创建员工号。",
+    "团队页改为读取当前公司有效成员，工时按当前公司归属。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
