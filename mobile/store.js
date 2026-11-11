@@ -922,6 +922,33 @@ function getEmployee(id) {
   return DB.employees.find(item => item.id === Number(id)) || null;
 }
 
+/* 找一个"干活的人"：先查本机员工，再查公司成员。
+   跨公司加入的老板号没有本机员工记录，只有 enterprise_members 里的 profile。 */
+function resolveWorker(id) {
+  const key = String(id || "").trim();
+  if (!key) return null;
+  const employee = DB.employees.find(item => String(item.id) === key) || null;
+  if (employee) {
+    return {
+      source: "local",
+      id: employee.id,
+      profile_id: employee.profile_id || null,
+      name: employee.name,
+    };
+  }
+  const member = (DB.identity && Array.isArray(DB.identity.members)
+    ? DB.identity.members : []).find(item => String(item.profile_id) === key) || null;
+  if (member) {
+    return {
+      source: "member",
+      id: member.profile_id,
+      profile_id: member.profile_id,
+      name: member.name || "未命名成员",
+    };
+  }
+  return null;
+}
+
 function employeeByName(name) {
   return DB.employees.find(item => item.name === name) || null;
 }
@@ -946,8 +973,8 @@ function deleteEmployee(id) {
    ============================================================ */
 function addWorklog(data, options) {
   const opts = options || {};
-  const employee = getEmployee(data.employee_id);
-  if (!employee) throw new Error("先选一个人。");
+  const worker = resolveWorker(data.employee_id);
+  if (!worker) throw new Error("先选一个人。");
   const hours = num(data.hours);
   if (hours <= 0) throw new Error("工时要大于 0。");
   if (hours > 24) throw new Error("一天不可能超过 24 小时。");
@@ -978,15 +1005,20 @@ function addWorklog(data, options) {
     if (!step || step.project_id !== projectId) stepId = null;
   }
 
-  const ownerProfileId = DB.profile
-    ? (DB.profile.role === "boss"
-      ? String(DB.profile.id || "")
-      : String(DB.profile.boss_id || ""))
-    : "";
+  const ownerProfileId = typeof currentEnterpriseOwnerId === "function"
+    && currentEnterpriseOwnerId()
+    ? currentEnterpriseOwnerId()
+    : (DB.profile
+      ? (DB.profile.role === "boss"
+        ? String(DB.profile.id || "")
+        : String(DB.profile.boss_id || ""))
+      : "");
   const log = {
     id: nextId("worklog"),
     owner_profile_id: ownerProfileId,
-    employee_id: employee.id,
+    employee_id: worker.id,
+    enterprise_id: typeof currentEnterpriseId === "function"
+      ? currentEnterpriseId() : "",
     project_id: projectId,
     step_id: stepId,
     work_date: date,
@@ -1043,9 +1075,9 @@ function updateWorklog(id, data) {
       ? null : Number(data.step_id);
   }
   if (!cloudOnly && data.employee_id !== undefined) {
-    const employee = getEmployee(data.employee_id);
-    if (!employee) throw new Error("这个人已经不在名单里了。");
-    log.employee_id = employee.id;
+    const worker = resolveWorker(data.employee_id);
+    if (!worker) throw new Error("这个人已经不在名单里了。");
+    log.employee_id = worker.id;
   }
   if (!cloudOnly && data.content !== undefined) log.content = String(data.content);
   if (data.billable !== undefined) log.billable = data.billable !== false;
@@ -1706,7 +1738,9 @@ function projectName(id) {
 
 function employeeName(id) {
   const employee = getEmployee(id);
-  return employee ? employee.name : "";
+  if (employee) return employee.name;
+  if (typeof employeeNameOf === "function") return employeeNameOf(id);
+  return "";
 }
 
 function stepName(id) {

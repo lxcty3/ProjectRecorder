@@ -557,6 +557,18 @@ function worklogMigrationStepId(worklog) {
   return operationsUuid(step.cloud_id) ? String(step.cloud_id) : "";
 }
 
+/* 手工补录 / 完成任务时要带公司归属。跨公司加入的老板号，
+   工时属于当前活跃公司，而不是他自己那家公司。 */
+function worklogMigrationEnterpriseId(worklog) {
+  const raw = String((worklog && worklog.enterprise_id) || "");
+  if (operationsUuid(raw)) return raw;
+  if (typeof currentEnterpriseId === "function") {
+    const eid = currentEnterpriseId();
+    if (operationsUuid(eid)) return String(eid);
+  }
+  return "";
+}
+
 function queueLocalWorklogMigration(worklogId, worklog) {
   const localId = String(worklogId || "");
   if (!localId || operationsUuid(localId)) return null;
@@ -648,12 +660,14 @@ function worklogMigrationPayload(item) {
     row => String(row.id) === String(worklog.project_id)
   );
   const taskId = operationsUuid(worklog.task_id) ? String(worklog.task_id) : null;
+  const enterpriseId = worklogMigrationEnterpriseId(worklog);
   return {
     ready: true,
     payload: {
       id: cloudId,
       boss_id: bossId,
       employee_id: employeeId,
+      enterprise_id: enterpriseId || null,
       task_id: taskId,
       project_id: projectId || null,
       step_id: stepId || null,

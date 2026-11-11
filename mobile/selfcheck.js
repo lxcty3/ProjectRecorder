@@ -5801,8 +5801,23 @@ test("跨公司老板作为员工记录工时：完整接线", () => {
   for (const text of [
     "enterpriseMemberRows", "teamMemberRows", "identityHasManagementView()",
     "profile_id) === id", "openInviteOrganizationMember",
+    "memberRows = enterpriseMemberRows()", "employeeNameOf(draft.employee_id)",
   ]) {
     if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+  const store = fs.readFileSync(path.join(HERE, "store.js"), "utf8");
+  for (const text of [
+    "function resolveWorker", "currentEnterpriseOwnerId()",
+    "enterprise_id: typeof currentEnterpriseId",
+    "typeof employeeNameOf",
+  ]) {
+    if (!store.includes(text)) throw new Error("store.js 缺少 " + text);
+  }
+  const ops = fs.readFileSync(path.join(HERE, "operations.js"), "utf8");
+  for (const text of [
+    "worklogMigrationEnterpriseId", "enterprise_id: enterpriseId || null",
+  ]) {
+    if (!ops.includes(text)) throw new Error("operations.js 缺少 " + text);
   }
   const sqlPath = path.join(HERE, "sql", "cross-company-worklogs-v1.sql");
   if (!fs.existsSync(sqlPath)) throw new Error("缺少跨公司工时 SQL");

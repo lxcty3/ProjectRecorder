@@ -2620,7 +2620,7 @@ function editEmployee(id) {
    工时表单
    ============================================================ */
 async function editWorklog(id) {
-  if (!id && !activeEmployees().length) {
+  if (!id && !enterpriseMemberRows().length) {
     toast("先加一个员工");
     editEmployee(null);
     return;
@@ -2641,10 +2641,18 @@ async function editWorklog(id) {
     Object.assign(draft, await loadWorklogDimensions(cloudLog));
   }
   const locked = cloudOnly ? " disabled" : "";
-  const employeeOptions = activeEmployees().map(employee =>
-    `<option value="${employee.id}"`
-      + (String(draft.employee_id) === String(employee.id) ? " selected" : "")
-      + `>${escapeHtml(employee.name)}</option>`).join("");
+  const memberRows = enterpriseMemberRows();
+  let employeeOptions = memberRows.map(row =>
+    `<option value="${escapeHtml(String(row.id))}"`
+      + (String(draft.employee_id) === String(row.id) ? " selected" : "")
+      + `>${escapeHtml(row.name)}</option>`).join("");
+  /* 正在改一条云端来源的工时，其 employee_id 可能已不在当前名单里，
+     这里补一个只读占位，否则下拉框会变空。 */
+  if (draft.employee_id
+      && !memberRows.some(row => String(row.id) === String(draft.employee_id))) {
+    employeeOptions = `<option value="${escapeHtml(String(draft.employee_id))}" selected>`
+      + `${escapeHtml(employeeNameOf(draft.employee_id))}</option>` + employeeOptions;
+  }
   const projectOptions = DB.projects.map(project =>
     `<option value="${project.id}"`
       + (String(draft.project_id) === String(project.id) ? " selected" : "")
