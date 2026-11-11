@@ -1,6 +1,6 @@
 {
-  "versionCode": 19,
-  "versionName": "2.0.17",
+  "versionCode": 20,
+  "versionName": "2.0.18",
   "releasedAt": "2026-11-11",
   "notes": [
     "跨公司老板账号默认为普通员工，可直接记工时，不再要求创建员工号。",
