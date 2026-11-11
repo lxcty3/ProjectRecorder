@@ -5395,3 +5395,103 @@ nav button.on::after { background: rgba(239, 226, 255, .75); }
   }
 }
 
+
+/* ============================================================
+   应用内自动更新  2026-11-11
+   启动提示 + 下载进度 + 安装权限引导 + 失败兜底。
+   ============================================================ */
+.update-prompt {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 95;
+  width: min(92vw, 440px);
+  pointer-events: none;
+}
+.update-prompt.hidden { display: none; }
+.update-prompt-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  box-shadow: 0 14px 34px rgba(40, 26, 66, .22);
+  pointer-events: auto;
+  animation: update-prompt-in .22s ease both;
+}
+.update-prompt-copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.update-prompt-copy b { font-size: 14px; color: var(--fg-strong); }
+.update-prompt-copy span { font-size: 12px; color: var(--fg-dim); }
+.update-prompt-inner .btn {
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+.update-prompt-close {
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 20px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.update-progress { margin-top: 10px; }
+.update-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--fg-soft);
+  margin-bottom: 6px;
+}
+.update-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.update-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #705aa8, #9b8cff, #e7b96f);
+  transition: width .2s ease;
+}
+.update-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.update-sheet p { margin: 0; }
+.update-progress-foot {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.update-notes {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--read);
+  font-size: 12px;
+  color: var(--fg-soft);
+  line-height: 1.6;
+}
+@keyframes update-prompt-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-prompt-inner { animation: none; }
+  .update-progress-track span { transition: none; }
+}
+

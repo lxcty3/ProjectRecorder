@@ -150,6 +150,54 @@ console.log("\n[4] 关键文件");
   else bad(label + " 不见了", file);
 });
 
+/* ---------- 5. 应用内自动更新 ---------- */
+console.log("\n[5] 应用内自动更新");
+const updatePluginPath = path.join(APP,
+  "src/main/java/com/cj/projectrecorder/AppUpdatePlugin.java");
+const mainActivity = read(path.join(APP,
+  "src/main/java/com/cj/projectrecorder/MainActivity.java")) || "";
+const androidManifest = read(path.join(APP,
+  "src/main/AndroidManifest.xml")) || "";
+const filePaths = read(path.join(APP,
+  "src/main/res/xml/file_paths.xml")) || "";
+const updateJs = read(path.join(HERE, "update.js")) || "";
+
+if (!fs.existsSync(updatePluginPath)) {
+  bad("AppUpdatePlugin.java 不存在");
+} else {
+  ok("原生更新插件存在");
+}
+if (mainActivity.indexOf("AppUpdatePlugin.class") === -1) {
+  bad("MainActivity 没有注册 AppUpdatePlugin");
+} else {
+  ok("AppUpdatePlugin 已注册");
+}
+if (androidManifest.indexOf("REQUEST_INSTALL_PACKAGES") === -1) {
+  bad("AndroidManifest 缺少 REQUEST_INSTALL_PACKAGES",
+    "没有这条权限，系统安装器打不开。");
+} else {
+  ok("安装权限已声明");
+}
+if (filePaths.indexOf("cache-path") === -1) {
+  bad("file_paths.xml 没有 cache-path，FileProvider 分享不到下载的 APK");
+} else {
+  ok("FileProvider 覆盖缓存目录");
+}
+for (const token of [
+  "appUpdatePlugin", "expectedSha256",
+  "install_permission_required", "openAppUpdateInBrowser",
+]) {
+  if (updateJs.indexOf(token) === -1) {
+    bad("update.js 缺少 " + token);
+  }
+}
+if (updateJs.indexOf("appUpdatePlugin") !== -1
+    && updateJs.indexOf("expectedSha256") !== -1
+    && updateJs.indexOf("install_permission_required") !== -1
+    && updateJs.indexOf("openAppUpdateInBrowser") !== -1) {
+  ok("update.js 下载 / 校验 / 安装 / 兜底齐全");
+}
+
 /* ---------- 汇总 ---------- */
 console.log("\n" + "=".repeat(64));
 if (failed) {

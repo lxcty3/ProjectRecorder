@@ -5831,6 +5831,41 @@ test("跨公司老板作为员工记录工时：完整接线", () => {
   if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("跨公司 SQL 必须保持 ASCII");
 });
 
+test("应用内自动更新：下载、校验、安装和兜底完整接线", () => {
+  const update = fs.readFileSync(path.join(HERE, "update.js"), "utf8");
+  for (const text of [
+    "appUpdatePlugin", "expectedSha256", "updateProgress",
+    "install_permission_required", "openInstallSettings",
+    "openAppUpdateInBrowser", "showUpdatePrompt",
+  ]) {
+    if (!update.includes(text)) throw new Error("update.js 缺少 " + text);
+  }
+  const pluginPath = path.join(HERE, "android", "app", "src", "main",
+    "java", "com", "cj", "projectrecorder", "AppUpdatePlugin.java");
+  if (!fs.existsSync(pluginPath)) throw new Error("缺少 AppUpdatePlugin.java");
+  const plugin = fs.readFileSync(pluginPath, "utf8");
+  for (const text of [
+    '@CapacitorPlugin(name = "AppUpdate")',
+    "canRequestPackageInstalls", "FileProvider.getUriForFile",
+    "MessageDigest.getInstance(\"SHA-256\")", "notifyListeners",
+  ]) {
+    if (!plugin.includes(text)) throw new Error("AppUpdatePlugin 缺少 " + text);
+  }
+  const main = fs.readFileSync(path.join(HERE, "android", "app", "src", "main",
+    "java", "com", "cj", "projectrecorder", "MainActivity.java"), "utf8");
+  if (!main.includes("registerPlugin(AppUpdatePlugin.class)")) {
+    throw new Error("MainActivity 没有注册 AppUpdatePlugin");
+  }
+  const manifest = fs.readFileSync(path.join(HERE, "android", "app", "src",
+    "main", "AndroidManifest.xml"), "utf8");
+  if (!manifest.includes("REQUEST_INSTALL_PACKAGES")) {
+    throw new Error("AndroidManifest 缺少 REQUEST_INSTALL_PACKAGES");
+  }
+  if (!fs.existsSync(path.join(HERE, "seal-release.js"))) {
+    throw new Error("缺少 seal-release.js");
+  }
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }
