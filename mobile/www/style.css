@@ -5170,3 +5170,228 @@ nav button.on::after { background: rgba(239, 226, 255, .75); }
 @media (prefers-reduced-motion: reduce) {
   .star-sky { animation: none; }
 }
+
+
+/* ============================================================
+   星图背景 v3  2026-11-11
+   参考三张星空图：银河带 + 山脊剪影 + 彩色星云亮核 + 流星。
+   全部用 CSS 渐变和程序化 SVG 实现，不放带水印的网图。
+   深色主题给足画面；浅色主题只留淡紫底和很淡的星点。
+   ============================================================ */
+
+/* 固定层：裁掉溢出的银河与星云，避免横向滚动 */
+.star-sky {
+  overflow: hidden;
+  isolation: isolate;
+  opacity: .9;
+  background-image: url("icons/star/starfield.svg");
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: cover;
+  /* 只保留缓慢漂移；整层做呼吸会在浅色主题把亮度顶上去 */
+  animation-name: star-field-drift;
+  animation-duration: 30s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+/* 旧的一层柔光压暗一点，给银河和星云让位置 */
+.star-sky::before { opacity: .5; }
+
+/* ---- 银河带：一条斜向的柔光带，中间亮、两头淡 ---- */
+.sky-galaxy {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: 176vmax;
+  height: 46vmax;
+  transform: translate(-50%, -50%) rotate(-19deg);
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 24% 50%, rgba(186, 172, 255, .32), transparent 54%),
+    radial-gradient(ellipse at 46% 44%, rgba(206, 220, 255, .38), transparent 44%),
+    radial-gradient(ellipse at 60% 53%, rgba(156, 214, 236, .26), transparent 48%),
+    radial-gradient(ellipse at 78% 58%, rgba(230, 176, 212, .22), transparent 50%),
+    linear-gradient(90deg, transparent, rgba(190, 190, 255, .10) 20%,
+      rgba(222, 228, 255, .18) 48%, rgba(190, 190, 255, .08) 76%, transparent);
+  filter: blur(18px);
+  opacity: .72;
+  animation: galaxy-drift 38s ease-in-out infinite alternate;
+}
+
+/* 银河里的碎星与亮尘：让带子里有颗粒感，不是一条硬光 */
+.sky-galaxy::after {
+  content: "";
+  position: absolute;
+  inset: 22% 6%;
+  border-radius: 50%;
+  background-image:
+    radial-gradient(1px 1px at 9% 28%, rgba(255, 255, 255, .75), transparent 1.7px),
+    radial-gradient(1px 1px at 21% 56%, rgba(221, 233, 255, .62), transparent 1.7px),
+    radial-gradient(1.2px 1.2px at 34% 40%, rgba(255, 246, 232, .60), transparent 1.9px),
+    radial-gradient(.9px .9px at 47% 64%, rgba(200, 230, 255, .55), transparent 1.6px),
+    radial-gradient(1px 1px at 58% 36%, rgba(255, 255, 255, .70), transparent 1.7px),
+    radial-gradient(1.1px 1.1px at 71% 58%, rgba(222, 211, 255, .60), transparent 1.8px),
+    radial-gradient(.9px .9px at 84% 42%, rgba(255, 231, 210, .50), transparent 1.6px),
+    radial-gradient(1px 1px at 93% 66%, rgba(205, 236, 255, .55), transparent 1.7px);
+  background-size: 92px 92px, 126px 126px, 158px 158px, 196px 196px,
+    232px 232px, 268px 268px, 304px 304px, 340px 340px;
+  opacity: .7;
+}
+
+/* ---- 星云：右上角一团柔光，带一个亮的核 ---- */
+.sky-nebula {
+  position: absolute;
+  right: -22%;
+  top: -26%;
+  width: 112vmax;
+  height: 94vmax;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 58% 40%, rgba(128, 226, 236, .26), transparent 16%),
+    radial-gradient(circle at 58% 40%, rgba(156, 150, 255, .22), transparent 30%),
+    radial-gradient(ellipse at 44% 54%, rgba(228, 128, 198, .15), transparent 38%),
+    radial-gradient(ellipse at 74% 58%, rgba(246, 178, 128, .11), transparent 40%);
+  filter: blur(20px);
+  opacity: .66;
+  animation: nebula-drift 34s ease-in-out infinite alternate;
+}
+
+/* 星云亮核 */
+.sky-nebula::after {
+  content: "";
+  position: absolute;
+  left: 40%;
+  top: 26%;
+  width: 11vmax;
+  height: 11vmax;
+  max-width: 150px;
+  max-height: 150px;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(246, 252, 255, .55),
+    rgba(152, 216, 255, .22) 44%,
+    transparent 72%);
+  filter: blur(4px);
+}
+
+/* ---- 山脊剪影：底部一条很淡的山形，不抢内容 ---- */
+.sky-ridge {
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  bottom: -1px;
+  height: 19vh;
+  min-height: 84px;
+  max-height: 172px;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(21, 16, 44, .04), rgba(18, 13, 38, .66)),
+    #141029;
+  clip-path: polygon(
+    0 66%, 7% 53%, 14% 61%, 22% 41%, 30% 57%, 39% 34%,
+    48% 55%, 56% 45%, 64% 62%, 73% 43%, 82% 58%, 90% 48%,
+    100% 60%, 100% 100%, 0 100%
+  );
+  opacity: .74;
+}
+
+/* ---- 流星：再补两颗，错开时间 ---- */
+.sky-meteor {
+  position: absolute;
+  height: 1.5px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgba(214, 236, 255, .9), transparent);
+  box-shadow: 0 0 10px rgba(170, 210, 255, .5);
+  transform: rotate(-30deg);
+}
+
+.sky-meteor-a {
+  left: 58%;
+  top: 13%;
+  width: 116px;
+  animation: meteor-fall 14s ease-in-out infinite;
+}
+
+.sky-meteor-b {
+  left: 30%;
+  top: 25%;
+  width: 84px;
+  animation: meteor-fall 19s ease-in-out infinite;
+  animation-delay: 8s;
+}
+
+/* 原来那颗流星放慢一点，避免同一节奏 */
+.star-sky::after {
+  animation-duration: 17s;
+  animation-delay: 4s;
+}
+
+@keyframes galaxy-drift {
+  from { transform: translate(-50%, -50%) rotate(-19deg) scale(1); }
+  to   { transform: translate(-51%, -49%) rotate(-17.5deg) scale(1.03); }
+}
+
+@keyframes nebula-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(-2.5%, 2%, 0) scale(1.06); }
+}
+
+@keyframes meteor-fall {
+  0%, 72%, 100% { opacity: 0; transform: translate3d(0, 0, 0) rotate(-30deg); }
+  76% { opacity: .9; }
+  84% { opacity: 0; transform: translate3d(-150px, 92px, 0) rotate(-30deg); }
+}
+
+/* ---- 浅色主题：淡紫底 + 很淡的星点，不放大面积深色 ---- */
+[data-theme="light"] .star-sky {
+  opacity: .5;
+  background-image:
+    radial-gradient(1px 1px at 24px 34px, rgba(104, 80, 160, .48), transparent 1.7px),
+    radial-gradient(1px 1px at 74px 90px, rgba(104, 80, 160, .30), transparent 1.7px),
+    radial-gradient(1.2px 1.2px at 124px 46px, rgba(104, 80, 160, .40), transparent 1.9px),
+    radial-gradient(.9px .9px at 46px 132px, rgba(104, 80, 160, .26), transparent 1.6px),
+    radial-gradient(1px 1px at 158px 110px, rgba(104, 80, 160, .34), transparent 1.7px);
+  background-size: 190px 190px, 232px 232px, 272px 272px, 312px 312px, 352px 352px;
+}
+[data-theme="light"] .star-sky::before { opacity: .4; }
+[data-theme="light"] .sky-galaxy { opacity: .32; filter: blur(24px); }
+[data-theme="light"] .sky-galaxy::after { opacity: .22; }
+[data-theme="light"] .sky-nebula { opacity: .28; }
+[data-theme="light"] .sky-nebula::after { opacity: .3; }
+[data-theme="light"] .sky-ridge { opacity: .08; }
+[data-theme="light"] .sky-meteor,
+[data-theme="light"] .star-sky::after { animation: none; opacity: 0 !important; }
+
+/* ---- 深色主题：银河和星云亮一点 ---- */
+[data-theme="dark"] .star-sky { opacity: 1; }
+[data-theme="dark"] .sky-galaxy { opacity: .95; }
+[data-theme="dark"] .sky-nebula { opacity: .85; }
+[data-theme="dark"] .sky-ridge { opacity: .88; }
+[data-theme="dark"] .star-sky::before { opacity: .5; }
+
+/* ---- 首页 hero 卡片：补一层星云光泽 ---- */
+.scene-card {
+  background:
+    radial-gradient(circle at 78% 20%, rgba(155, 140, 255, .34), transparent 34%),
+    radial-gradient(circle at 90% 10%, rgba(126, 226, 236, .15), transparent 26%),
+    radial-gradient(circle at 11% 6%, rgba(114, 215, 199, .14), transparent 31%),
+    radial-gradient(ellipse at 58% 120%, rgba(228, 150, 198, .13), transparent 52%),
+    linear-gradient(138deg, #2b2148 0%, #382b55 55%, #4c3d73 100%);
+}
+
+/* ---- 减少动态：尊重系统设置 ---- */
+@media (prefers-reduced-motion: reduce) {
+  .star-sky,
+  .star-sky::after,
+  .sky-galaxy,
+  .sky-nebula,
+  .sky-meteor {
+    animation: none !important;
+  }
+}
+
