@@ -1,11 +1,10 @@
 {
-  "versionCode": 28,
-  "versionName": "2.0.26",
+  "versionCode": 29,
+  "versionName": "2.0.27",
   "releasedAt": "2026-11-12",
   "notes": [
-    "新增职业等级：L1 初级 / L2 中级 / L3 高级 / L4 资深 / L5 专家。",
-    "每个职级对应固定岗位；任命岗位要求个人职级 ≥ 岗位职级。",
-    "晋升由老板/HR 提议、董事会审批；按人数投票需 L3，按股份投票需 L4。"
+    "职业等级支持自定义职业：老板/HR 可创建新职业并选择 L1–L5。",
+    "自定义职业会出现在对应等级下，可分配给成员，分配后自动设置其职级。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
