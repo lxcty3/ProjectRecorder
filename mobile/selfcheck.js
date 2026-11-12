@@ -5985,6 +5985,22 @@ test("职业等级：L1-L5、岗位映射、晋升审批与功能门槛完整接
   ]) {
     if (!sql.includes(text)) throw new Error("职业等级 SQL 缺少 " + text);
   }
+  const customSqlPath = path.join(HERE, "sql", "career-custom-roles-v1.sql");
+  if (!fs.existsSync(customSqlPath)) throw new Error("缺少自定义职业 SQL");
+  const customSql = fs.readFileSync(customSqlPath, "utf8");
+  for (const text of [
+    "enterprise_career_roles", "create_career_role",
+    "assign_career_role", "list_career_roles", "career_role_id",
+  ]) {
+    if (!customSql.includes(text)) throw new Error("自定义职业 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(customSql)) throw new Error("自定义职业 SQL 必须保持 ASCII");
+  for (const text of [
+    "list_career_roles", "create_career_role", "assign_career_role",
+    "openCreateCareerRoleSheet", "openAssignCareerRoleSheet",
+  ]) {
+    if (!career.includes(text)) throw new Error("career.js 缺少 " + text);
+  }
   if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("职业等级 SQL 必须保持 ASCII");
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
   for (const text of ["career-level-panel", "career.js"]) {

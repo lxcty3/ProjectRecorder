@@ -6204,3 +6204,12 @@ textarea:focus {
   font-size: 12px;
 }
 
+
+/* 自定义职业 */
+.career-role-chip.custom {
+  border-color: var(--accent-edge);
+  background: var(--accent-wash);
+  color: var(--accent-dim);
+}
+.career-member-row { flex-wrap: wrap; }
+

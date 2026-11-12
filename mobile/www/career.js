@@ -7,6 +7,7 @@
 
 let careerState = {
   data: null,
+  customRoles: [],
   loading: false,
   error: "",
   lastLoad: 0,
@@ -46,6 +47,10 @@ function careerErrorText(error) {
   if (/pending/i.test(text)) return "该成员已有待审批的职级变更";
   if (/not pending/i.test(text)) return "这条申请已经处理过了";
   if (/level must/i.test(text)) return "职级必须在 1–5 之间";
+  if (/career role name must/i.test(text)) return "职业名称请控制在 2–40 字";
+  if (/already exists/i.test(text)) return "同名职业已存在";
+  if (/career role not found/i.test(text)) return "这个职业不存在";
+  if (/not allowed to manage career roles/i.test(text)) return "当前身份不能创建职业";
   return text || "职业等级操作失败";
 }
 
@@ -60,9 +65,13 @@ async function loadCareerLevels(force) {
   careerState.error = "";
   renderCareerLevels();
   try {
-    const result = await cloudClient.rpc("get_career_level_state", {});
-    if (result.error) throw result.error;
-    careerState.data = result.data || null;
+    const stateResult = await cloudClient.rpc("get_career_level_state", {});
+    if (stateResult.error) throw stateResult.error;
+    careerState.data = stateResult.data || null;
+    const rolesResult = await cloudClient.rpc("list_career_roles", {});
+    careerState.customRoles = (!rolesResult.error
+      && Array.isArray(rolesResult.data && rolesResult.data.roles))
+      ? rolesResult.data.roles : [];
     careerState.lastLoad = Date.now();
   } catch (error) {
     careerState.error = careerErrorText(error);
@@ -103,29 +112,50 @@ function renderCareerLevels() {
   const roles = Array.isArray(data.roles) ? data.roles : [];
   const members = Array.isArray(data.members) ? data.members : [];
   const requests = Array.isArray(data.requests) ? data.requests : [];
+  const customRoles = Array.isArray(careerState.customRoles) ? careerState.customRoles : [];
   const byLevel = {};
   roles.forEach(role => {
     const level = Number(role.level) || 1;
     (byLevel[level] = byLevel[level] || []).push(role);
   });
+  const customByLevel = {};
+  const customByMember = {};
+  customRoles.forEach(role => {
+    const level = Number(role.level) || 1;
+    (customByLevel[level] = customByLevel[level] || []).push(role);
+    (role.assigned_members || []).forEach(member => {
+      customByMember[String(member.profile_id)] = role;
+    });
+  });
   const ladder = levels.map(level => {
     const current = Number(me.career_level) === Number(level.level);
+    const fixedChips = careerRoleChips(byLevel[level.level] || []);
+    const customChips = (customByLevel[level.level] || []).map(role =>
+      '<span class="career-role-chip custom">' + escapeHtml(role.name)
+      + '</span>').join("");
     return '<div class="career-level' + (current ? " current" : "") + '">'
       + '<div class="career-level-head"><b>' + escapeHtml(level.name) + '</b>'
       + '<span>' + (current ? "我的职级" : "") + '</span></div>'
-      + '<div class="career-level-roles">' + careerRoleChips(byLevel[level.level] || [])
-      + '</div></div>';
+      + '<div class="career-level-roles">' + fixedChips + customChips + '</div></div>';
   }).join("");
-  const memberRows = members.map(member => '<div class="career-member-row">'
-    + '<span class="career-member-name">' + escapeHtml(member.name || "成员") + '</span>'
-    + '<span class="career-badge">' + careerLevelLabel(member.career_level) + '</span>'
-    + '<span class="meta">' + escapeHtml(identityRoleLabel(member.role_key)) + '</span>'
-    + (me.can_manage && Number(member.career_level) < 5
-      ? '<button class="community-link-btn" data-career-request="'
-        + escapeHtml(member.profile_id) + '" data-career-current="'
-        + Number(member.career_level) + '">调整职级</button>'
-      : '')
-    + '</div>').join("");
+  const memberRows = members.map(member => {
+    const custom = customByMember[String(member.profile_id)];
+    return '<div class="career-member-row">'
+      + '<span class="career-member-name">' + escapeHtml(member.name || "成员") + '</span>'
+      + '<span class="career-badge">' + careerLevelLabel(member.career_level)
+      + (custom ? ' · ' + escapeHtml(custom.name) : '') + '</span>'
+      + '<span class="meta">' + escapeHtml(identityRoleLabel(member.role_key)) + '</span>'
+      + (me.can_manage && Number(member.career_level) < 5
+        ? '<button class="community-link-btn" data-career-request="'
+          + escapeHtml(member.profile_id) + '" data-career-current="'
+          + Number(member.career_level) + '">调整职级</button>'
+        : '')
+      + (me.can_manage && customRoles.length
+        ? '<button class="community-link-btn" data-career-assign="'
+          + escapeHtml(member.profile_id) + '">分配职业</button>'
+        : '')
+      + '</div>';
+  }).join("");
   const requestRows = requests.map(request => '<div class="career-request-row">'
     + '<div class="career-request-copy"><b>' + escapeHtml(request.name || "成员") + '</b>'
     + '<span class="meta">' + careerLevelLabel(request.current_level) + ' → '
@@ -145,6 +175,9 @@ function renderCareerLevels() {
     + '<b class="career-big">' + careerLevelLabel(me.career_level) + '</b>'
     + '<span class="meta">岗位职级 ' + careerLevelLabel(me.role_level)
     + ' · ' + escapeHtml(identityRoleLabel(me.role_key)) + '</span></div>'
+    + (me.can_manage
+      ? '<button class="btn ghost" id="btn-create-career-role">创建职业</button>'
+      : '')
     + '</div>'
     + '<div class="career-ladder">' + ladder + '</div>'
     + (me.can_manage || me.can_approve
@@ -157,9 +190,14 @@ function renderCareerLevels() {
         + requests.length + ' 项</span></div><div class="career-requests">'
         + requestRows + '</div>'
       : '');
+  const create = $("btn-create-career-role");
+  if (create) create.onclick = openCreateCareerRoleSheet;
   box.querySelectorAll("[data-career-request]").forEach(button => {
     button.onclick = () => openCareerRequestSheet(
       button.dataset.careerRequest, Number(button.dataset.careerCurrent || 1));
+  });
+  box.querySelectorAll("[data-career-assign]").forEach(button => {
+    button.onclick = () => openAssignCareerRoleSheet(button.dataset.careerAssign);
   });
   box.querySelectorAll("[data-career-decide]").forEach(button => {
     button.onclick = () => decideCareerRequest(
@@ -217,6 +255,75 @@ async function decideCareerRequest(requestId, approve) {
   }
 }
 
+function openCreateCareerRoleSheet() {
+  const options = [1, 2, 3, 4, 5].map(level =>
+    '<option value="' + level + '">' + careerLevelLabel(level) + '</option>').join("");
+  openSheet("创建职业", `
+    <label for="career-role-name">职业名称</label>
+    <input id="career-role-name" maxlength="40" placeholder="例如：UI 设计师">
+    <label for="career-role-level">对应职级</label>
+    <select id="career-role-level">${options}</select>
+    <label for="career-role-desc">说明（可选）</label>
+    <textarea id="career-role-desc" maxlength="500" placeholder="这个职业负责什么"></textarea>
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "创建", kind: "", onClick: submitCreateCareerRole },
+  ]);
+}
+
+async function submitCreateCareerRole() {
+  const name = String(($("career-role-name") || {}).value || "").trim();
+  const level = Number(($("career-role-level") || {}).value || 1);
+  const desc = String(($("career-role-desc") || {}).value || "");
+  if (!name) { toast("先写职业名称"); return; }
+  try {
+    const result = await cloudClient.rpc("create_career_role", {
+      p_name: name, p_level: level, p_description: desc,
+    });
+    if (result.error) throw result.error;
+    closeSheet();
+    toast("职业已创建");
+    await loadCareerLevels(true);
+  } catch (error) {
+    toast(careerErrorText(error));
+  }
+}
+
+function openAssignCareerRoleSheet(profileId) {
+  const roles = Array.isArray(careerState.customRoles) ? careerState.customRoles : [];
+  const member = ((careerState.data && careerState.data.members) || [])
+    .find(row => String(row.profile_id) === String(profileId));
+  if (!roles.length) { toast("先创建一个职业"); return; }
+  const options = roles.map(role =>
+    '<option value="' + escapeHtml(role.id) + '">' + escapeHtml(role.name)
+    + ' · ' + careerLevelLabel(role.level) + '</option>').join("");
+  openSheet("分配职业", `
+    <div class="hint">${escapeHtml(member ? member.name : "成员")}</div>
+    <label for="career-assign-role">选择职业</label>
+    <select id="career-assign-role">${options}</select>
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "分配", kind: "", onClick: () => assignCareerRole(profileId) },
+  ]);
+}
+
+async function assignCareerRole(profileId) {
+  const roleId = String(($("career-assign-role") || {}).value || "");
+  if (!roleId) return;
+  try {
+    const result = await cloudClient.rpc("assign_career_role", {
+      p_profile: profileId, p_role: roleId,
+    });
+    if (result.error) throw result.error;
+    closeSheet();
+    toast("职业已分配");
+    await loadCareerLevels(true);
+  } catch (error) {
+    toast(careerErrorText(error));
+  }
+}
+
 function bindCareerEvents() {
+
   if (typeof renderCareerLevels === "function") renderCareerLevels();
 }
