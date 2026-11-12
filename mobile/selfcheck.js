@@ -5867,6 +5867,36 @@ test("应用内自动更新：下载、校验、安装和兜底完整接线", ()
   }
 });
 
+test("社区投票：匿名汇总、一人一票、发帖/顶部入口完整接线", () => {
+  const community = fs.readFileSync(path.join(HERE, "community.js"), "utf8");
+  for (const text of [
+    "communityPollHtml", "openCommunityPollComposer", "submitCommunityPoll",
+    "voteCommunityPoll", "closeCommunityPoll", "loadCommunityPolls",
+    "create_community_poll", "vote_community_poll",
+    "close_community_poll", "get_community_polls_for_posts",
+    "data-poll-vote", "匿名汇总",
+  ]) {
+    if (!community.includes(text)) throw new Error("community.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "community-polls-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少社区投票 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "community_polls", "community_poll_votes",
+    "create_community_poll", "vote_community_poll",
+    "close_community_poll", "get_community_polls_for_posts",
+    "revoke all on public.community_poll_votes",
+    "on conflict (poll_id, voter_profile_id) do update",
+  ]) {
+    if (!sql.includes(text)) throw new Error("社区投票 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("社区投票 SQL 必须保持 ASCII");
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ["btn-community-poll", "btn-community-add-poll"]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

@@ -29,6 +29,8 @@ let communityAdminEditing = "";
 let communityAdminStats = null;
 let communityAuthorCardCache = {};
 let communityAuthorCardWarningShown = false;
+let communityPolls = {};
+let communityPollBusy = false;
 
 function communityEscape(value) {
   return escapeHtml(String(value == null ? "" : value));
@@ -368,6 +370,254 @@ function communityCommentsHtml(postId) {
     + communityEscape(postId) + '">发送评论</button></div>';
 }
 
+
+/* ============================================================
+   社区投票
+   ============================================================ */
+function communityPollPercent(count, total) {
+  const n = Number(count) || 0;
+  const t = Number(total) || 0;
+  return t > 0 ? Math.round(n * 100 / t) : 0;
+}
+
+function communityPollRemaining(poll) {
+  const closes = new Date(poll && poll.closes_at || "").getTime();
+  if (!isFinite(closes)) return "";
+  const diff = closes - Date.now();
+  if (!poll || poll.status !== "open" || diff <= 0) return "已截止";
+  const hours = Math.ceil(diff / 3600000);
+  return hours < 48 ? "剩余 " + hours + " 小时" : "剩余 " + Math.ceil(hours / 24) + " 天";
+}
+
+function communityPollById(pollId) {
+  return Object.keys(communityPolls)
+    .map(key => communityPolls[key])
+    .find(poll => poll && String(poll.id) === String(pollId)) || null;
+}
+
+function communityPollOptionText(poll, optionId) {
+  const option = (Array.isArray(poll && poll.options) ? poll.options : [])
+    .find(item => String(item.id) === String(optionId));
+  return option ? String(option.text || "") : String(optionId || "");
+}
+
+function communityPollHtml(poll) {
+  const total = Number(poll && poll.total) || 0;
+  const my = String(poll && poll.my_option || "");
+  const open = poll && poll.status === "open";
+  const options = Array.isArray(poll && poll.options) ? poll.options : [];
+  const rows = options.map(option => {
+    const id = String(option.id || "");
+    const count = Number((poll.counts || {})[id]) || 0;
+    const percent = communityPollPercent(count, total);
+    const mine = my === id;
+    return '<button class="community-poll-option' + (mine ? " mine" : "") + '"'
+      + ' data-poll-vote="' + communityEscape(poll.id) + '"'
+      + ' data-poll-option="' + communityEscape(id) + '"'
+      + (open ? "" : " disabled") + '>'
+      + '<span class="community-poll-option-head"><span>'
+      + (mine ? "✓ " : "") + communityEscape(option.text || "")
+      + '</span><b>' + count + ' 票 · ' + percent + '%</b></span>'
+      + '<span class="community-poll-track"><span style="transform:scaleX('
+      + (percent / 100) + ')"></span></span></button>';
+  }).join("");
+  return '<div class="community-poll" data-poll-id="' + communityEscape(poll.id) + '">'
+    + '<div class="community-poll-head"><b>' + communityEscape(poll.question || "投票")
+    + '</b><span class="community-poll-state ' + (open ? "open" : "closed") + '">'
+    + communityEscape(open ? communityPollRemaining(poll) : "已截止") + '</span></div>'
+    + '<div class="community-poll-options">' + rows + '</div>'
+    + '<div class="community-poll-foot"><span>共 ' + total + ' 人投票 · 匿名汇总</span>'
+    + (open && poll.can_close
+      ? '<button class="community-link-btn" data-poll-close="'
+        + communityEscape(poll.id) + '">结束投票</button>' : "")
+    + '</div>'
+    + (my ? '<div class="community-poll-mine">你已投给「'
+      + communityEscape(communityPollOptionText(poll, my)) + '」'
+      + (open ? "，截止前可改票" : "") + '</div>' : "")
+    + (poll.allow_note ? '<div class="community-poll-hint">投票时可附一句匿名附言</div>' : "")
+    + '</div>';
+}
+
+async function loadCommunityPolls() {
+  if (!DB.profile || !initCloud() || !communityPosts.length) {
+    communityPolls = {};
+    return;
+  }
+  const ids = communityPosts.map(post => post && post.id).filter(Boolean);
+  if (!ids.length) { communityPolls = {}; return; }
+  try {
+    const result = await cloudClient.rpc("get_community_polls_for_posts", { p_posts: ids });
+    if (result.error) { communityPolls = {}; return; }
+    const rows = Array.isArray(result.data && result.data.polls) ? result.data.polls : [];
+    const next = {};
+    rows.forEach(poll => {
+      if (poll && poll.post_id) next[String(poll.post_id)] = poll;
+    });
+    communityPolls = next;
+  } catch (_) {
+    communityPolls = {};
+  }
+}
+
+function communityPollErrorText(error) {
+  const text = String(error && error.message || error || "");
+  if (/could not find|does not exist|function/i.test(text)) return "投票功能还没注入 SQL";
+  if (/board posting denied/i.test(text)) return "这个板块不允许发帖";
+  if (/poll closed/i.test(text)) return "投票已经截止";
+  if (/not an enterprise member/i.test(text)) return "只有本公司成员能参与投票";
+  if (/question must/i.test(text)) return "问题请控制在 1–120 字";
+  if (/options? must|option text|option ids/i.test(text)) return "选项需要 2–6 个，每个 1–80 字";
+  if (/close time/i.test(text)) return "截止时间需在未来 30 天内";
+  if (/not allowed/i.test(text)) return "只有发起人或老板能结束投票";
+  return text || "投票操作失败";
+}
+
+function openCommunityPollComposer(prefillContent) {
+  if (!DB.profile) { toast("登录后才能发起投票"); return; }
+  const select = $("community-board-select");
+  const board = select && select.value ? select.value : communityCurrentBoard;
+  if (!board) { toast("请先选择板块"); return; }
+  const d = new Date(Date.now() + 3 * 24 * 3600 * 1000);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 16);
+  openSheet("发起投票", `
+    <label for="poll-question">问题</label>
+    <input id="poll-question" maxlength="120" placeholder="想让大家决定什么？"
+      value="${escapeHtml(String(prefillContent || "").slice(0, 120))}">
+    <div class="section-head"><span>选项</span><span class="meta">2–6 个</span></div>
+    <div id="poll-options">
+      <input class="poll-option-input" maxlength="80" placeholder="选项 1">
+      <input class="poll-option-input" maxlength="80" placeholder="选项 2">
+    </div>
+    <button class="btn ghost" id="btn-poll-add-option"
+      style="width:100%;margin-top:8px">+ 添加选项</button>
+    <label for="poll-closes">截止时间</label>
+    <input id="poll-closes" type="datetime-local" value="${local}">
+    <label class="check" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input type="checkbox" id="poll-allow-note"> 允许匿名附言
+    </label>
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "发布投票", kind: "", onClick: submitCommunityPoll },
+  ]);
+  const add = $("btn-poll-add-option");
+  if (add) {
+    add.onclick = () => {
+      const box = $("poll-options");
+      const inputs = box ? box.querySelectorAll(".poll-option-input") : [];
+      if (!box || inputs.length >= 6) { toast("最多 6 个选项"); return; }
+      const input = document.createElement("input");
+      input.className = "poll-option-input";
+      input.maxLength = 80;
+      input.placeholder = "选项 " + (inputs.length + 1);
+      box.appendChild(input);
+    };
+  }
+}
+
+async function submitCommunityPoll() {
+  if (!DB.profile || !initCloud()) return;
+  const question = String(($("poll-question") || {}).value || "").trim();
+  const inputs = Array.from(document.querySelectorAll(".poll-option-input"));
+  const options = inputs
+    .map((input, index) => ({ id: "o" + (index + 1), text: String(input.value || "").trim() }))
+    .filter(item => item.text);
+  if (question.length < 1) { toast("先写投票问题"); return; }
+  if (options.length < 2) { toast("至少填两个选项"); return; }
+  if (options.length > 6) { toast("最多 6 个选项"); return; }
+  const closesRaw = String(($("poll-closes") || {}).value || "");
+  const closes = new Date(closesRaw);
+  if (!closesRaw || !isFinite(closes.getTime())) { toast("请选择截止时间"); return; }
+  if (closes.getTime() <= Date.now()) { toast("截止时间要晚于现在"); return; }
+  const select = $("community-board-select");
+  const board = select && select.value ? select.value : communityCurrentBoard;
+  if (!board) { toast("请先选择板块"); return; }
+  try {
+    const result = await cloudClient.rpc("create_community_poll", {
+      p_board: board,
+      p_content: question,
+      p_question: question,
+      p_options: options,
+      p_closes_at: closes.toISOString(),
+      p_allow_note: !!($("poll-allow-note") || {}).checked,
+    });
+    if (result.error) throw result.error;
+    closeSheet();
+    toast("投票已发布");
+    communityLastLoad = 0;
+    await loadCommunityPosts(true);
+  } catch (error) {
+    toast(communityPollErrorText(error));
+  }
+}
+
+function openPollNoteSheet(poll, option) {
+  openSheet("确认投票", `
+    <div class="community-poll-note">
+      <b>${escapeHtml(poll.question || "投票")}</b>
+      <p class="meta">你选择的是：${escapeHtml(option.text || "")}</p>
+      <label for="poll-note">附言（可选，匿名）</label>
+      <textarea id="poll-note" maxlength="300" placeholder="为什么这样选？"></textarea>
+    </div>
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "提交投票", kind: "", onClick: () => {
+      const note = String(($("poll-note") || {}).value || "");
+      closeSheet();
+      voteCommunityPoll(poll.id, option.id, note);
+    } },
+  ]);
+}
+
+async function voteCommunityPoll(pollId, optionId, note) {
+  if (!DB.profile || !initCloud() || communityPollBusy) return;
+  const poll = communityPollById(pollId);
+  if (!poll) return;
+  const option = (Array.isArray(poll.options) ? poll.options : [])
+    .find(item => String(item.id) === String(optionId));
+  if (!option) return;
+  if (poll.allow_note && note === undefined) {
+    openPollNoteSheet(poll, option);
+    return;
+  }
+  communityPollBusy = true;
+  try {
+    const result = await cloudClient.rpc("vote_community_poll", {
+      p_poll: pollId,
+      p_option: optionId,
+      p_note: String(note || ""),
+    });
+    if (result.error) throw result.error;
+    const payload = result.data && result.data.poll;
+    if (payload && payload.post_id) {
+      communityPolls[String(payload.post_id)] = payload;
+      renderCommunityFeed();
+    }
+    toast("已记录投票");
+  } catch (error) {
+    toast(communityPollErrorText(error));
+  } finally {
+    communityPollBusy = false;
+  }
+}
+
+async function closeCommunityPoll(pollId) {
+  if (!DB.profile || !initCloud()) return;
+  if (!confirm("结束这个投票？结束后不能再改票。")) return;
+  try {
+    const result = await cloudClient.rpc("close_community_poll", { p_poll: pollId });
+    if (result.error) throw result.error;
+    const payload = result.data && result.data.poll;
+    if (payload && payload.post_id) {
+      communityPolls[String(payload.post_id)] = payload;
+      renderCommunityFeed();
+    }
+    toast("投票已结束");
+  } catch (error) {
+    toast(communityPollErrorText(error));
+  }
+}
+
 function renderCommunityPost(post) {
   const mine = DB.profile && String(post.author_id) === String(DB.profile.id);
   const initial = communityEscape(String(post.author_name || "成").slice(0, 1));
@@ -393,11 +643,13 @@ function renderCommunityPost(post) {
     + '<span class="community-role">' + communityEscape(
       communityAuthorRoleText(post.author_id, post.author_role))
     + "</span>" + communityPostTags(post) + (mine ? '<span class="community-mine">我</span>' : "")
-    + '</div><div class="community-meta">' + communityEscape(post.topic || "分享")
+    + '</div><div class="community-meta">' + communityEscape(post.topic === "poll" ? "投票" : (post.topic || "分享"))
     + " · " + communityTime(post.created_at) + "</div></div>"
     + (mine ? '<button class="community-delete" data-community-delete="'
       + communityEscape(post.id) + '">删除</button>' : "") + "</div>"
     + body
+    + (communityPolls[String(post.id)]
+      ? communityPollHtml(communityPolls[String(post.id)]) : "")
     + '<div class="community-post-actions">'
     + '<button class="community-action' + (post.liked ? " on" : "") + '" data-community-like="'
     + communityEscape(post.id) + '">喜欢 <b>' + num(post.like_count) + "</b></button>"
@@ -444,6 +696,13 @@ function renderCommunityFeed() {
 function bindCommunityPostActions(feed) {
   feed.querySelectorAll("[data-community-unlock]").forEach(button => {
     button.onclick = () => unlockKnowledgePost(button.dataset.communityUnlock);
+  });
+  feed.querySelectorAll("[data-poll-vote]").forEach(button => {
+    button.onclick = () => voteCommunityPoll(
+      button.dataset.pollVote, button.dataset.pollOption);
+  });
+  feed.querySelectorAll("[data-poll-close]").forEach(button => {
+    button.onclick = () => closeCommunityPoll(button.dataset.pollClose);
   });
   feed.querySelectorAll("[data-community-delete]").forEach(button => {
     button.onclick = () => deleteCommunityPost(button.dataset.communityDelete);
@@ -560,6 +819,19 @@ function bindCommunityToolbar() {
     profileButton.dataset.bound = "1";
     $("btn-community-profile").onclick = openCommunityProfileEditor;
   }
+  const pollButton = $("btn-community-poll");
+  if (pollButton && pollButton.dataset.bound !== "1") {
+    pollButton.dataset.bound = "1";
+    $("btn-community-poll").onclick = () => openCommunityPollComposer("");
+  }
+  const addPollButton = $("btn-community-add-poll");
+  if (addPollButton && addPollButton.dataset.bound !== "1") {
+    addPollButton.dataset.bound = "1";
+    $("btn-community-add-poll").onclick = () => {
+      const input = $("community-input");
+      openCommunityPollComposer(input ? input.value : "");
+    };
+  }
   const boardSelect = $("community-board-select");
   if (boardSelect && boardSelect.dataset.bound !== "1") {
     boardSelect.dataset.bound = "1";
@@ -641,6 +913,7 @@ async function loadCommunityPosts(force, append) {
     communityPosts = append ? communityPosts.concat(rows) : rows;
     communityCursor = data.next_cursor || null;
     communityHasMore = !!data.has_more;
+    await loadCommunityPolls();
     communityLastLoad = Date.now();
   } catch (error) {
     if (!append) communityPosts = [];
