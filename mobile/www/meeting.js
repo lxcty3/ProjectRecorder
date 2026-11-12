@@ -163,6 +163,12 @@ function renderShareholderMeetings() {
     const voteLine = item.meeting_type === "special"
       ? `${Number(item.yes_count || 0)}/${Number(item.eligible_count || total)} 人同意，需超过半数`
       : "月度例行会议，无需召集表决";
+    const myBallot = item.my_vote === "yes" ? "已投同意召集"
+      : item.my_vote === "no" ? "已投反对"
+      : item.my_vote === "abstain" ? "已投弃权" : "未投票";
+    const threshold = Number(item.approval_threshold_bps) > 0
+      ? "需 >" + Math.round(Number(item.approval_threshold_bps) / 100) + "%" : "";
+    const ballotMeta = [myBallot, threshold].filter(Boolean).join(" · ");
     return `<article class="identity-motion ${item.status === 'pending_approval' ? 'open' : ''}">
       <div class="identity-motion-head"><div>
         <div class="identity-eyebrow">${escapeHtml(meetingTypeLabel(item.meeting_type))} · ${escapeHtml(meetingDate(item.scheduled_at))}</div>
@@ -170,6 +176,7 @@ function renderShareholderMeetings() {
       </div><span class="identity-status ${item.status === 'pending_approval' ? 'open' : ''}">${escapeHtml(meetingStatusLabel(item.status))}</span></div>
       <div class="identity-vote-line"><span>${escapeHtml(voteLine)}</span><span>${escapeHtml(attendance.text)}</span></div>
       ${attendance.leaveText ? `<div class="identity-empty" style="padding:8px 0"><span>请假：${escapeHtml(attendance.leaveText)}</span></div>` : ""}
+      <div class="identity-ballot-status">${escapeHtml(ballotMeta)}</div>
       ${buttons.length ? `<div class="identity-vote-actions">${buttons.join("")}</div>` : ""}
     </article>`;
   }).join("") : '<div class="identity-empty"><b>暂无会议记录</b><span>本月例行会议会自动建立。</span></div>';
@@ -190,6 +197,7 @@ function renderShareholderMeetings() {
   box.querySelectorAll("[data-meeting-complete]").forEach(button => {
     button.onclick = () => openShareholderMeetingComplete(button.dataset.meetingComplete);
   });
+  if (typeof renderIdentityVoteInbox === "function") renderIdentityVoteInbox();
 }
 
 function openShareholderMeetingInitiate() {

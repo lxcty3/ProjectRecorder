@@ -5897,6 +5897,37 @@ test("社区投票：匿名汇总、一人一票、发帖/顶部入口完整接�
   }
 });
 
+test("投票信息层级：先选后看结果 + 待我投票聚合", () => {
+  const community = fs.readFileSync(path.join(HERE, "community.js"), "utf8");
+  for (const text of [
+    "const showResults = !open || !!my",
+    "community-poll-choice", "community-poll-prompt",
+    "点击一个选项投票，投完可看结果",
+  ]) {
+    if (!community.includes(text)) throw new Error("community.js 缺少 " + text);
+  }
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  for (const text of [
+    "identityChoiceLabel", "identityBpsText", "identityRemainingText",
+    "identityVoteInboxItems", "renderIdentityVoteInbox",
+    "identity-ballot-status", "暂无待你投票",
+  ]) {
+    if (!identity.includes(text)) throw new Error("identity.js 缺少 " + text);
+  }
+  const meeting = fs.readFileSync(path.join(HERE, "meeting.js"), "utf8");
+  for (const text of ["identity-ballot-status", "renderIdentityVoteInbox"]) {
+    if (!meeting.includes(text)) throw new Error("meeting.js 缺少 " + text);
+  }
+  const decision = fs.readFileSync(path.join(HERE, "decision.js"), "utf8");
+  for (const text of ["投赞成", "投反对", "待我投票"]) {
+    if (!decision.includes(text)) throw new Error("decision.js 缺少 " + text);
+  }
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  if (!html.includes("identity-vote-inbox") || !html.includes("待我投票")) {
+    throw new Error("index.html 缺少待我投票容器");
+  }
+});
+
 /* ---------------------------------------------------------- 执行 */
 CASES.forEach(([label, body]) => {
   try { body(); ok(label); } catch (error) { fail(label, error.message); }

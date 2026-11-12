@@ -307,6 +307,8 @@ function renderIdentity() {
     if ($("identity-point-count")) $("identity-point-count").textContent = "";
     if ($("identity-organization")) $("identity-organization").innerHTML = "";
     if ($("organization-summary")) $("organization-summary").textContent = "";
+    if ($("identity-vote-inbox")) $("identity-vote-inbox").innerHTML = "";
+    if ($("identity-vote-inbox-count")) $("identity-vote-inbox-count").textContent = "";
     return;
   }
 
@@ -351,6 +353,108 @@ function renderIdentity() {
   renderIdentityMembers(state);
   renderIdentityMotions(state);
   renderIdentityBoard(state);
+  renderIdentityVoteInbox();
+}
+
+
+function identityChoiceLabel(choice) {
+  if (choice === "yes") return "已投赞成";
+  if (choice === "no") return "已投反对";
+  if (choice === "abstain") return "已投弃权";
+  return "未投票";
+}
+
+function identityBpsText(bps) {
+  const value = Number(bps);
+  if (!isFinite(value) || value <= 0) return "";
+  return "需 >" + Math.round(value / 100) + "%";
+}
+
+function identityRemainingText(value) {
+  const when = new Date(value || "").getTime();
+  if (!isFinite(when)) return "";
+  const diff = when - Date.now();
+  if (diff <= 0) return "已截止";
+  const hours = Math.ceil(diff / 3600000);
+  return hours < 48 ? "剩 " + hours + " 小时" : "剩 " + Math.ceil(hours / 24) + " 天";
+}
+
+function identityVoteInboxItems() {
+  const state = identityState();
+  if (!state) return [];
+  const items = [];
+  (Array.isArray(state.motions) ? state.motions : []).forEach(motion => {
+    if (motion.status !== "open" || !motion.can_vote || motion.my_choice) return;
+    const action = motion.kind === "removal" ? "免去 " : "任命/调整 ";
+    items.push({
+      key: "motion:" + motion.id,
+      section: "identity-motions",
+      label: "股东表决",
+      title: motion.target_name ? action + motion.target_name : (motion.reason || "身份事项"),
+      meta: [
+        identityBpsText(motion.required_bps || motion.approval_bps),
+        identityRemainingText(motion.closes_at),
+      ].filter(Boolean).join(" · "),
+    });
+  });
+  (Array.isArray(state.board_motions) ? state.board_motions : []).forEach(motion => {
+    if (motion.status !== "open" || !motion.can_vote || motion.my_choice) return;
+    items.push({
+      key: "board:" + motion.id,
+      section: "identity-board",
+      label: "董事会",
+      title: motion.title || "董事会议案",
+      meta: "董事一人一票",
+    });
+  });
+  const meetings = (DB.shareholderMeetings && DB.shareholderMeetings.data
+    && Array.isArray(DB.shareholderMeetings.data.meetings))
+    ? DB.shareholderMeetings.data.meetings : [];
+  meetings.forEach(meeting => {
+    if (!meeting.actions || !meeting.actions.vote || meeting.my_vote) return;
+    items.push({
+      key: "meeting:" + meeting.id,
+      section: "identity-meetings",
+      label: "股东大会",
+      title: meeting.title || "临时股东大会",
+      meta: [
+        identityBpsText(meeting.approval_threshold_bps),
+        identityDate(meeting.scheduled_at),
+      ].filter(Boolean).join(" · "),
+    });
+  });
+  return items;
+}
+
+function renderIdentityVoteInbox() {
+  const box = $("identity-vote-inbox");
+  if (!box) return;
+  const count = $("identity-vote-inbox-count");
+  const items = identityVoteInboxItems();
+  if (count) count.textContent = items.length ? items.length + " 项" : "";
+  if (!items.length) {
+    box.innerHTML = '<div class="identity-empty identity-vote-inbox-empty">'
+      + '<b>暂无待你投票的事项</b>'
+      + '<span>股东大会、股东表决和董事会的事项会自动出现在这里。</span></div>';
+    return;
+  }
+  box.innerHTML = '<div class="card identity-vote-inbox">'
+    + items.map(item => '<button class="identity-vote-inbox-row"'
+      + ' data-vote-inbox-section="' + escapeHtml(item.section) + '">'
+      + '<span class="identity-vote-inbox-kind">' + escapeHtml(item.label) + '</span>'
+      + '<span class="identity-vote-inbox-copy"><b>' + escapeHtml(item.title) + '</b>'
+      + '<small>' + escapeHtml(item.meta || "待投票") + '</small></span>'
+      + '<span class="identity-vote-inbox-arrow">›</span></button>').join("")
+    + '</div>';
+  box.querySelectorAll("[data-vote-inbox-section]").forEach(button => {
+    button.onclick = () => {
+      const target = document.getElementById(button.dataset.voteInboxSection);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.classList.add("identity-vote-flash");
+      setTimeout(() => target.classList.remove("identity-vote-flash"), 900);
+    };
+  });
 }
 
 function renderIdentityMembers(state) {
@@ -428,6 +532,13 @@ function identityMotionCard(motion) {
   const canVote = open && motion.can_vote && identityCan("identity.vote");
   const canCancel = open && (me.is_owner
     || String(me.profile_id) === String(motion.proposer_profile_id));
+  const myWeight = Number(me.shares) > 0 ? "我的权重 " + num(me.shares) : "";
+  const ballotMeta = [
+    identityChoiceLabel(motion.my_choice),
+    myWeight,
+    identityBpsText(motion.required_bps || motion.approval_bps),
+    identityRemainingText(motion.closes_at),
+  ].filter(Boolean).join(" · ");
   const voteButtons = canVote ? `
     <div class="identity-vote-actions">
       <button class="btn" data-vote-yes="${escapeHtml(motion.id)}">赞成</button>
@@ -460,6 +571,7 @@ function identityMotionCard(motion) {
       <div class="identity-vote-track"><span style="width:${
         Math.max(0, Math.min(100, identityPercent(motion.turnout_percent)))
       }%"></span></div>
+      <div class="identity-ballot-status">${escapeHtml(ballotMeta)}</div>
       <div class="identity-motion-foot">
         <span>${open ? "截止 " + identityDate(motion.closes_at) : escapeHtml(motion.decision_reason || "")}</span>
         <div class="identity-motion-actions">${cancelButton}${closeButton}${voteButtons}</div>
@@ -635,8 +747,8 @@ async function identityVote(motionId, choice) {
   await identityRpc("cast_enterprise_role_vote", {
     p_motion: motionId,
     p_choice: choice,
-  }, choice === "yes" ? "已投赞成票"
-    : choice === "no" ? "已投反对票" : "已投弃权票");
+  }, choice === "yes" ? "已投赞成"
+    : choice === "no" ? "已投反对" : "已投弃权");
 }
 
 async function identityCloseVote(motionId) {
@@ -676,6 +788,11 @@ function identityBoardCard(motion) {
   const open = motion.status === "open";
   const canVote = open && motion.can_vote;
   const canFinalize = open && motion.can_finalize;
+  const ballotMeta = [
+    identityChoiceLabel(motion.my_choice),
+    "董事一人一票",
+    motion.status === "open" ? "待截止计票" : "",
+  ].filter(Boolean).join(" · ");
   const voteButtons = canVote ? `
     <button class="btn" data-board-vote="${escapeHtml(motion.id)}"
       data-board-choice="yes">赞成</button>
@@ -704,6 +821,7 @@ function identityBoardCard(motion) {
       <span>${motion.conflict_disclosed ? "已披露利益冲突" : "未披露冲突"}</span>
       <span>${escapeHtml(motion.proposer_name || "董事")} 发起</span>
     </div>
+    <div class="identity-ballot-status">${escapeHtml(ballotMeta)}</div>
     <div class="identity-motion-actions">${finalizeButton}${voteButtons}</div>
   </div>`;
 }
@@ -817,8 +935,8 @@ async function identityBoardVote(motionId, choice) {
   await identityRpc("cast_board_vote", {
     p_motion: motionId,
     p_choice: choice,
-  }, choice === "yes" ? "已投赞成票"
-    : choice === "no" ? "已投反对票" : "已投弃权票");
+  }, choice === "yes" ? "已投赞成"
+    : choice === "no" ? "已投反对" : "已投弃权");
 }
 
 async function identityBoardFinalize(motionId) {

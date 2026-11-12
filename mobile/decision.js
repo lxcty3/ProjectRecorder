@@ -391,12 +391,12 @@ function openApprovalNote(action, item) {
   const required = action === "rejected" || action === "returned";
   const identity = item.kind === "identity_motion";
   const title = identity
-    ? (action === "approved" ? "投赞成票" : "投反对票")
+    ? (action === "approved" ? "投赞成" : "投反对")
     : action === "approved" ? "批准"
       : action === "rejected" ? "拒绝" : "退回补充";
   openSheet(title, `
     <div class="hint" style="margin-bottom:8px">${escapeHtml(item.title || "")}</div>
-    ${identity ? '<div class="community-note">身份事项按股东持股权重表决，最终结果由治理规则计算。</div>' : ""}
+    ${identity ? '<div class="community-note">身份事项按股东持股权重表决；完整议案在「更多 → 治理 → 待我投票」。</div>' : ""}
     <label for="approval-note">审批说明${required ? "（必填）" : "（可选）"}</label>
     <textarea id="approval-note" maxlength="1000"
       placeholder="写清审批依据"></textarea>

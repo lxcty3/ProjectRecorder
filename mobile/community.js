@@ -405,12 +405,21 @@ function communityPollHtml(poll) {
   const total = Number(poll && poll.total) || 0;
   const my = String(poll && poll.my_option || "");
   const open = poll && poll.status === "open";
+  const showResults = !open || !!my;
   const options = Array.isArray(poll && poll.options) ? poll.options : [];
   const rows = options.map(option => {
     const id = String(option.id || "");
     const count = Number((poll.counts || {})[id]) || 0;
     const percent = communityPollPercent(count, total);
     const mine = my === id;
+    if (!showResults) {
+      return '<button class="community-poll-choice"'
+        + ' data-poll-vote="' + communityEscape(poll.id) + '"'
+        + ' data-poll-option="' + communityEscape(id) + '">'
+        + '<span class="community-poll-choice-text">'
+        + communityEscape(option.text || "") + '</span>'
+        + '<span class="community-poll-choice-mark">选择</span></button>';
+    }
     return '<button class="community-poll-option' + (mine ? " mine" : "") + '"'
       + ' data-poll-vote="' + communityEscape(poll.id) + '"'
       + ' data-poll-option="' + communityEscape(id) + '"'
@@ -425,16 +434,21 @@ function communityPollHtml(poll) {
     + '<div class="community-poll-head"><b>' + communityEscape(poll.question || "投票")
     + '</b><span class="community-poll-state ' + (open ? "open" : "closed") + '">'
     + communityEscape(open ? communityPollRemaining(poll) : "已截止") + '</span></div>'
+    + '<div class="community-poll-meta">已有 ' + total + ' 人投票 · 匿名汇总</div>'
+    + (open && !my
+      ? '<div class="community-poll-prompt">点击一个选项投票，投完可看结果</div>' : "")
     + '<div class="community-poll-options">' + rows + '</div>'
-    + '<div class="community-poll-foot"><span>共 ' + total + ' 人投票 · 匿名汇总</span>'
+    + '<div class="community-poll-foot">'
+    + (my
+      ? '<span>你已投给「' + communityEscape(communityPollOptionText(poll, my)) + '」'
+        + (open ? "，截止前可改票" : "") + '</span>'
+      : '<span>' + (open ? "还没投票" : "投票已结束") + '</span>')
     + (open && poll.can_close
       ? '<button class="community-link-btn" data-poll-close="'
         + communityEscape(poll.id) + '">结束投票</button>' : "")
     + '</div>'
-    + (my ? '<div class="community-poll-mine">你已投给「'
-      + communityEscape(communityPollOptionText(poll, my)) + '」'
-      + (open ? "，截止前可改票" : "") + '</div>' : "")
-    + (poll.allow_note ? '<div class="community-poll-hint">投票时可附一句匿名附言</div>' : "")
+    + (poll.allow_note && open
+      ? '<div class="community-poll-hint">投票时可附一句匿名附言</div>' : "")
     + '</div>';
 }
 
