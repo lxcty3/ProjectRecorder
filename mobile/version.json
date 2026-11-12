@@ -1,11 +1,11 @@
 {
-  "versionCode": 23,
-  "versionName": "2.0.21",
-  "releasedAt": "2026-11-11",
+  "versionCode": 24,
+  "versionName": "2.0.22",
+  "releasedAt": "2026-11-12",
   "notes": [
-    "应用内自动更新：下载新 APK、校验 SHA-256、调系统安装器。",
-    "更新源支持 GitHub raw + Cloudflare 网关两条路，网络受限时自动切换。",
-    "启动时发现新版本会提示，可在“我的 → 应用版本”里应用内更新；失败回退浏览器下载。"
+    "登录/主按钮加入干脆的按压反馈，页面切换改为很短淡入。",
+    "手机端手感修正：点按更快、长按不选字、滚动不回弹、状态栏跟随主题。",
+    "收敛过猛的缩放动效，补充键盘焦点和输入框聚焦反馈。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
