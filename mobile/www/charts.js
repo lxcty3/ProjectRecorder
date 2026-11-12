@@ -101,6 +101,11 @@ function applyThemeVariables(name) {
   });
   /* 主题名也存下来，样式表里可以按它做特殊处理 */
   root.setAttribute("data-theme", name);
+  /* 状态栏/浏览器顶栏跟着应用主题走，而不是跟系统主题走 */
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.setAttribute("content", name === "dark" ? "#0f1022" : "#f5f1fb");
+  }
 }
 
 /* ---------------------------------------------------------- 兼容层 */
