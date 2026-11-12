@@ -1,13 +1,12 @@
 {
-  "versionCode": 24,
-  "versionName": "2.0.22",
+  "versionCode": 25,
+  "versionName": "2.0.23",
   "releasedAt": "2026-11-12",
   "notes": [
-    "登录/主按钮加入干脆的按压反馈，页面切换改为很短淡入。",
-    "手机端手感修正：点按更快、长按不选字、滚动不回弹、状态栏跟随主题。",
-    "收敛过猛的缩放动效，补充键盘焦点和输入框聚焦反馈。"
+    "知识星球新增社区投票：单选、匿名汇总、可设截止时间。",
+    "社区顶部“发起投票”和发帖框“添加投票”都能发起；一人一票，截止前可改票。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk",
-  "sha256": "3d0c20f33f82e4e15e01c0b31ba6412a66f09f7f546cde606866aa021199c011",
-  "size": 11579497
+  "sha256": "562cd24ee3ce9fc652a4036a6103c15152c52ef908be11b06e13af2e243fc079",
+  "size": 11583917
 }
