@@ -1,10 +1,11 @@
 {
-  "versionCode": 25,
-  "versionName": "2.0.23",
+  "versionCode": 26,
+  "versionName": "2.0.24",
   "releasedAt": "2026-11-12",
   "notes": [
-    "知识星球新增社区投票：单选、匿名汇总、可设截止时间。",
-    "社区顶部“发起投票”和发帖框“添加投票”都能发起；一人一票，截止前可改票。"
+    "社区投票改为先选后看结果：未投票只显示选项，投完才显示百分比。",
+    "治理页新增“待我投票”聚合区，一张卡看清已投/未投、我的权重、通过门槛和剩余时间。",
+    "统一用词：赞成 / 反对 / 弃权。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
