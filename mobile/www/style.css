@@ -6096,3 +6096,111 @@ textarea:focus {
   .vote-result-track span { transition: none; }
 }
 
+
+/* ============================================================
+   职业等级  2026-11-12
+   L1-L5；每个等级对应一组固定岗位。
+   ============================================================ */
+.career-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.career-me {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.career-me > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.career-big { font-size: 22px; color: var(--fg-strong); }
+.career-ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.career-level {
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--read);
+}
+.career-level.current {
+  border-color: var(--accent-edge);
+  background: var(--accent-wash);
+}
+.career-level-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.career-level-head b { color: var(--fg-strong); }
+.career-level-head span { font-size: 10.5px; color: var(--accent-dim); }
+.career-level-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.career-role-chip {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg-soft);
+  font-size: 10.5px;
+}
+.career-members { display: flex; flex-direction: column; }
+.career-member-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.career-member-row:last-child { border-bottom: 0; }
+.career-member-name { flex: 1; min-width: 0; color: var(--fg-strong); }
+.career-requests { display: flex; flex-direction: column; gap: 8px; }
+.career-request-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.career-request-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.career-request-copy b { font-size: 13px; color: var(--fg-strong); }
+.career-request-copy small { font-size: 11px; color: var(--fg-dim); }
+.career-request-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.career-request-actions .btn {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+

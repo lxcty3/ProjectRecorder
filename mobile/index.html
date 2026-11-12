@@ -9,7 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="项目记录器">
 <title>项目记录器</title>
-<link rel="stylesheet" href="style.css?v=20261112-design-polish-1">
+<link rel="stylesheet" href="style.css?v=20261112-vote-center-2">
 </head>
 <body>
 <div class="star-sky" aria-hidden="true">
@@ -404,6 +404,10 @@
     <div class="section-head"><span>成员与身份</span>
       <span class="meta" id="identity-member-count"></span></div>
     <div id="identity-members"></div>
+
+    <div class="section-head"><span>职业等级</span>
+      <span class="meta" id="career-level-sub"></span></div>
+    <div id="career-level-panel"></div>
 
     <div class="section-head"><span>股东大会</span>
       <span class="meta" id="identity-meeting-count"></span></div>
@@ -900,18 +904,19 @@
 <!-- notify.js 要在 app.js 之前：app.js 启动时会调
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
-<script src="meeting.js?v=20261107-phase1-1"></script>
+<script src="meeting.js?v=20261112-vote-center-2"></script>
 <script src="update.js?v=20261107-companies-4"></script>
-<script src="identity.js?v=20261108-multi-account-1"></script>
+<script src="identity.js?v=20261112-vote-center-2"></script>
+<script src="career.js?v=20261112-career-1"></script>
 <script src="companies.js?v=20261108-invites-1"></script>
 <script src="today.js?v=20261111-purple-starry-1"></script>
-<script src="decision.js"></script>
+<script src="decision.js?v=20261112-vote-center-2"></script>
 <script src="operations.js?v=20261110-consistency-1"></script>
 <script src="execution.js"></script>
 <script src="intake.js"></script>
 <script src="account.js?v=20261108-multi-account-1"></script>
-<script src="community.js?v=20261107-profile-8"></script>
-<script src="votes.js?v=20261112-vote-center-1"></script>
-<script src="app.js?v=20261111-purple-starry-1"></script>
+<script src="community.js?v=20261112-vote-center-2"></script>
+<script src="votes.js?v=20261112-vote-center-2"></script>
+<script src="app.js?v=20261112-vote-center-2"></script>
 </body>
 </html>

@@ -39,12 +39,16 @@ function voteCenterCanCreate(mode) {
   const me = voteCenterMe();
   const perms = voteCenterPermissions();
   if (!me || !me.profile_id) return false;
+  const level = typeof careerLevelOf === "function"
+    ? careerLevelOf(me.profile_id) : 0;
   if (mode === "headcount") {
+    if (level && level < 3) return false;
     return !!me.is_owner || !!me.is_ceo
       || perms.indexOf("people.manage") !== -1
       || perms.indexOf("governance.manage") !== -1;
   }
   if (mode === "shares") {
+    if (level && level < 4) return false;
     return !!me.is_shareholder || !!me.is_board_director
       || perms.indexOf("governance.vote") !== -1
       || perms.indexOf("governance.manage") !== -1;
@@ -265,6 +269,7 @@ async function loadVoteCenter(force) {
   voteCenterState.loading = true;
   voteCenterState.error = "";
   renderVoteCenter();
+  if (typeof loadCareerLevels === "function") loadCareerLevels(false);
   try {
     const scope = voteCenterState.scope;
     if (scope === "pending") {

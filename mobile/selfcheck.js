@@ -27,7 +27,7 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["cloud-config.js", "store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "companies.js", "today.js",
+               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "career.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js", "votes.js",
                "app.js"];
@@ -5439,7 +5439,7 @@ test("决策中心：手机管理审批页完整接线", () => {
   if (html.indexOf('data-page="decisions"') === -1) {
     throw new Error("高级导航缺少经营决策入口");
   }
-  if (html.indexOf('src="decision.js"') === -1) {
+  if (!/src="decision\.js(?:\?[^"]*)?"/.test(html)) {
     throw new Error("index.html 没有加载 decision.js");
   }
 
@@ -5962,6 +5962,40 @@ test("投票中心：待我投票、按人数/按股份发起与计票完整接�
   }
   const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
   if (!build.includes("votes.js")) throw new Error("build-www.js 缺少 votes.js");
+});
+
+test("职业等级：L1-L5、岗位映射、晋升审批与功能门槛完整接线", () => {
+  const career = fs.readFileSync(path.join(HERE, "career.js"), "utf8");
+  for (const text of [
+    "careerLevelLabel", "careerLevelAtLeast", "loadCareerLevels",
+    "get_career_level_state", "request_career_level_change",
+    "decide_career_level_request", "L1", "L5", "career-level-panel",
+  ]) {
+    if (!career.includes(text)) throw new Error("career.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "career-levels-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少职业等级 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "enterprise_career_levels", "enterprise_career_role_levels",
+    "enterprise_career_level_history", "enterprise_career_level_requests",
+    "get_career_level_state", "request_career_level_change",
+    "decide_career_level_request", "career level too low",
+    "L1 Junior", "L5 Expert",
+  ]) {
+    if (!sql.includes(text)) throw new Error("职业等级 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("职业等级 SQL 必须保持 ASCII");
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ["career-level-panel", "career.js"]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  const identity = fs.readFileSync(path.join(HERE, "identity.js"), "utf8");
+  for (const text of ["loadCareerLevels", "careerLevelOf", "career-badge"]) {
+    if (!identity.includes(text)) throw new Error("identity.js 缺少 " + text);
+  }
+  const votes = fs.readFileSync(path.join(HERE, "votes.js"), "utf8");
+  if (!votes.includes("careerLevelOf")) throw new Error("votes.js 缺少职级门槛");
 });
 
 /* ---------------------------------------------------------- 执行 */

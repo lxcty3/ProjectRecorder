@@ -354,6 +354,7 @@ function renderIdentity() {
   renderIdentityMotions(state);
   renderIdentityBoard(state);
   renderIdentityVoteInbox();
+  if (typeof loadCareerLevels === "function") loadCareerLevels(false);
 }
 
 
@@ -480,6 +481,9 @@ function renderIdentityMembers(state) {
         <div class="identity-member-main">
           <div class="identity-member-name">
             <b>${escapeHtml(member.name || "成员")}</b>
+            ${(typeof careerLevelOf === "function" && careerLevelOf(member.profile_id))
+              ? `<span class="career-badge">${escapeHtml(careerLevelLabel(careerLevelOf(member.profile_id)))}</span>`
+              : ""}
             ${member.is_owner ? '<span class="identity-owner">所有者</span>' : ""}
             ${member.is_shareholder ? '<span class="identity-share">股东</span>' : ""}
           </div>
