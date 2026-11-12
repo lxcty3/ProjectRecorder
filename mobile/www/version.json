@@ -1,11 +1,11 @@
 {
-  "versionCode": 27,
-  "versionName": "2.0.25",
+  "versionCode": 28,
+  "versionName": "2.0.26",
   "releasedAt": "2026-11-12",
   "notes": [
-    "新增“投票”一级板块：待我投票、全部、已结束。",
-    "支持发起“按人数投票”和“按股份投票”，出席门槛默认 50%。",
-    "按人数匿名汇总，按股份实名可审计；有相应身份的人才能发起。"
+    "新增职业等级：L1 初级 / L2 中级 / L3 高级 / L4 资深 / L5 专家。",
+    "每个职级对应固定岗位；任命岗位要求个人职级 ≥ 岗位职级。",
+    "晋升由老板/HR 提议、董事会审批；按人数投票需 L3，按股份投票需 L4。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
