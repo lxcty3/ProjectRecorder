@@ -48,6 +48,7 @@ const FILES = [
   "public-intake.js",
   "account.js",
   "community.js",
+  "votes.js",
   "app.js",
 ];
 

@@ -683,6 +683,29 @@
   </div>
 </section>
 
+<!-- ====================== 投票中心 ====================== -->
+<section id="page-votes" class="page hidden">
+  <div class="topbar">
+    <div class="grow">
+      <h1>投票</h1>
+      <div class="sub" id="vote-center-sub">待你投票的事项都在这里</div>
+    </div>
+    <button class="icon-btn" id="btn-vote-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div class="vote-hero">
+      <div class="vote-hero-copy">
+        <span class="vote-hero-kicker">决策中心</span>
+        <b>把要决定的事，集中投完</b>
+        <p>按人数或按股份，发起、投票、看结果都在这里。</p>
+      </div>
+      <button class="btn" id="btn-vote-create">发起投票</button>
+    </div>
+    <div class="chips vote-tabs" id="vote-center-tabs"></div>
+    <div id="vote-center-list"></div>
+  </div>
+</section>
+
 <!-- ====================== 员工：我的 ====================== -->
 <!-- 员工需要能看"我报过什么"和"同步到底成没成功"。
      没有这个页面，员工会怀疑自己的记录有没有上去。 -->
@@ -809,10 +832,12 @@
     <button data-page="today" data-icon="◉" class="on"><b>今日</b></button>
     <button data-page="tasks" data-icon="▣"><b>任务</b></button>
     <button data-page="community" data-icon="✦"><b>星球</b></button>
+    <button data-page="votes" data-icon="◎"><b>投票</b></button>
     <button data-page="me" data-icon="◇"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
     <button data-page="decisions" data-icon="⚖"><b>决策</b></button>
+    <button data-page="votes" data-icon="◎"><b>投票</b></button>
     <button data-page="operations" data-icon="◫" id="nav-operations"><b>经营</b></button>
     <button data-page="intake" data-icon="↗"><b>需求</b></button>
     <button data-page="execution" data-icon="⚔" id="nav-execution"><b>执行</b></button>
@@ -886,6 +911,7 @@
 <script src="intake.js"></script>
 <script src="account.js?v=20261108-multi-account-1"></script>
 <script src="community.js?v=20261107-profile-8"></script>
+<script src="votes.js?v=20261112-vote-center-1"></script>
 <script src="app.js?v=20261111-purple-starry-1"></script>
 </body>
 </html>

@@ -29,7 +29,7 @@ const HERE = __dirname;
 const FILES = ["cloud-config.js", "store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
-               "community.js",
+               "community.js", "votes.js",
                "app.js"];
 
 let failed = 0;
@@ -3009,7 +3009,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js", "today.js",
+  const sources = ["app.js", "account.js", "community.js", "votes.js", "today.js",
                    "operations.js", "execution.js", "intake.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
@@ -5926,6 +5926,42 @@ test("投票信息层级：先选后看结果 + 待我投票聚合", () => {
   if (!html.includes("identity-vote-inbox") || !html.includes("待我投票")) {
     throw new Error("index.html 缺少待我投票容器");
   }
+});
+
+test("投票中心：待我投票、按人数/按股份发起与计票完整接线", () => {
+  const votes = fs.readFileSync(path.join(HERE, "votes.js"), "utf8");
+  for (const text of [
+    "voteCenterCanCreate", "voteCenterGovernancePending",
+    "create_enterprise_vote", "cast_enterprise_vote",
+    "close_enterprise_vote", "list_enterprise_votes",
+    "list_pending_community_polls", "按人数", "按股份",
+    "renderVoteCenter", "loadVoteCenter",
+  ]) {
+    if (!votes.includes(text)) throw new Error("votes.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "enterprise-votes-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少投票中心 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "enterprise_votes", "enterprise_vote_records",
+    "create_enterprise_vote", "cast_enterprise_vote",
+    "close_enterprise_vote", "list_enterprise_votes",
+    "list_pending_community_polls", "headcount", "shares",
+    "revoke all on public.enterprise_vote_records",
+  ]) {
+    if (!sql.includes(text)) throw new Error("投票中心 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("投票中心 SQL 必须保持 ASCII");
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ["page-votes", "btn-vote-create", "votes.js"]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of ["\"votes\"", "renderVoteCenter", "loadVoteCenter"]) {
+    if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!build.includes("votes.js")) throw new Error("build-www.js 缺少 votes.js");
 });
 
 /* ---------------------------------------------------------- 执行 */
