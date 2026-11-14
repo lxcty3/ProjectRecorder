@@ -93,6 +93,84 @@ async function meetingDeleteAudio(id) {
   } catch (_) {}
 }
 
+const MEETING_AI_KEY = "pr_meeting_ai_config";
+
+function meetingAiConfig() {
+  try {
+    return JSON.parse(localStorage.getItem(MEETING_AI_KEY) || "{}") || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function meetingHasAiConfig() {
+  const cfg = meetingAiConfig();
+  if (cfg.provider === "domestic") {
+    return !!(cfg.asr_url && cfg.llm_url);
+  }
+  return !!cfg.gemini_key;
+}
+
+function openMeetingAiSettings() {
+  const cfg = meetingAiConfig();
+  const provider = cfg.provider === "domestic" ? "domestic" : "gemini";
+  openSheet("AI 设置", `
+    <label for="ai-provider">总结服务</label>
+    <select id="ai-provider">
+      <option value="gemini"${provider === "gemini" ? " selected" : ""}>Gemini</option>
+      <option value="domestic"${provider === "domestic" ? " selected" : ""}>国内 ASR + 大模型</option>
+    </select>
+    <div id="ai-gemini-fields">
+      <label for="ai-gemini-key">Gemini API Key</label>
+      <input id="ai-gemini-key" type="password" autocomplete="off"
+        value="${escapeHtml(cfg.gemini_key || "")}" placeholder="AIza...">
+    </div>
+    <div id="ai-domestic-fields">
+      <label for="ai-asr-url">ASR 接口地址</label>
+      <input id="ai-asr-url" value="${escapeHtml(cfg.asr_url || "")}" placeholder="https://...">
+      <label for="ai-asr-key">ASR Key</label>
+      <input id="ai-asr-key" type="password" value="${escapeHtml(cfg.asr_key || "")}">
+      <label for="ai-llm-url">大模型接口地址</label>
+      <input id="ai-llm-url" value="${escapeHtml(cfg.llm_url || "")}" placeholder="https://...">
+      <label for="ai-llm-key">大模型 Key</label>
+      <input id="ai-llm-key" type="password" value="${escapeHtml(cfg.llm_key || "")}">
+      <label for="ai-llm-model">模型名</label>
+      <input id="ai-llm-model" value="${escapeHtml(cfg.llm_model || "deepseek-chat")}">
+    </div>
+    <div class="hint">Key 只保存在本机浏览器/App 里，不会写入数据库；生成总结时随请求发给 Edge Function。</div>
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "保存", kind: "", onClick: saveMeetingAiSettings },
+  ]);
+  const select = $("ai-provider");
+  const sync = () => {
+    const domestic = select && select.value === "domestic";
+    if ($("ai-gemini-fields")) $("ai-gemini-fields").classList.toggle("hidden", domestic);
+    if ($("ai-domestic-fields")) $("ai-domestic-fields").classList.toggle("hidden", !domestic);
+  };
+  if (select) { select.onchange = sync; sync(); }
+}
+
+function saveMeetingAiSettings() {
+  const cfg = {
+    provider: String(($("ai-provider") || {}).value || "gemini"),
+    gemini_key: String(($("ai-gemini-key") || {}).value || "").trim(),
+    asr_url: String(($("ai-asr-url") || {}).value || "").trim(),
+    asr_key: String(($("ai-asr-key") || {}).value || "").trim(),
+    llm_url: String(($("ai-llm-url") || {}).value || "").trim(),
+    llm_key: String(($("ai-llm-key") || {}).value || "").trim(),
+    llm_model: String(($("ai-llm-model") || {}).value || "deepseek-chat").trim(),
+  };
+  try {
+    localStorage.setItem(MEETING_AI_KEY, JSON.stringify(cfg));
+    closeSheet();
+    toast("AI 设置已保存");
+    renderMeetings();
+  } catch (_) {
+    toast("保存失败");
+  }
+}
+
 function meetingErrorText(error) {
   const text = String(error && error.message || error || "");
   if (/could not find|does not exist|function/i.test(text)) return "会议功能还没注入 SQL";
@@ -221,7 +299,9 @@ function renderMeetings() {
       + '<span>点「发起会议」，填好信息后开始录音。</span></div>';
     return;
   }
-  box.innerHTML = meetingState.list.map(meetingCard).join("");
+  const aiHint = meetingHasAiConfig() ? ""
+    : '<div class="community-note">还没有配置 AI Key，点右上角「AI 设置」填写后才能生成总结。</div>';
+  box.innerHTML = aiHint + meetingState.list.map(meetingCard).join("");
   box.querySelectorAll("[data-meeting-record]").forEach(button => {
     button.onclick = () => startMeetingRecording(button.dataset.meetingRecord);
   });
@@ -384,6 +464,11 @@ async function finishMeetingRecording() {
 
 async function summarizeMeeting(meetingId) {
   if (!initCloud()) return;
+  const ai = meetingAiConfig();
+  if (!meetingHasAiConfig()) {
+    openMeetingAiSettings();
+    return;
+  }
   const blob = await meetingReadAudio(meetingId);
   if (!blob) { toast("本机找不到这段录音"); return; }
   const sessionResult = await cloudClient.auth.getSession();
@@ -410,6 +495,7 @@ async function summarizeMeeting(meetingId) {
           meeting_id: meetingId,
           audio_path: path,
           mime_type: blob.type || "audio/webm",
+          ai: ai,
         }),
       }
     );
@@ -451,6 +537,9 @@ async function deleteMeeting(meetingId) {
 function bindMeetingEvents() {
   if ($("btn-meeting-refresh")) {
     $("btn-meeting-refresh").onclick = () => loadMeetings(true);
+  }
+  if ($("btn-meeting-ai")) {
+    $("btn-meeting-ai").onclick = openMeetingAiSettings;
   }
   if ($("btn-meeting-create")) {
     $("btn-meeting-create").onclick = openMeetingCreateSheet;

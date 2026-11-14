@@ -6019,7 +6019,8 @@ test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写
   for (const text of [
     "MediaRecorder", "getUserMedia", "startMeetingRecording",
     "stopMeetingRecording", "summarizeMeeting", "create_meeting",
-    "meeting-audio",
+    "meeting-audio", "openMeetingAiSettings", "meetingHasAiConfig",
+    "pr_meeting_ai_config",
   ]) {
     if (!meetings.includes(text)) throw new Error("meetings.js 缺少 " + text);
   }
@@ -6040,7 +6041,7 @@ test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写
     if (!fn.includes(text)) throw new Error("Edge Function 缺少 " + text);
   }
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  for (const text of ["page-meetings", "meetings.js"]) {
+  for (const text of ["page-meetings", "meetings.js", "btn-meeting-ai"]) {
     if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
   }
   const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");

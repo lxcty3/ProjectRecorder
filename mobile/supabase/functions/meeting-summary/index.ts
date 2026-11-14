@@ -31,10 +31,10 @@ function parseJson(text) {
   return null;
 }
 
-async function gemini(audio, mime) {
-  const key = Deno.env.get("GEMINI_API_KEY") || "";
+async function gemini(audio, mime, ai) {
+  const key = (ai && ai.gemini_key) || Deno.env.get("GEMINI_API_KEY") || "";
   if (!key) throw new Error("GEMINI_API_KEY is not configured");
-  const model = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+  const model = (ai && ai.gemini_model) || Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
   const base = "https://generativelanguage.googleapis.com/v1beta";
   let part;
   if (audio.byteLength <= 18 * 1024 * 1024) {
@@ -78,12 +78,13 @@ async function gemini(audio, mime) {
   return parsed;
 }
 
-async function domestic(audio, mime) {
-  const asrUrl = Deno.env.get("DOMESTIC_ASR_URL") || "";
-  const asrKey = Deno.env.get("DOMESTIC_ASR_KEY") || "";
-  const llmUrl = Deno.env.get("DOMESTIC_LLM_URL") || "";
-  const llmKey = Deno.env.get("DOMESTIC_LLM_KEY") || "";
-  const llmModel = Deno.env.get("DOMESTIC_LLM_MODEL") || "deepseek-chat";
+async function domestic(audio, mime, ai) {
+  const cfg = ai || {};
+  const asrUrl = cfg.asr_url || Deno.env.get("DOMESTIC_ASR_URL") || "";
+  const asrKey = cfg.asr_key || Deno.env.get("DOMESTIC_ASR_KEY") || "";
+  const llmUrl = cfg.llm_url || Deno.env.get("DOMESTIC_LLM_URL") || "";
+  const llmKey = cfg.llm_key || Deno.env.get("DOMESTIC_LLM_KEY") || "";
+  const llmModel = cfg.llm_model || Deno.env.get("DOMESTIC_LLM_MODEL") || "deepseek-chat";
   if (!asrUrl || !llmUrl) throw new Error("domestic ASR/LLM is not configured");
   const asrHeaders = { "Content-Type": mime };
   if (asrKey) asrHeaders.Authorization = "Bearer " + asrKey;
@@ -138,12 +139,13 @@ Deno.serve(async function (request) {
     if (download.error || !download.data) throw new Error("audio download failed");
     const audio = new Uint8Array(await download.data.arrayBuffer());
     const mime = body.mime_type || download.data.type || "audio/webm";
-    const provider = Deno.env.get("MEETING_AI_PROVIDER") || "gemini";
+    const ai = body.ai || {};
+    const provider = ai.provider || Deno.env.get("MEETING_AI_PROVIDER") || "gemini";
     let result;
     try {
-      result = provider === "domestic" ? await domestic(audio, mime) : await gemini(audio, mime);
+      result = provider === "domestic" ? await domestic(audio, mime, ai) : await gemini(audio, mime, ai);
     } catch (primaryError) {
-      result = provider === "domestic" ? await gemini(audio, mime) : await domestic(audio, mime);
+      result = provider === "domestic" ? await gemini(audio, mime, ai) : await domestic(audio, mime, ai);
     }
     const update = await supabase.rpc("update_meeting_summary", {
       p_meeting: meetingId,
