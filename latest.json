@@ -1,12 +1,13 @@
 {
-  "versionCode": 29,
-  "versionName": "2.0.27",
-  "releasedAt": "2026-11-12",
+  "versionCode": 30,
+  "versionName": "2.0.28",
+  "releasedAt": "2026-11-14",
   "notes": [
-    "职业等级支持自定义职业：老板/HR 可创建新职业并选择 L1–L5。",
-    "自定义职业会出现在对应等级下，可分配给成员，分配后自动设置其职级。"
+    "新增会议模块：录音、上传音频、AI 总结、待办和风险。",
+    "录音只存本机；总结存云端，全公司可见；录音前需确认参会者同意。",
+    "AI 总结走 Supabase Edge Function，支持 Gemini 和国内 ASR/LLM 适配。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk",
-  "sha256": "2f9c3bbe6f8ca7350fc59998f32146bd11e5388835d93cd5ceccf5fe3c9cbb31",
-  "size": 11598666
+  "sha256": "c7cda86d97f14f9a7d6546ba8fd00f39d26d1f2d9574a2a398a08f25ba128d77",
+  "size": 11605801
 }
