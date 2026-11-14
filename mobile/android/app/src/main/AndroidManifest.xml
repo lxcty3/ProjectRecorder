@@ -52,6 +52,9 @@
     <!-- 应用内更新：下载新 APK 后交给系统安装器。
          用户仍需在系统设置里允许本应用“安装未知应用”。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 会议录音：WebView 的 getUserMedia/MediaRecorder 需要这两条。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- 通知。
  

@@ -27,7 +27,7 @@ const HERE = __dirname;
    漏掉一个的话，那个文件有语法错也查不出来，
    而语法错在浏览器里表现为"整页空白"，最难查。 */
 const FILES = ["cloud-config.js", "store.js", "calc.js", "charts.js", "merit.js", "assist.js",
-               "sync.js", "notify.js", "meeting.js", "update.js", "identity.js", "career.js", "companies.js", "today.js",
+               "sync.js", "notify.js", "meeting.js", "meetings.js", "update.js", "identity.js", "career.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
                "community.js", "votes.js",
                "app.js"];
@@ -3009,7 +3009,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js", "votes.js", "today.js",
+  const sources = ["app.js", "account.js", "community.js", "votes.js", "meetings.js", "today.js",
                    "operations.js", "execution.js", "intake.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
@@ -6012,6 +6012,46 @@ test("职业等级：L1-L5、岗位映射、晋升审批与功能门槛完整接
   }
   const votes = fs.readFileSync(path.join(HERE, "votes.js"), "utf8");
   if (!votes.includes("careerLevelOf")) throw new Error("votes.js 缺少职级门槛");
+});
+
+test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写完整接线", () => {
+  const meetings = fs.readFileSync(path.join(HERE, "meetings.js"), "utf8");
+  for (const text of [
+    "MediaRecorder", "getUserMedia", "startMeetingRecording",
+    "stopMeetingRecording", "summarizeMeeting", "create_meeting",
+    "meeting-audio",
+  ]) {
+    if (!meetings.includes(text)) throw new Error("meetings.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "meetings-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少会议 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "meetings", "create_meeting", "update_meeting_summary",
+    "list_meetings", "meeting-audio", "consent_confirmed",
+  ]) {
+    if (!sql.includes(text)) throw new Error("会议 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("会议 SQL 必须保持 ASCII");
+  const fnPath = path.join(HERE, "supabase", "functions", "meeting-summary", "index.ts");
+  if (!fs.existsSync(fnPath)) throw new Error("缺少 meeting-summary Edge Function");
+  const fn = fs.readFileSync(fnPath, "utf8");
+  for (const text of ["GEMINI_API_KEY", "update_meeting_summary", "meeting-audio"]) {
+    if (!fn.includes(text)) throw new Error("Edge Function 缺少 " + text);
+  }
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ["page-meetings", "meetings.js"]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of ["\"meetings\"", "renderMeetings", "loadMeetings"]) {
+    if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!build.includes("meetings.js")) throw new Error("build-www.js 缺少 meetings.js");
+  const manifest = fs.readFileSync(path.join(HERE, "android", "app", "src",
+    "main", "AndroidManifest.xml"), "utf8");
+  if (!manifest.includes("RECORD_AUDIO")) throw new Error("AndroidManifest 缺少 RECORD_AUDIO");
 });
 
 /* ---------------------------------------------------------- 执行 */

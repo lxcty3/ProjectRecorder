@@ -710,6 +710,26 @@
   </div>
 </section>
 
+<!-- ====================== 会议 ====================== -->
+<section id="page-meetings" class="page hidden">
+  <div class="topbar">
+    <div class="grow"><h1>会议</h1>
+      <div class="sub" id="meeting-sub">录音、AI 总结与待办</div></div>
+    <button class="icon-btn" id="btn-meeting-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div class="meeting-hero">
+      <div class="meeting-hero-copy">
+        <span class="vote-hero-kicker">会议记录</span>
+        <b>录下来，自动总结</b>
+        <p>录音只存本机；总结存云端，全公司可见。</p>
+      </div>
+      <button class="btn" id="btn-meeting-create">发起会议</button>
+    </div>
+    <div id="meeting-list"></div>
+  </div>
+</section>
+
 <!-- ====================== 员工：我的 ====================== -->
 <!-- 员工需要能看"我报过什么"和"同步到底成没成功"。
      没有这个页面，员工会怀疑自己的记录有没有上去。 -->
@@ -905,6 +925,7 @@
      renderNotifyBadges / renderNotifyBanner，晚加载会报未定义。 -->
 <script src="notify.js"></script>
 <script src="meeting.js?v=20261112-vote-center-2"></script>
+<script src="meetings.js?v=20261114-meetings-1"></script>
 <script src="update.js?v=20261107-companies-4"></script>
 <script src="identity.js?v=20261112-vote-center-2"></script>
 <script src="career.js?v=20261112-career-1"></script>

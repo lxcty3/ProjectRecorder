@@ -34,6 +34,7 @@ const FILES = [
   "sync.js",
   "notify.js",
   "meeting.js",
+  "meetings.js",
   "update.js",
   "version.json",
   "identity.js",
