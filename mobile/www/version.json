@@ -1,11 +1,10 @@
 {
-  "versionCode": 30,
-  "versionName": "2.0.28",
+  "versionCode": 31,
+  "versionName": "2.0.29",
   "releasedAt": "2026-11-14",
   "notes": [
-    "新增会议模块：录音、上传音频、AI 总结、待办和风险。",
-    "录音只存本机；总结存云端，全公司可见；录音前需确认参会者同意。",
-    "AI 总结走 Supabase Edge Function，支持 Gemini 和国内 ASR/LLM 适配。"
+    "会议页新增「AI 设置」：可在界面填写 Gemini Key 或国内 ASR/LLM 配置。",
+    "Key 只保存在本机，不写入数据库；生成总结时随请求发送给 Edge Function。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
