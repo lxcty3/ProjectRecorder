@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NotificationSettingsPlugin.class);
         registerPlugin(GetuiPushPlugin.class);
         registerPlugin(AppUpdatePlugin.class);
+        registerPlugin(AudioRecorderPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -17,8 +17,11 @@ let meetingState = {
   startedAt: 0,
   timer: null,
   autoStop: null,
+  nativeRecording: false,
+  wakeLock: null,
   blobs: {},
   audioUrl: "",
+  companyAi: null,
 };
 
 const MEETING_DB = "project-recorder-audio";
@@ -79,6 +82,30 @@ async function meetingReadAudio(id) {
   }
 }
 
+async function meetingCleanupAudio(showToast) {
+  const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+  let removed = 0;
+  try {
+    const db = await meetingOpenDb();
+    const rows = await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEETING_STORE, "readonly");
+      const req = tx.objectStore(MEETING_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    for (const row of rows) {
+      if (row.savedAt && row.savedAt < cutoff) {
+        await meetingDeleteAudio(row.id);
+        removed += 1;
+      }
+    }
+    db.close();
+  } catch (_) {}
+  if (showToast) {
+    toast(removed ? "已清理 " + removed + " 条超过 30 天的录音" : "没有超过 30 天的录音");
+  }
+}
+
 async function meetingDeleteAudio(id) {
   delete meetingState.blobs[String(id)];
   try {
@@ -106,9 +133,22 @@ function meetingAiConfig() {
 function meetingHasAiConfig() {
   const cfg = meetingAiConfig();
   if (cfg.provider === "domestic") {
-    return !!(cfg.asr_url && cfg.llm_url);
+    if (cfg.asr_url && cfg.llm_url) return true;
+  } else if (cfg.gemini_key) {
+    return true;
   }
-  return !!cfg.gemini_key;
+  return !!(meetingState.companyAi && meetingState.companyAi.configured);
+}
+
+async function loadMeetingAiStatus() {
+  if (!DB.profile || !initCloud()) return;
+  try {
+    const result = await cloudClient.rpc("get_meeting_ai_config_status", {});
+    if (!result.error) {
+      meetingState.companyAi = result.data || null;
+      renderMeetings();
+    }
+  } catch (_) {}
 }
 
 function openMeetingAiSettings() {
@@ -137,7 +177,10 @@ function openMeetingAiSettings() {
       <label for="ai-llm-model">模型名</label>
       <input id="ai-llm-model" value="${escapeHtml(cfg.llm_model || "deepseek-chat")}">
     </div>
-    <div class="hint">Key 只保存在本机浏览器/App 里，不会写入数据库；生成总结时随请求发给 Edge Function。</div>
+    <label class="check" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <input type="checkbox" id="ai-company-default"> 保存为公司默认（仅老板）
+    </label>
+    <div class="hint">Key 默认只保存在本机；勾选“公司默认”会保存到服务端，供全公司使用（仅老板可操作）。</div>
   `, [
     { label: "取消", kind: "ghost", onClick: closeSheet },
     { label: "保存", kind: "", onClick: saveMeetingAiSettings },
@@ -151,7 +194,7 @@ function openMeetingAiSettings() {
   if (select) { select.onchange = sync; sync(); }
 }
 
-function saveMeetingAiSettings() {
+async function saveMeetingAiSettings() {
   const cfg = {
     provider: String(($("ai-provider") || {}).value || "gemini"),
     gemini_key: String(($("ai-gemini-key") || {}).value || "").trim(),
@@ -163,12 +206,29 @@ function saveMeetingAiSettings() {
   };
   try {
     localStorage.setItem(MEETING_AI_KEY, JSON.stringify(cfg));
-    closeSheet();
-    toast("AI 设置已保存");
-    renderMeetings();
-  } catch (_) {
-    toast("保存失败");
+  } catch (_) {}
+  const companyDefault = !!($("ai-company-default") || {}).checked;
+  if (companyDefault) {
+    try {
+      const result = await cloudClient.rpc("set_meeting_ai_config", {
+        p_provider: cfg.provider,
+        p_gemini_key: cfg.gemini_key,
+        p_asr_url: cfg.asr_url,
+        p_asr_key: cfg.asr_key,
+        p_llm_url: cfg.llm_url,
+        p_llm_key: cfg.llm_key,
+        p_llm_model: cfg.llm_model,
+      });
+      if (result.error) throw result.error;
+      await loadMeetingAiStatus();
+    } catch (error) {
+      toast(meetingErrorText(error));
+      return;
+    }
   }
+  closeSheet();
+  toast("AI 设置已保存");
+  renderMeetings();
 }
 
 function meetingErrorText(error) {
@@ -265,6 +325,9 @@ function meetingCard(meeting) {
         + '</details>'
       : '')
     + (meeting.error ? '<div class="meeting-error">' + escapeHtml(meeting.error) + '</div>' : '')
+    + (organizer && actions.length
+      ? '<button class="btn ghost" data-meeting-tasks="' + escapeHtml(meeting.id)
+        + '">把待办创建成任务</button>' : '')
     + (organizer ? '<div class="meeting-actions">'
       + (meeting.status === "recording"
         ? '<button class="btn ghost" data-meeting-stop="' + escapeHtml(meeting.id) + '">停止录音</button>'
@@ -316,6 +379,9 @@ function renderMeetings() {
   });
   box.querySelectorAll("[data-meeting-delete]").forEach(button => {
     button.onclick = () => deleteMeeting(button.dataset.meetingDelete);
+  });
+  box.querySelectorAll("[data-meeting-tasks]").forEach(button => {
+    button.onclick = () => openMeetingTaskSheet(button.dataset.meetingTasks);
   });
 }
 
@@ -378,32 +444,71 @@ async function submitMeetingCreate() {
   }
 }
 
+function meetingNativeRecorder() {
+  try {
+    const plugins = window.Capacitor && window.Capacitor.Plugins;
+    return plugins && plugins.AudioRecorder ? plugins.AudioRecorder : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function meetingBlobFromBase64(base64, mime) {
+  const binary = atob(String(base64 || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime || "audio/mp4" });
+}
+
+async function meetingReleaseWakeLock() {
+  if (meetingState.wakeLock && meetingState.wakeLock.release) {
+    try { await meetingState.wakeLock.release(); } catch (_) {}
+  }
+  meetingState.wakeLock = null;
+}
+
 async function startMeetingRecording(meetingId) {
-  if (meetingState.recorder) { toast("已经在录音中"); return; }
-  if (!navigator.mediaDevices || !window.MediaRecorder) {
-    toast("这个设备不支持录音");
+  if (meetingState.recorder || meetingState.nativeRecording) {
+    toast("已经在录音中");
     return;
   }
+  const native = meetingNativeRecorder();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-    });
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus" : "audio/webm";
-    const recorder = new MediaRecorder(stream, {
-      mimeType: mime,
-      audioBitsPerSecond: 24000,
-    });
-    meetingState.recorder = recorder;
-    meetingState.stream = stream;
-    meetingState.chunks = [];
-    meetingState.recordingId = String(meetingId);
-    meetingState.startedAt = Date.now();
-    recorder.ondataavailable = event => {
-      if (event.data && event.data.size) meetingState.chunks.push(event.data);
-    };
-    recorder.onstop = finishMeetingRecording;
-    recorder.start(1000);
+    if (native) {
+      await native.start({ meetingId: String(meetingId) });
+      meetingState.nativeRecording = true;
+      meetingState.recordingId = String(meetingId);
+      meetingState.startedAt = Date.now();
+    } else {
+      if (!navigator.mediaDevices || !window.MediaRecorder) {
+        toast("这个设备不支持录音");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream, {
+        mimeType: mime,
+        audioBitsPerSecond: 24000,
+      });
+      meetingState.recorder = recorder;
+      meetingState.stream = stream;
+      meetingState.chunks = [];
+      meetingState.recordingId = String(meetingId);
+      meetingState.startedAt = Date.now();
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size) meetingState.chunks.push(event.data);
+      };
+      recorder.onstop = finishMeetingRecording;
+      recorder.start(1000);
+      if (navigator.wakeLock && navigator.wakeLock.request) {
+        try {
+          meetingState.wakeLock = await navigator.wakeLock.request("screen");
+        } catch (_) {}
+      }
+    }
     await cloudClient.rpc("update_meeting_status", {
       p_meeting: meetingId, p_status: "recording", p_error: "",
     });
@@ -415,7 +520,6 @@ async function startMeetingRecording(meetingId) {
     toast("无法开始录音：" + (error.message || error));
   }
 }
-
 function renderRecordingTimer() {
   const el = $("meeting-recording-timer");
   if (!el) return;
@@ -424,21 +528,46 @@ function renderRecordingTimer() {
     + ":" + String(seconds % 60).padStart(2, "0");
 }
 
-function stopMeetingRecording() {
-  const recorder = meetingState.recorder;
-  if (!recorder) return;
+async function stopMeetingRecording() {
   if (meetingState.autoStop) clearTimeout(meetingState.autoStop);
   if (meetingState.timer) clearInterval(meetingState.timer);
   meetingState.timer = null;
   meetingState.autoStop = null;
+  if (meetingState.nativeRecording) {
+    const native = meetingNativeRecorder();
+    const id = meetingState.recordingId;
+    meetingState.nativeRecording = false;
+    meetingState.recordingId = "";
+    try {
+      const result = await native.stop();
+      const blob = meetingBlobFromBase64(result.base64, result.mime || "audio/mp4");
+      if (blob.size > 100 * 1024 * 1024) {
+        toast("录音超过 100MB，请分段录音");
+        return;
+      }
+      await meetingSaveAudio(id, blob);
+      await cloudClient.rpc("update_meeting_audio", {
+        p_meeting: id, p_audio_path: meetingLocalPath(id),
+      });
+      toast("录音已保存到本机");
+      await loadMeetings(true);
+    } catch (error) {
+      toast(meetingErrorText(error));
+    }
+    return;
+  }
+  const recorder = meetingState.recorder;
+  if (!recorder) return;
   try { recorder.stop(); } catch (_) {}
   if (meetingState.stream) {
     meetingState.stream.getTracks().forEach(track => track.stop());
   }
   meetingState.stream = null;
+  await meetingReleaseWakeLock();
 }
 
 async function finishMeetingRecording() {
+  await meetingReleaseWakeLock();
   const id = meetingState.recordingId;
   const chunks = meetingState.chunks;
   meetingState.recorder = null;
@@ -534,6 +663,107 @@ async function deleteMeeting(meetingId) {
   }
 }
 
+function meetingMemberList() {
+  return (((typeof identityState === "function" ? identityState() : null) || {}).members || [])
+    .filter(member => member.status === "active");
+}
+
+function meetingMatchOwner(name) {
+  const wanted = String(name || "").trim();
+  if (!wanted) return "";
+  const members = meetingMemberList();
+  const exact = members.find(member => String(member.name || "") === wanted);
+  if (exact) return String(exact.profile_id);
+  const fuzzy = members.find(member => String(member.name || "").includes(wanted)
+    || wanted.includes(String(member.name || "")));
+  return fuzzy ? String(fuzzy.profile_id) : "";
+}
+
+function meetingTaskDate(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date(text);
+  if (isFinite(date.getTime())) return date.toISOString().slice(0, 10);
+  return todayISO();
+}
+
+function openMeetingTaskSheet(meetingId) {
+  const meeting = meetingState.list.find(item => String(item.id) === String(meetingId));
+  if (!meeting) return;
+  const actions = Array.isArray(meeting.actions) ? meeting.actions : [];
+  if (!actions.length) { toast("这场会议没有待办"); return; }
+  const members = meetingMemberList();
+  const memberOptions = ownerId => members.map(member =>
+    '<option value="' + escapeHtml(String(member.profile_id)) + '"'
+    + (String(ownerId) === String(member.profile_id) ? " selected" : "") + '>'
+    + escapeHtml(member.name || "成员") + '</option>').join("");
+  const projectOptions = (DB.projects || []).map(project =>
+    '<option value="' + escapeHtml(String(project.name)) + '">'
+    + escapeHtml(project.name) + '</option>').join("");
+  const rows = actions.map((action, index) => {
+    const ownerId = meetingMatchOwner(action.owner);
+    return '<div class="meeting-task-row">'
+      + '<label class="check"><input type="checkbox" class="meeting-task-check" data-index="'
+      + index + '" checked> ' + escapeHtml(action.task || "待办") + '</label>'
+      + '<div class="row2"><div><label>负责人</label><select class="meeting-task-owner" data-index="'
+      + index + '"><option value="">未指定</option>' + memberOptions(ownerId) + '</select></div>'
+      + '<div><label>截止</label><input class="meeting-task-due" data-index="' + index
+      + '" type="date" value="' + meetingTaskDate(action.due) + '"></div></div>'
+      + '</div>';
+  }).join("");
+  openSheet("把待办创建成任务", `
+    <div class="hint">${escapeHtml(meeting.title || "会议")} · 勾选要创建的任务</div>
+    <label for="meeting-task-project">项目（可选）</label>
+    <select id="meeting-task-project"><option value="">不关联项目</option>${projectOptions}</select>
+    ${rows}
+  `, [
+    { label: "取消", kind: "ghost", onClick: closeSheet },
+    { label: "创建任务", kind: "", onClick: () => submitMeetingTasks(meetingId) },
+  ]);
+}
+
+async function submitMeetingTasks(meetingId) {
+  const meeting = meetingState.list.find(item => String(item.id) === String(meetingId));
+  if (!meeting) return;
+  const actions = Array.isArray(meeting.actions) ? meeting.actions : [];
+  const checks = Array.from(document.querySelectorAll(".meeting-task-check"))
+    .filter(input => input.checked)
+    .map(input => Number(input.dataset.index));
+  if (!checks.length) { toast("至少勾选一个待办"); return; }
+  const projectName = String(($("meeting-task-project") || {}).value || "");
+  let created = 0;
+  checks.forEach(index => {
+    const action = actions[index] || {};
+    const ownerSelect = document.querySelector('.meeting-task-owner[data-index="' + index + '"]');
+    const dueInput = document.querySelector('.meeting-task-due[data-index="' + index + '"]');
+    const ownerId = ownerSelect ? ownerSelect.value : "";
+    if (!ownerId) return;
+    const task = {
+      id: uuid(),
+      boss_id: typeof currentEnterpriseOwnerId === "function"
+        ? currentEnterpriseOwnerId() : (DB.profile ? DB.profile.id : ""),
+      employee_id: ownerId,
+      title: String(action.task || "会议待办"),
+      detail: "来自会议：" + String(meeting.title || ""),
+      plan_date: dueInput && dueInput.value ? dueInput.value : todayISO(),
+      est_hours: 0,
+      project_name: projectName,
+      step_name: "",
+      created_at: nowISO(),
+      updated_at: nowISO(),
+    };
+    DB.tasks.push(task);
+    queueChange("tasks", "insert", task.id, task);
+    created += 1;
+  });
+  if (!created) { toast("请为勾选的待办选择负责人"); return; }
+  _save();
+  if (typeof syncNow === "function") syncNow("assign");
+  closeSheet();
+  toast("已创建 " + created + " 个任务");
+  if (typeof renderTasks === "function") renderTasks();
+}
+
 function bindMeetingEvents() {
   if ($("btn-meeting-refresh")) {
     $("btn-meeting-refresh").onclick = () => loadMeetings(true);
@@ -541,6 +771,11 @@ function bindMeetingEvents() {
   if ($("btn-meeting-ai")) {
     $("btn-meeting-ai").onclick = openMeetingAiSettings;
   }
+  if ($("btn-meeting-cleanup")) {
+    $("btn-meeting-cleanup").onclick = () => meetingCleanupAudio(true);
+  }
+  meetingCleanupAudio(false);
+  loadMeetingAiStatus();
   if ($("btn-meeting-create")) {
     $("btn-meeting-create").onclick = openMeetingCreateSheet;
   }

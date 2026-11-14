@@ -43,6 +43,10 @@
         </provider>
 
         <service android:name=".GetuiPushIntentService" android:exported="false" />
+        <service
+            android:name=".AudioRecorderService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
     </application>
 
@@ -55,6 +59,8 @@
     <!-- 会议录音：WebView 的 getUserMedia/MediaRecorder 需要这两条。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- 通知。
  

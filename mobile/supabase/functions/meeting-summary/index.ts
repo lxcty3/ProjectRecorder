@@ -11,6 +11,7 @@ const PROMPT = [
   "Return strict JSON with keys: transcript, summary, decisions, actions, risks.",
   "actions is an array of {task, owner, due}.",
   "Use the same language as the meeting. Do not invent facts.",
+  "If multiple speakers can be distinguished, label them as Speaker 1/2/3 in the transcript; keep real names when the ASR provides them.",
   "Only output JSON, no Markdown."
 ].join(" ");
 
@@ -139,7 +140,23 @@ Deno.serve(async function (request) {
     if (download.error || !download.data) throw new Error("audio download failed");
     const audio = new Uint8Array(await download.data.arrayBuffer());
     const mime = body.mime_type || download.data.type || "audio/webm";
-    const ai = body.ai || {};
+    let ai = body.ai || {};
+    if (!ai.gemini_key && !ai.asr_url) {
+      try {
+        const service = createClient(
+          Deno.env.get("SUPABASE_URL") || "",
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""
+        );
+        const { data: meeting } = await service
+          .from("meetings").select("enterprise_id").eq("id", meetingId).maybeSingle();
+        if (meeting && meeting.enterprise_id) {
+          const { data: companyAi } = await service.rpc("get_meeting_ai_secrets", {
+            p_enterprise: meeting.enterprise_id,
+          });
+          if (companyAi) ai = companyAi;
+        }
+      } catch (_) {}
+    }
     const provider = ai.provider || Deno.env.get("MEETING_AI_PROVIDER") || "gemini";
     let result;
     try {

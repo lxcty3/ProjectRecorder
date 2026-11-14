@@ -3322,9 +3322,13 @@ test("后台通知：原生个推接收器启用且不保留常驻通知", () =>
       || manifest.indexOf("GetuiPushIntentService") === -1) {
     throw new Error("个推 CID 回调服务未声明");
   }
-  if (manifest.indexOf("KeepAliveService") !== -1
-      || manifest.indexOf("FOREGROUND_SERVICE") !== -1) {
-    throw new Error("前台保活服务仍在，会产生常驻通知");
+  if (manifest.indexOf("KeepAliveService") !== -1) {
+    throw new Error("后台保活服务仍在，会产生常驻通知");
+  }
+  const audioRecorderOnly = manifest.indexOf("AudioRecorderService") !== -1
+    && manifest.indexOf("FOREGROUND_SERVICE_MICROPHONE") !== -1;
+  if (manifest.indexOf("FOREGROUND_SERVICE") !== -1 && !audioRecorderOnly) {
+    throw new Error("出现未识别的常驻前台服务");
   }
   const account = fs.readFileSync(path.join(HERE, "account.js"), "utf8");
   const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
@@ -6020,7 +6024,8 @@ test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写
     "MediaRecorder", "getUserMedia", "startMeetingRecording",
     "stopMeetingRecording", "summarizeMeeting", "create_meeting",
     "meeting-audio", "openMeetingAiSettings", "meetingHasAiConfig",
-    "pr_meeting_ai_config",
+    "pr_meeting_ai_config", "AudioRecorder", "meetingCleanupAudio",
+    "openMeetingTaskSheet", "loadMeetingAiStatus", "set_meeting_ai_config",
   ]) {
     if (!meetings.includes(text)) throw new Error("meetings.js 缺少 " + text);
   }
@@ -6053,6 +6058,21 @@ test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写
   const manifest = fs.readFileSync(path.join(HERE, "android", "app", "src",
     "main", "AndroidManifest.xml"), "utf8");
   if (!manifest.includes("RECORD_AUDIO")) throw new Error("AndroidManifest 缺少 RECORD_AUDIO");
+  if (!manifest.includes("FOREGROUND_SERVICE_MICROPHONE")) {
+    throw new Error("AndroidManifest 缺少 FOREGROUND_SERVICE_MICROPHONE");
+  }
+  if (!manifest.includes("AudioRecorderService")) {
+    throw new Error("AndroidManifest 缺少 AudioRecorderService");
+  }
+  const nativeDir = path.join(HERE, "android", "app", "src", "main", "java",
+    "com", "cj", "projectrecorder");
+  for (const name of ["AudioRecorderPlugin.java", "AudioRecorderService.java"]) {
+    if (!fs.existsSync(path.join(nativeDir, name))) throw new Error("缺少 " + name);
+  }
+  const aiSql = fs.readFileSync(path.join(HERE, "sql", "meeting-ai-config-v1.sql"), "utf8");
+  for (const text of ["set_meeting_ai_config", "get_meeting_ai_secrets", "enterprise_meeting_ai"]) {
+    if (!aiSql.includes(text)) throw new Error("公司 AI 配置 SQL 缺少 " + text);
+  }
 });
 
 /* ---------------------------------------------------------- 执行 */
