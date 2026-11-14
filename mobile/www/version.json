@@ -1,10 +1,11 @@
 {
-  "versionCode": 31,
-  "versionName": "2.0.29",
+  "versionCode": 32,
+  "versionName": "2.0.30",
   "releasedAt": "2026-11-14",
   "notes": [
-    "会议页新增「AI 设置」：可在界面填写 Gemini Key 或国内 ASR/LLM 配置。",
-    "Key 只保存在本机，不写入数据库；生成总结时随请求发送给 Edge Function。"
+    "会议录音改为 Android 前台服务，锁屏/切后台继续录。",
+    "总结增加说话人区分；待办可一键创建任务；录音 30 天自动清理。",
+    "AI 设置支持公司默认 Key（仅老板）和本机 Key 覆盖。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk"
 }
