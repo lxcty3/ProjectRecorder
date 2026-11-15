@@ -710,6 +710,28 @@
   </div>
 </section>
 
+<!-- ====================== 资金 ====================== -->
+<section id="page-funding" class="page hidden">
+  <div class="topbar">
+    <div class="grow"><h1>资金</h1>
+      <div class="sub" id="funding-sub">申请、审批、支付与核销</div></div>
+    <button class="icon-btn" id="btn-funding-pool" title="资金池">＋</button>
+    <button class="icon-btn" id="btn-funding-refresh" title="刷新">↻</button>
+  </div>
+  <div class="body">
+    <div class="funding-hero">
+      <div class="funding-hero-copy">
+        <span class="vote-hero-kicker">资金中心</span>
+        <b>每一笔钱都有去向</b>
+        <p>报销、预支、专项经费，按金额分级审批。</p>
+      </div>
+      <button class="btn" id="btn-funding-create">发起资金申请</button>
+    </div>
+    <div class="chips" id="funding-tabs"></div>
+    <div id="funding-list"></div>
+  </div>
+</section>
+
 <!-- ====================== 会议 ====================== -->
 <section id="page-meetings" class="page hidden">
   <div class="topbar">
@@ -859,11 +881,13 @@
     <button data-page="tasks" data-icon="▣"><b>任务</b></button>
     <button data-page="community" data-icon="✦"><b>星球</b></button>
     <button data-page="votes" data-icon="◎"><b>投票</b></button>
+    <button data-page="funding" data-icon="¥"><b>资金</b></button>
     <button data-page="me" data-icon="◇"><b>我的</b></button>
   </span>
   <span id="nav-advanced" class="nav-group hidden">
     <button data-page="decisions" data-icon="⚖"><b>决策</b></button>
     <button data-page="votes" data-icon="◎"><b>投票</b></button>
+    <button data-page="funding" data-icon="¥"><b>资金</b></button>
     <button data-page="operations" data-icon="◫" id="nav-operations"><b>经营</b></button>
     <button data-page="intake" data-icon="↗"><b>需求</b></button>
     <button data-page="execution" data-icon="⚔" id="nav-execution"><b>执行</b></button>
@@ -940,6 +964,7 @@
 <script src="account.js?v=20261108-multi-account-1"></script>
 <script src="community.js?v=20261112-vote-center-2"></script>
 <script src="votes.js?v=20261112-vote-center-2"></script>
+<script src="funding.js?v=20261115-funding-1"></script>
 <script src="app.js?v=20261112-vote-center-2"></script>
 </body>
 </html>

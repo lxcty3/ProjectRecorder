@@ -51,6 +51,7 @@ const FILES = [
   "account.js",
   "community.js",
   "votes.js",
+  "funding.js",
   "app.js",
 ];
 

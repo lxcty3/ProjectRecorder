@@ -29,7 +29,7 @@ const HERE = __dirname;
 const FILES = ["cloud-config.js", "store.js", "calc.js", "charts.js", "merit.js", "assist.js",
                "sync.js", "notify.js", "meeting.js", "meetings.js", "update.js", "identity.js", "career.js", "companies.js", "today.js",
                "decision.js", "operations.js", "execution.js", "intake.js", "account.js",
-               "community.js", "votes.js",
+               "community.js", "votes.js", "funding.js",
                "app.js"];
 
 let failed = 0;
@@ -3009,7 +3009,7 @@ test("index.html 里的每个按钮都有 onclick 绑上", () => {
 
      只检查 index.html 里**静态写死**的按钮。 */
   const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
-  const sources = ["app.js", "account.js", "community.js", "votes.js", "meetings.js", "today.js",
+  const sources = ["app.js", "account.js", "community.js", "votes.js", "funding.js", "meetings.js", "today.js",
                    "operations.js", "execution.js", "intake.js"]
     .map(name => fs.readFileSync(path.join(HERE, name), "utf8"))
     .join("\n");
@@ -6073,6 +6073,38 @@ test("会议录音与 AI 总结：录音、上传、Edge Function、总结回写
   for (const text of ["set_meeting_ai_config", "get_meeting_ai_secrets", "enterprise_meeting_ai"]) {
     if (!aiSql.includes(text)) throw new Error("公司 AI 配置 SQL 缺少 " + text);
   }
+});
+
+test("资金：申请、审批链、资金池、支付与核销完整接线", () => {
+  const funding = fs.readFileSync(path.join(HERE, "funding.js"), "utf8");
+  for (const text of [
+    "create_funding_request", "list_funding_requests", "decide_funding_approval",
+    "mark_funding_paid", "settle_funding_request", "create_funding_pool",
+    "funding-attachments", "renderFunding", "loadFunding",
+  ]) {
+    if (!funding.includes(text)) throw new Error("funding.js 缺少 " + text);
+  }
+  const sqlPath = path.join(HERE, "sql", "funding-v1.sql");
+  if (!fs.existsSync(sqlPath)) throw new Error("缺少资金 SQL");
+  const sql = fs.readFileSync(sqlPath, "utf8");
+  for (const text of [
+    "funding_requests", "funding_approvals", "funding_pools",
+    "create_funding_request", "decide_funding_approval",
+    "mark_funding_paid", "settle_funding_request", "funding-attachments",
+  ]) {
+    if (!sql.includes(text)) throw new Error("资金 SQL 缺少 " + text);
+  }
+  if (!/^[\x00-\x7F]*$/.test(sql)) throw new Error("资金 SQL 必须保持 ASCII");
+  const html = fs.readFileSync(path.join(HERE, "index.html"), "utf8");
+  for (const text of ["page-funding", "funding.js", "btn-funding-create"]) {
+    if (!html.includes(text)) throw new Error("index.html 缺少 " + text);
+  }
+  const app = fs.readFileSync(path.join(HERE, "app.js"), "utf8");
+  for (const text of ["\"funding\"", "renderFunding", "loadFunding"]) {
+    if (!app.includes(text)) throw new Error("app.js 缺少 " + text);
+  }
+  const build = fs.readFileSync(path.join(HERE, "build-www.js"), "utf8");
+  if (!build.includes("funding.js")) throw new Error("build-www.js 缺少 funding.js");
 });
 
 /* ---------------------------------------------------------- 执行 */

@@ -192,6 +192,7 @@ function boot() {
   if (typeof bindAppUpdateEvents === "function") bindAppUpdateEvents();
   if (typeof bindVoteCenterEvents === "function") bindVoteCenterEvents();
   if (typeof bindMeetingEvents === "function") bindMeetingEvents();
+  if (typeof bindFundingEvents === "function") bindFundingEvents();
   if (typeof checkForAppUpdate === "function") {
     setTimeout(() => checkForAppUpdate(false), 1800);
   }
@@ -434,7 +435,7 @@ function makeNavScrollable() {
      漏了的话页面永远显示不出来，而且不报错，很难查。 */
 const PAGES = ["login", "today", "decisions", "operations", "execution", "intake", "dash",
                "project", "tasks", "team", "assist", "identity", "companies",
-               "community", "votes", "meetings", "assign", "staff", "me"];
+               "community", "votes", "funding", "meetings", "assign", "staff", "me"];
 
 function showPage(name) {
   const target = PAGES.indexOf(name) === -1 ? "dash" : name;
@@ -507,6 +508,10 @@ function showPage(name) {
   if (target === "votes") {
     renderVoteCenter();
     loadVoteCenter(true);
+  }
+  if (target === "funding") {
+    renderFunding();
+    loadFunding(true);
   }
   if (target === "meetings") {
     renderMeetings();
@@ -797,7 +802,7 @@ function closeSheet() {
 function openNavMore() {
   const items = [
     ["shares", "股份"], ["companies", "我的公司"], ["dash", "看板"], ["team", "团队"], ["assist", "助手"],
-    ["identity", "治理"], ["community", "星球"], ["meetings", "会议"],
+    ["identity", "治理"], ["community", "星球"], ["meetings", "会议"], ["funding", "资金"],
     ["today", "今天"], ["me", "我的"],
   ];
   openSheet("更多功能", `

@@ -6362,3 +6362,93 @@ textarea:focus {
   .meeting-hero .btn { width: 100%; }
 }
 
+
+/* ============================================================
+   资金中心  2026-11-15
+   ============================================================ */
+.funding-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 86% 18%, rgba(231, 185, 111, .22), transparent 38%),
+    linear-gradient(135deg, #2b2148, #4a3b70);
+  color: #fffaff;
+  box-shadow: 0 12px 28px rgba(47, 31, 75, .18);
+}
+.funding-hero-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.funding-hero-copy b { font-size: 18px; line-height: 1.35; }
+.funding-hero-copy p { margin: 0; font-size: 12px; color: #d8cff0; line-height: 1.5; }
+.funding-hero .btn {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, .14);
+  border-color: rgba(255, 255, 255, .20);
+  box-shadow: none;
+}
+.funding-card {
+  margin-bottom: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(49, 33, 78, .05);
+}
+.funding-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.funding-card-head > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.funding-card-head b { font-size: 18px; color: var(--fg-strong); }
+.funding-type {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-wash);
+  color: var(--accent-dim);
+  font-size: 10.5px;
+}
+.funding-status {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.funding-status.pending { color: var(--watch); background: rgba(182, 137, 190, .12); }
+.funding-status.approved { color: var(--ok); background: rgba(105, 173, 145, .12); }
+.funding-status.paid { color: var(--star-warm); background: rgba(231, 185, 111, .14); }
+.funding-status.settled { color: var(--fg-soft); }
+.funding-status.rejected { color: var(--severe); background: rgba(207, 131, 150, .10); }
+.funding-reason { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--fg-soft); }
+.funding-meta { margin-top: 6px; font-size: 11.5px; color: var(--fg-dim); }
+.funding-approval-line {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--read);
+  color: var(--fg-soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.funding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.funding-actions .btn { min-height: 36px; padding: 0 12px; font-size: 12px; }
+@media (max-width: 380px) {
+  .funding-hero { flex-direction: column; align-items: flex-start; }
+  .funding-hero .btn { width: 100%; }
+}
+
