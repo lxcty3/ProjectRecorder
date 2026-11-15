@@ -1,13 +1,13 @@
 {
-  "versionCode": 32,
-  "versionName": "2.0.30",
-  "releasedAt": "2026-11-14",
+  "versionCode": 33,
+  "versionName": "2.0.31",
+  "releasedAt": "2026-11-15",
   "notes": [
-    "会议录音改为 Android 前台服务，锁屏/切后台继续录。",
-    "总结增加说话人区分；待办可一键创建任务；录音 30 天自动清理。",
-    "AI 设置支持公司默认 Key（仅老板）和本机 Key 覆盖。"
+    "新增资金模块：报销、预支、专项经费申请。",
+    "按金额分级审批：直属上级/财务/老板/董事会；支持资金池、支付和核销。",
+    "资金附件存私有桶；支持发票/收据上传与支付跟踪。"
   ],
   "downloadUrl": "https://github.com/lxcty3/ProjectRecorder/releases/latest/download/ProjectRecorder-latest.apk",
-  "sha256": "55d57a804a09b7f47c52f03ca96939761b49f27f2d984438d215ddccec274506",
-  "size": 11609825
+  "sha256": "8da36379ac02126f7157b4b1ec1f9ccbd5499d6f2c55caffa9e0fa21657e6eb6",
+  "size": 11615619
 }
